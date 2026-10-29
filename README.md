@@ -38,16 +38,35 @@ runs only read new or changed archives. The game folder is RS Re-ARMed's, unless
 .venv/bin/rs-keylights play ~/Downloads/Some-Song_m.psarc rhythm --silent
 .venv/bin/rs-keylights play alicroos --tone "saw lead 1"  # one of the keyboard's tones
 .venv/bin/rs-keylights tones organ                 # list tones (all of them without a word)
+.venv/bin/rs-keylights play amonpurs --mute-tone 77 --low-tone 80 --split E2   # a tone per kind of note
+.venv/bin/rs-keylights play amonpurs lead rhythm --tone lead=178 --lights lead=2,rhythm=2   # two parts together
 .venv/bin/rs-keylights index                       # update the index now
 ```
 
 `play` takes a `.psarc` file, or part of a song's name, artist or file name. With no part it plays
-the lead, else the rhythm, else the bass.
+the lead, else the rhythm, else the bass. Name more parts to play them together (up to four), each on
+channels of its own. The keyboard lights 4 keys at most in all (on both navigate channels together), so
+by default only the first part lights them; `--lights lead=2,rhythm=2` shares them (each part's lowest
+notes), `--lights lead,rhythm` shares them evenly, `--lights rhythm` lights another part, and
+`--lights none` none. Lit parts share an octave shift so their keys line up, and a key two parts hold
+stays lit until both let go.
 
 The sound is the keyboard's tone 079 DISTORTION GT, or 085 FINGERED BASS for bass parts. `--tone` picks
 another of its 426 tones by number or name: `--tone 178`, `--tone "saw lead 1"`, `--tone koto`. Tones
 401-426 play the sounds you sampled on the keyboard. The tone you pick on the keyboard's panel is
 only for the keys you play; the song plays on its own channel.
+
+Some notes can have tones of their own. `--mute-tone` plays palm-muted notes with another tone (for
+example 077 MUTE GUITAR), and `--low-tone` the notes below `--split` (E2 by default: a note name such
+as B1 or F#2, or a MIDI note number), for when a tone sounds muddy low down. A palm mute takes the mute
+tone wherever it is. In The Pursuit of Vikings, every low B is a palm-muted chug, so `--mute-tone` alone
+changes all of them. Accented notes play louder. `--real-pitch` sounds the notes at their own pitch,
+which the keyboard plays over MIDI even below its lowest key, instead of the lit keys' pitch (moved up
+into the keys' range); each tone has a range of its own, though, and some (077 MUTE GUITAR) don't go as
+low as a B standard guitar. These work in `follow --sound` too.
+
+Each tone option can be for one part: `--tone lead=178 --tone rhythm=79 --mute-tone rhythm=77`. Without
+`PART=` it is for every part. In `follow`, it is for the part you play, e.g. `--tone bass=85`.
 
 | Option | Default | |
 |---|---|---|
@@ -56,25 +75,46 @@ only for the keys you play; the song plays on its own channel.
 | `--game-dir` | RS Re-ARMed's game folder | the `Rocksmith2014` folder |
 | `follow --offset-ms` | 0 | light the keys this much earlier (negative: later) |
 | `follow --overlay-port` | 9938 | RS Companion's overlay port |
-| `follow --sound`, `--tone` | off; 079, or 085 for bass | play the notes too, with this tone |
+| `follow --sound` | off | play the notes too (with the sound options below) |
 | `follow --trace FILE` | | write what RS Companion reports (JSON lines), to look into timing problems |
 | `play --from`, `--speed` | 0, 1 | where to start (seconds) and how fast |
 | `play --silent` | | lights only |
-| `play --tone` | 079, or 085 for bass | the keyboard's tone, by number or name (`tones` lists them) |
+| `play PARTS...` | lead, else rhythm, else bass | the parts to play, together |
+| `play --lights` | the first part, 4 keys | which parts light keys, and how many each |
+| `--tone` | 079, or 085 for bass | the keyboard's tone, by number or name (`tones` lists them); `PART=` for one part |
+| `--mute-tone` | the main tone | a tone for palm-muted notes |
+| `--low-tone`, `--split` | the main tone; E2 | a tone for notes below the split note |
+| `--real-pitch` | off | sound the notes' own pitch, not the lit keys' |
+| `--lights-early` | 15 ms | light the keys this much before the notes (`play` and `follow`) |
+| `--fastest-flash` | 70 ms | a key's repeats closer than this flash on every other note (`play` and `follow`) |
 
 ## How it works
 
 **The keys.** The LK-170 lights keys only for notes on its *navigate channels* (FUNCTION > `Navi. Ch`:
 4 for the right hand, 3 for the left). Notes on other channels sound but don't light anything. It
-still lights them with the channel's volume at 0, which is how `follow` keeps them silent. At most
-4 keys light at once, and the keys run from C2 to C7.
+still lights them with the channel's volume at 0, so the lights are always silent. At most 4 keys light
+at once, and the keys run from C2 to C7.
+
+**The sound.** The keyboard plays all 16 MIDI channels at once, each with a tone of its own. The first
+part's notes sound on channel 11 (the main tone), 12 (the low tone) and 13 (palm mutes), the second
+part's on 14 to 16, the third's on 5 to 7 and the fourth's on 8, 9 and 2: clear of the navigate channels,
+the keyboard's own part (1) and the drums (10). A chord sounds all its notes, even when only some of them
+light.
 
 **The notes.** Each arrangement's notes are in its `.sng` file in the song's archive. The note's
 string and fret, the song's tuning and the capo give its pitch. Each phrase is taken at its hardest
 level, so you see the full part, not your current difficulty level. A part that goes below C2 (B
 standard guitar, bass) is moved up whole octaves if it still fits; any note still outside the keys
-is folded in. A note or chord stays lit until the next one, at least 80 ms. Repeats of a key go dark
-for 30 ms so fast picking blinks, and chords light their lowest 4 notes.
+is folded in. A note or chord stays lit until the next one, at least 80 ms, and chords light their
+lowest 4 notes.
+
+**The flashing.** On the LK-170 a key flashing every 80 ms or slower looks like flashes, and every 60
+ms almost like a steady light; it looked best every ~115 ms with 40-55% of it dark. So before a key's
+next strike it goes dark for 45% of the time to it (30 to 60 ms), and repeats faster than 70 ms
+(`--fastest-flash`) flash on every other note. These are times you see, so at a slower speed (or in
+a slowed Riff Repeater) notes have more room. The keyboard's lights also look a little late next to
+its sound, so the keys light 15 ms before the notes (`--lights-early`: 10-20 ms looked in time, 40
+too early).
 
 **The timing.** RS Companion updates the song timer about 4 times a second. `follow` reads it 10
 times a second and keeps its own clock between the updates. Each value is seen a little late, never

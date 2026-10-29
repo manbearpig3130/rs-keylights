@@ -21,7 +21,9 @@ BASS = (28, 33, 38, 43)  # E1 A1 D2 G2
 # Note mask bits
 CHORD = 0x02
 FRET_HAND_MUTE = 0x08
+PALM_MUTE = 0x40
 IGNORE = 0x40000
+ACCENT = 0x4000000
 CHILD = 0x10000000  # linked to the note before it (a sustain that continues)
 
 NAMES = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")

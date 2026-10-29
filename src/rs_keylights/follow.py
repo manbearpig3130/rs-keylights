@@ -10,10 +10,10 @@ from typing import Callable, Protocol
 
 from .keyboard import Keyboard
 from .library import ArrangementRef
-from .lights import KeyRange, schedule
-from .player import Player
+from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, schedule
+from .player import Player, Track
 from .sng import Arrangement
-from .tones import Tone
+from .sound import Voices
 
 # Follows the song Rocksmith plays through RS Companion's stream overlay API (RockSniffer's API,
 # 127.0.0.1:9938, Settings > Stream overlays): the song timer, the song and the selected
@@ -218,8 +218,10 @@ class Follower:
         offset: float = 0.0,
         status: Callable[[str], None] = print,
         load: Callable[[ArrangementRef], Arrangement] = lambda ref: ref.load(),
-        tone_for: Callable[[ArrangementRef], Tone] | None = None,
+        voices_for: Callable[[ArrangementRef], Voices] | None = None,
         trace: Callable[[dict[str, object]], None] | None = None,
+        lights_early: float = LIGHTS_EARLY,
+        fastest_flash: float = MIN_PERIOD,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -230,16 +232,38 @@ class Follower:
         self.offset = offset
         self._status = status
         self._load = load
-        self._tone_for = tone_for  # with sound: the tone for each arrangement
+        self._voices_for = voices_for  # with sound: the voices (channels and tones) for each arrangement
+        self.lights_early = lights_early  # seconds the keys light before the notes
+        self.fastest_flash = fastest_flash  # a key's repeats closer than this flash on every other note
         self._trace = trace  # what RS Companion reports and what the clock makes of it, for debugging
         self._clock = clock
         self._sleep = sleep
         self._song_clock = SongClock()
         self._arrangement_id = ""
         self._player: Player | None = None
+        self.current: ArrangementRef | None = None  # the arrangement being followed
         self._next_poll = 0.0
         self._connected: bool | None = None
         self._playing = False
+
+    def position(self, now: float) -> float | None:
+        """The song position, while the song plays."""
+        return self._song_clock.position(now) if self._player is not None else None
+
+    def stop(self) -> None:
+        """Turns everything off (until the next step)."""
+        self._unload()
+
+    def set_lights(self, lights_early: float, fastest_flash: float) -> None:
+        """Other lights early and fastest flash, also for the arrangement playing."""
+        self.lights_early, self.fastest_flash = lights_early, fastest_flash
+        if self._player is not None:
+            self._player.retime(lead=lights_early, min_period=fastest_flash)
+
+    def set_voices_for(self, voices_for: Callable[[ArrangementRef], Voices] | None) -> None:
+        """Other tones (or none, for silent lights): the arrangement playing is loaded again at the next poll."""
+        self._voices_for = voices_for
+        self._unload()
 
     def run(self) -> None:
         while True:
@@ -261,6 +285,7 @@ class Follower:
             return
         if not self._playing:
             self._record({"t": now, "playing": round(position, 3), "rate": self._song_clock.rate})
+        self._player.retime(rate=self._song_clock.rate)  # Riff Repeater's speed: the keys flash for it
         self._player.advance(position + self.offset)
         self._playing = True
 
@@ -308,13 +333,16 @@ class Follower:
         shift = self.key_range.octave_shift(arrangement.notes)
         lights = schedule(arrangement.notes, self.key_range, shift)
         moved = ", an octave up" if shift == 12 else f", {shift // 12} octaves up" if shift else ""
-        sound = ""
-        if self._tone_for is not None:
-            tone = self._tone_for(ref)
-            self.keyboard.set_tone(tone.program, tone.bank)
-            sound = f", tone {tone.number:03d} {tone.name}"
-        self._status(f"{ref.title} ({ref.name}): {len(lights)} notes{moved}{sound}")
-        return Player(lights, self.keyboard)
+        if self._voices_for is None:
+            self._status(f"{ref.title} ({ref.name}): {len(lights)} notes{moved}")
+            self.current = ref
+            return Player([Track(lights)], self.keyboard, lead=self.lights_early, min_period=self.fastest_flash)
+        voices = self._voices_for(ref).for_arrangement(shift)
+        for voice in voices.all():
+            self.keyboard.set_voice(voice.channel, voice.tone.program, voice.tone.bank)
+        self._status(f"{ref.title} ({ref.name}): {len(lights)} notes{moved}; {voices.describe()}")
+        self.current = ref
+        return Player([Track(lights, voices)], self.keyboard, lead=self.lights_early, min_period=self.fastest_flash)
 
     def _record(self, entry: dict[str, object]) -> None:
         if self._trace is not None:
@@ -324,6 +352,7 @@ class Follower:
         if self._player is not None:
             self._player.stop()
         self._player = None
+        self.current = None
         self._playing = False
         self._arrangement_id = ""
         self._song_clock.reset()

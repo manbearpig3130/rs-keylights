@@ -16,6 +16,7 @@ from .sng import Arrangement, decrypt, parse
 INDEX_VERSION = 1
 SNG_PREFIX = "songs/bin/macos/"
 MANIFEST_PREFIX = "manifests/"
+NO_NOTES = ("vocals", "jvocals", "showlights")  # parts without notes to play
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,9 @@ class SongIndex:
 
     def __len__(self) -> int:
         return len(self._by_id)
+
+    def arrangements(self) -> list[ArrangementRef]:
+        return list(self._by_id.values())
 
     def find(self, persistent_id: str) -> ArrangementRef | None:
         return self._by_id.get(persistent_id.upper())

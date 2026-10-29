@@ -222,22 +222,31 @@ def test_offset_lights_earlier():
 class FakeSoundKeys(FakeKeys):
     def __init__(self):
         super().__init__()
-        self.tones = []
+        self.voices = []
+        self.played = []
 
-    def set_tone(self, program, bank=None):
-        self.tones.append((program, bank))
+    def set_voice(self, channel, program, bank=None):
+        self.voices.append((channel, program, bank))
+
+    def play(self, channel, notes, velocity):
+        self.played.append((channel, notes, velocity))
+
+    def stop(self, channel, notes):
+        pass
 
 
-def test_with_sound_each_song_gets_its_tone_and_the_trace_records_the_polls():
+def test_with_sound_each_song_gets_its_voices_and_the_trace_records_the_polls():
+    from rs_keylights.sound import Voice, Voices
     from rs_keylights.tones import tone
 
     client, index, keys, messages, trace = FakeClient(), FakeIndex([REF]), FakeSoundKeys(), [], []
+    voices = Voices(Voice(11, tone(178)), mute=Voice(13, tone(77)))
     f = Follower(client, index, keys, status=messages.append, load=lambda ref: NOTES,  # type: ignore[arg-type]
-                 tone_for=lambda ref: tone(178), trace=trace.append)
+                 voices_for=lambda ref: voices, trace=trace.append)
     client.state = GameState(4, 9.8, "X", "ID1")
     f.step(0.0)
-    assert keys.tones == [(81, 2)]
-    assert messages[-1] == "Artist - Song (Lead): 2 notes, tone 178 SAW LEAD 1"
+    assert keys.voices == [(11, 81, 2), (13, 28, 2)]
+    assert messages[-1] == "Artist - Song (Lead): 2 notes; tone 178 SAW LEAD 1, palm mutes 077 MUTE GUITAR"
     assert trace[0] == {"t": 0.0, "state": 4, "timer": 9.8, "song": "X", "arrangement": "ID1", "estimate": None}
     assert trace[1] == {"t": 0.0, "playing": 9.8, "rate": 1.0}
     f.step(1.0)  # the timer hasn't moved for a second: paused

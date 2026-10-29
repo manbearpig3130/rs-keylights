@@ -23,10 +23,10 @@ class FakeMidiOut:
         self.closed = True
 
 
-def make(sound=False, program=None, bank=None, ports=("IAC Driver Bus 1", "CASIO USB-MIDI"), now=None):
+def make(ports=("IAC Driver Bus 1", "CASIO USB-MIDI"), now=None):
     out = FakeMidiOut(ports)
     clock = now or [0.0]
-    keyboard = Keyboard("casio", 4, sound=sound, program=program, bank=bank, midi_out_factory=lambda: out, clock=lambda: clock[0])
+    keyboard = Keyboard("casio", 4, midi_out_factory=lambda: out, clock=lambda: clock[0])
     return keyboard, out, clock
 
 
@@ -52,12 +52,21 @@ def test_silences_again_now_and_then():
     assert out.sent[1:] == [[0xB3, 7, 0], [0x93, 60, 100]]
 
 
-def test_with_sound_and_a_tone():
-    keyboard, out, _clock = make(sound=True, program=30, bank=2)
+def test_sound_on_channels_of_its_own():
+    keyboard, out, _clock = make()
     keyboard.open()
-    assert out.sent == [[0xB3, 0, 2], [0xC3, 30], [0xB3, 7, 100]]
-    keyboard.close()
-    assert out.sent[-1] == [0xB3, 123, 0]
+    keyboard.set_voice(11, 30, 2)
+    keyboard.set_voice(13, 28)
+    assert out.sent[1:] == [[0xBA, 0, 2], [0xCA, 30], [0xBA, 7, 100], [0xCC, 28], [0xBC, 7, 100]]
+    del out.sent[:]
+    keyboard.play(11, (47, 54), 127)
+    keyboard.play(13, (47,), 100)
+    keyboard.stop(11, (47, 54))
+    keyboard.stop(11, (47,))  # already stopped: nothing
+    assert out.sent == [[0x9A, 47, 127], [0x9A, 54, 127], [0x9C, 47, 100], [0x8A, 47, 0], [0x8A, 54, 0]]
+    del out.sent[:]
+    keyboard.all_off()  # the lights' channel, then each sound channel
+    assert out.sent == [[0xB3, 123, 0], [0xBA, 123, 0], [0x8C, 47, 0], [0xBC, 123, 0]]
 
 
 def test_unlighting_an_unlit_key_sends_nothing():
@@ -76,15 +85,20 @@ def test_missing_port():
 def test_bad_settings():
     with pytest.raises(ValueError):
         Keyboard(channel=17)
-    with pytest.raises(ValueError):
-        Keyboard(program=128)
-    with pytest.raises(ValueError):
-        Keyboard(bank=-1)
-
-
-def test_set_tone_later():
-    keyboard, out, _clock = make(sound=True)
+    keyboard, _out, _clock = make()
     keyboard.open()
-    keyboard.set_tone(33, 2)
-    keyboard.set_tone(30)
-    assert out.sent[1:] == [[0xB3, 0, 2], [0xC3, 33], [0xC3, 30]]
+    with pytest.raises(ValueError, match="not the lights'"):
+        keyboard.set_voice(4, 30)
+    with pytest.raises(ValueError):
+        keyboard.set_voice(11, 128)
+
+
+def test_lighting_a_lit_key_sends_its_note_on_again():
+    # pressing a lit key turns its light off on the keyboard: the next light must reach it
+    keyboard, out, _clock = make()
+    keyboard.open()
+    keyboard.light((60,))
+    keyboard.light((60,))
+    keyboard.unlight((60,))
+    keyboard.unlight((60,))
+    assert out.sent[1:] == [[0x93, 60, 100], [0x93, 60, 100], [0x83, 60, 0]]
