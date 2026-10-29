@@ -29,7 +29,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-rs_keylights = ["py.typed"]
+rs_keylights = ["py.typed", "gui.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

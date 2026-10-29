@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rs-keylights</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e2e2e0;
+    --accent: #c4202b; --accent-text: #ffffff; --soft: #fbeaea; --warn: #9a5b00; --warn-bg: #fff4e0;
+    --ok: #1f7a3a; --input: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161617; --panel: #1f1f21; --text: #ececee; --muted: #9a9aa0; --line: #333336;
+      --accent: #ff4d57; --accent-text: #160304; --soft: #3a1a1c; --warn: #ffb547; --warn-bg: #3a2a10;
+      --ok: #5fd27f; --input: #2a2a2d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  #status { flex: 1; min-width: 200px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status.on { color: var(--text); font-weight: 600; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--input); color: var(--text); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  input, select { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  select { max-width: 100%; }
+  main { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr) minmax(260px, 330px); gap: 12px; padding: 12px; align-items: start; }
+  @media (max-width: 1100px) { main { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); } #side { grid-column: 1 / -1; } }
+  @media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .card + .card { margin-top: 12px; }
+  h2 { margin: 0; font-size: 20px; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  .muted { color: var(--muted); }
+  #library { position: sticky; top: 64px; display: flex; flex-direction: column; max-height: calc(100vh - 80px); }
+  #search { width: 100%; padding: 7px 9px; }
+  #count { font-size: 12px; margin: 6px 2px; }
+  #songs { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; border-top: 1px solid var(--line); }
+  #songs li { padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; grid-template-columns: 1fr; }
+  #songs li:hover { background: var(--soft); }
+  #songs li.selected { background: var(--soft); box-shadow: inset 3px 0 var(--accent); }
+  #songs .song { font-weight: 600; }
+  #songs .artist, #songs .parts { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  td.part b { display: block; }
+  td.part span { font-size: 12px; color: var(--muted); }
+  td select { width: 100%; min-width: 90px; }
+  td input.split { width: 54px; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; }
+  .timeline { display: flex; gap: 10px; align-items: center; margin: 12px 0 4px; }
+  .timeline input[type=range] { flex: 1; accent-color: var(--accent); }
+  .time { font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
+  #startat { width: 70px; }
+  .note { padding: 6px 9px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); margin: 8px 0; }
+  .empty { padding: 40px 10px; text-align: center; color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
+  .grid2 label { color: var(--muted); font-size: 13px; }
+  #followParts td, #followParts th { padding: 4px; }
+  #followParts select { min-width: 70px; }
+  #messages { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; color: var(--muted); max-height: 180px; overflow-y: auto; }
+  #messages li { padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--accent); color: var(--accent-text); padding: 9px 14px; border-radius: 8px; max-width: 90vw; z-index: 5; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
+  .on-air { color: var(--ok); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>rs-<span>keylights</span></h1>
+  <div id="status">Idle</div>
+  <button id="playBtn" class="primary" disabled>▶ Play</button>
+  <button id="pauseBtn" disabled>❚❚ Pause</button>
+  <button id="stopBtn" disabled>■ Stop</button>
+</header>
+
+<main>
+  <section id="library" class="card">
+    <input id="search" type="search" placeholder="Search songs, artists, files…" autocomplete="off">
+    <div id="count" class="muted">Loading the library…</div>
+    <ul id="songs"></ul>
+  </section>
+
+  <section id="songCard" class="card">
+    <div id="noSong" class="empty">Pick a song from the library.</div>
+    <div id="songView" hidden>
+      <h2 id="title"></h2>
+      <div id="artist"></div>
+      <div id="file" class="muted"></div>
+      <table>
+        <thead><tr><th>Play</th><th>Part</th><th>Lit keys</th><th>Tone</th><th>Palm mutes</th><th>Low notes</th><th>Below</th></tr></thead>
+        <tbody id="parts"></tbody>
+      </table>
+      <div id="lightsNote" class="note" hidden></div>
+      <div class="row">
+        <label>Speed
+          <select id="speed">
+            <option value="0.25">25%</option><option value="0.5">50%</option><option value="0.6">60%</option>
+            <option value="0.7">70%</option><option value="0.8">80%</option><option value="0.9">90%</option>
+            <option value="1" selected>100%</option><option value="1.25">125%</option><option value="1.5">150%</option>
+          </select>
+        </label>
+        <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range)">
+          <input type="checkbox" id="realPitch"> Real pitch</label>
+        <label><input type="checkbox" id="silent"> Lights only</label>
+      </div>
+      <div class="timeline">
+        <span id="pos" class="time">0:00</span>
+        <input type="range" id="slider" min="0" max="100" step="0.1" value="0" aria-label="Song position">
+        <span id="len" class="time">0:00</span>
+        <label>Start at <input id="startAt" value="0:00" aria-label="Start at (m:ss)"></label>
+      </div>
+      <div class="muted" style="font-size:12px">Drag the slider to choose where to start, or to move around while it plays.
+        Changes to the parts apply at once while a song plays.</div>
+    </div>
+  </section>
+
+  <section id="side">
+    <div class="card">
+      <h3>Follow Rocksmith</h3>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Lights the keys along with the song the game plays (RS Companion's stream overlays must be on).</div>
+      <div id="otherFollow" class="note" hidden>Another <code>rs-keylights follow</code> is running (the RS Re-ARMed sidekick?): both would light the keys.</div>
+      <label><input type="checkbox" id="followSound"> Play the notes too</label>
+      <table id="followParts">
+        <thead><tr><th></th><th>Tone</th><th>Palm mutes</th><th>Low notes</th><th>Below</th></tr></thead>
+        <tbody>
+          <tr data-kind="guitar"><td>Guitar</td></tr>
+          <tr data-kind="bass"><td>Bass</td></tr>
+        </tbody>
+      </table>
+      <div class="row">
+        <label><input type="checkbox" id="followRealPitch"> Real pitch</label>
+        <label title="Light the keys this much earlier (negative: later)">Offset <input type="number" id="followOffset" value="0" step="10" style="width:70px"> ms</label>
+      </div>
+      <button id="followBtn" class="primary">Start following</button>
+      <div id="followNow" class="muted" style="margin-top:8px"></div>
+      <ul id="messages"></ul>
+    </div>
+
+    <div class="card">
+      <h3>Keyboard</h3>
+      <div class="grid2">
+        <label for="midiPort">MIDI output</label><select id="midiPort"></select>
+        <label for="channel">Lights channel</label><input id="channel" type="number" min="1" max="16" style="width:70px">
+        <label for="lightsEarly" title="The keys light this much before the notes: the LK-170's lights look late without">Lights early</label>
+        <span><input id="lightsEarly" type="number" min="0" max="200" step="5" style="width:70px"> ms</span>
+        <label for="fastestFlash" title="A key's repeats closer than this flash on every other note: the LK-170 can't show faster ones apart">Fastest flash</label>
+        <span><input id="fastestFlash" type="number" min="0" max="300" step="5" style="width:70px"> ms</span>
+        <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
+      </div>
+      <div class="row">
+        <button id="saveSettings">Save</button>
+        <button id="reindex">Look for new songs</button>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" hidden></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const store = {
+  get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private window */ } },
+};
+
+async function api(path, body) {
+  const options = body === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  return data;
+}
+
+function fmt(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+function parseTime(text) {
+  const t = String(text).trim();
+  if (!t) return 0;
+  const parts = t.split(":").map(Number);
+  if (parts.length > 3 || parts.some((n) => !isFinite(n) || n < 0)) return null;
+  return parts.reduce((total, n) => total * 60 + n, 0);
+}
+
+let toastTimer = null;
+function toast(message) {
+  const el = $("toast");
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 6000);
+}
+
+async function act(fn) {
+  try { await fn(); } catch (e) { toast(e.message); }
+  poll(true);
+}
+
+// Tones
+
+let toneOptions = "";
+function buildToneOptions(tones) {
+  let html = "", group = null;
+  for (const t of tones) {
+    if (t.group !== group) {
+      if (group !== null) html += "</optgroup>";
+      group = t.group;
+      html += `<optgroup label="${esc(group)}">`;
+    }
+    html += `<option value="${t.number}">${String(t.number).padStart(3, "0")} ${esc(t.name)}</option>`;
+  }
+  return html + (group !== null ? "</optgroup>" : "");
+}
+
+function toneSelect(first, value, onChange) {
+  const select = document.createElement("select");
+  select.innerHTML = `<option value="">${esc(first)}</option>` + toneOptions;
+  select.value = value ? String(value) : "";
+  select.addEventListener("change", onChange);
+  return select;
+}
+
+function splitInput(value, onChange) {
+  const input = document.createElement("input");
+  input.className = "split";
+  input.placeholder = "E2";
+  input.value = value || "";
+  input.title = "Notes below this use the low tone (a name such as B1 or F#2)";
+  input.addEventListener("change", onChange);
+  return input;
+}
+
+// Library
+
+let songs = [];
+let selected = null;
+
+function renderLibrary() {
+  const words = $("search").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const list = $("songs");
+  const fragment = document.createDocumentFragment();
+  let shown = 0;
+  for (const s of songs) {
+    const text = `${s.artist} ${s.song} ${s.file}`.toLowerCase();
+    if (!words.every((w) => text.includes(w))) continue;
+    shown++;
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="song">${esc(s.song)}</span><span class="artist">${esc(s.artist)}</span>` +
+      `<span class="parts">${esc(s.parts.join(" · "))}</span>`;
+    if (selected && selected.id === s.id) li.classList.add("selected");
+    li.addEventListener("click", () => act(() => selectSong(s.id)));
+    fragment.appendChild(li);
+  }
+  list.replaceChildren(fragment);
+  $("count").textContent = `${shown} of ${songs.length} songs`;
+}
+
+async function loadLibrary(data) {
+  const library = data || await api("/api/library");
+  songs = library.songs;
+  renderLibrary();
+}
+
+// The selected song
+
+async function selectSong(id) {
+  selected = await api("/api/song?id=" + encodeURIComponent(id));
+  store.set("rsk.last", id);
+  renderSong();
+  renderLibrary();
+}
+
+function songSettings() {
+  return store.get("rsk.song." + selected.id, {});
+}
+
+function renderSong() {
+  const s = selected;
+  $("noSong").hidden = true;
+  $("songView").hidden = false;
+  $("title").textContent = s.song;
+  $("artist").textContent = s.artist;
+  $("file").textContent = `${s.file} · ${fmt(s.length)}`;
+  const saved = songSettings();
+  const rows = document.createDocumentFragment();
+  s.parts.forEach((p, i) => {
+    const cfg = saved[p.part] || {play: i === 0, lights: i === 0 ? 4 : 0};
+    const tr = document.createElement("tr");
+    tr.dataset.part = p.part;
+    const play = document.createElement("input");
+    play.type = "checkbox";
+    play.checked = !!cfg.play;
+    play.className = "play";
+    play.addEventListener("change", partChanged);
+    const lights = document.createElement("select");
+    lights.className = "lights";
+    lights.innerHTML = [0, 1, 2, 3, 4].map((n) => `<option value="${n}">${n || "none"}</option>`).join("");
+    lights.value = String(cfg.lights ?? 0);
+    lights.addEventListener("change", partChanged);
+    const cells = [
+      play,
+      null,
+      lights,
+      toneSelect(p.bass ? "Default (085 FINGERED BASS)" : "Default (079 DISTORTION GT)", cfg.tone, partChanged),
+      toneSelect("Same tone", cfg.mute, partChanged),
+      toneSelect("Same tone", cfg.low, partChanged),
+      splitInput(cfg.split, partChanged),
+    ];
+    for (const [k, cell] of cells.entries()) {
+      const td = document.createElement("td");
+      if (k === 1) {
+        td.className = "part";
+        td.innerHTML = `<b>${esc(p.name)}</b><span>${p.notes} notes · ${esc(p.tuning)}</span>`;
+      } else {
+        if (k === 3) cell.className = "tone";
+        if (k === 4) cell.className = "mute";
+        if (k === 5) cell.className = "low";
+        td.appendChild(cell);
+      }
+      tr.appendChild(td);
+    }
+    rows.appendChild(tr);
+  });
+  $("parts").replaceChildren(rows);
+  $("slider").max = String(s.length);
+  const start = saved.start || 0;
+  $("startAt").value = fmt(start);
+  if (!playingThis()) {
+    $("slider").value = String(start);
+    $("pos").textContent = fmt(start);
+  }
+  $("len").textContent = fmt(s.length);
+  checkLights();
+}
+
+function partRows() {
+  return [...$("parts").querySelectorAll("tr")];
+}
+
+function partsToPlay() {
+  return partRows().filter((tr) => tr.querySelector(".play").checked).map((tr) => ({
+    part: tr.dataset.part,
+    lights: Number(tr.querySelector(".lights").value),
+    tone: tr.querySelector(".tone").value || null,
+    mute_tone: tr.querySelector(".mute").value || null,
+    low_tone: tr.querySelector(".low").value || null,
+    split: tr.querySelector(".split").value.trim() || null,
+  }));
+}
+
+function saveSong() {
+  if (!selected) return;
+  const saved = songSettings();
+  for (const tr of partRows()) {
+    saved[tr.dataset.part] = {
+      play: tr.querySelector(".play").checked,
+      lights: Number(tr.querySelector(".lights").value),
+      tone: tr.querySelector(".tone").value,
+      mute: tr.querySelector(".mute").value,
+      low: tr.querySelector(".low").value,
+      split: tr.querySelector(".split").value.trim(),
+    };
+  }
+  const start = parseTime($("startAt").value);
+  if (start !== null) saved.start = start;
+  store.set("rsk.song." + selected.id, saved);
+  checkLights();
+}
+
+function checkLights() {
+  const parts = partsToPlay();
+  const lit = parts.reduce((n, p) => n + p.lights, 0);
+  const note = $("lightsNote");
+  let message = "";
+  if (!parts.length) message = "Tick at least one part to play.";
+  else if (parts.length > 4) message = "Four parts at most.";
+  else if (lit > 4) message = `The keyboard lights 4 keys at most; these parts ask for ${lit}.`;
+  note.textContent = message;
+  note.hidden = !message;
+  playable = !message;
+  updateButtons();
+}
+
+// Playback
+
+let state = {mode: "idle"};
+let playable = false;
+let dragging = false;
+
+function playingThis() {
+  return selected && state.song && state.song.id === selected.id && ["playing", "paused", "ended"].includes(state.mode);
+}
+
+function updateButtons() {
+  const here = playingThis();
+  $("playBtn").disabled = !selected || !playable;
+  $("playBtn").textContent = here && state.mode === "paused" ? "▶ Resume" : "▶ Play";
+  $("pauseBtn").disabled = state.mode !== "playing";
+  $("stopBtn").disabled = state.mode === "idle";
+}
+
+function playRequest() {
+  return {song: selected.id, parts: partsToPlay(), real_pitch: $("realPitch").checked, silent: $("silent").checked};
+}
+
+async function play() {
+  if (playingThis() && state.mode === "paused") {
+    await api("/api/resume", {});
+    return;
+  }
+  const start = parseTime($("startAt").value);
+  if (start === null) throw new Error("Start at: a time such as 1:23");
+  saveSong();
+  await api("/api/play", {...playRequest(), start: start, speed: Number($("speed").value)});
+}
+
+// Changes while the song plays apply at once (the server swaps in the new parts where the song is)
+let updateTimer = null;
+function liveUpdate() {
+  if (!playingThis() || state.mode === "ended" || !playable) return;
+  clearTimeout(updateTimer);
+  updateTimer = setTimeout(() => act(() => api("/api/update", playRequest())), 150);
+}
+
+function partChanged() {
+  saveSong();
+  liveUpdate();
+}
+
+function showState(st) {
+  state = st;
+  const status = $("status");
+  status.className = st.mode === "idle" ? "" : "on";
+  if (st.mode === "playing" || st.mode === "paused" || st.mode === "ended") {
+    const what = {playing: "▶", paused: "❚❚", ended: "■"}[st.mode];
+    const parts = st.song.parts.map((p) => p.name).join(" + ");
+    status.textContent = `${what} ${st.song.title} (${parts}) · ${fmt(st.position)} / ${fmt(st.length)}` +
+      (st.speed !== 1 ? ` · ${Math.round(st.speed * 100)}%` : "");
+    status.title = st.song.parts.map((p) => `${p.name}: ${p.lights} lit, ${p.sound}`).join("\n");
+  } else if (st.mode === "following") {
+    status.textContent = st.follow.song ? `Following: ${st.follow.song}` : "Following Rocksmith: waiting for a song";
+    status.title = "";
+  } else {
+    status.textContent = "Idle";
+    status.title = "";
+  }
+  if (playingThis() && !dragging) {
+    $("slider").value = String(st.position);
+    $("pos").textContent = fmt(st.position);
+  }
+  $("otherFollow").hidden = !st.other_follow;
+  const following = st.mode === "following";
+  $("followBtn").textContent = following ? "Stop following" : "Start following";
+  $("followBtn").className = following ? "" : "primary";
+  const f = st.follow || {};
+  $("followNow").innerHTML = following && f.song ?
+    `<span class="on-air">●</span> ${esc(f.song)}${f.position != null ? " · " + fmt(f.position) : " · paused"}` : "";
+  if (st.follow) $("messages").innerHTML = (f.messages || []).slice().reverse().map((m) => `<li>${esc(m)}</li>`).join("");
+  updateButtons();
+}
+
+let pollTimer = null;
+async function poll(now) {
+  clearTimeout(pollTimer);
+  try {
+    showState(await api("/api/state"));
+  } catch (e) {
+    $("status").textContent = "rs-keylights isn't answering: is `rs-keylights gui` still running?";
+  }
+  pollTimer = setTimeout(poll, now ? 250 : 300);
+}
+
+// Following
+
+function followSettings() {
+  const out = {};
+  for (const tr of $("followParts").querySelectorAll("tbody tr")) {
+    out[tr.dataset.kind] = {
+      tone: tr.querySelector(".tone").value || null,
+      mute_tone: tr.querySelector(".mute").value || null,
+      low_tone: tr.querySelector(".low").value || null,
+      split: tr.querySelector(".split").value.trim() || null,
+    };
+  }
+  return out;
+}
+
+function saveFollow() {
+  store.set("rsk.follow", {
+    sound: $("followSound").checked, realPitch: $("followRealPitch").checked,
+    offset: $("followOffset").value, parts: followSettings(),
+  });
+}
+
+function followRequest() {
+  const parts = followSettings();
+  return {
+    sound: $("followSound").checked,
+    real_pitch: $("followRealPitch").checked,
+    offset_ms: Number($("followOffset").value) || 0,
+    guitar: parts.guitar,
+    bass: parts.bass,
+  };
+}
+
+// While following, other tones load the arrangement again (a moment dark); the offset applies as it is
+let followTimer = null;
+function followChanged(tonesChanged) {
+  saveFollow();
+  if (state.mode !== "following") return;
+  clearTimeout(followTimer);
+  followTimer = setTimeout(() => act(() => api("/api/follow/update", {...followRequest(), tones_changed: tonesChanged})), 150);
+}
+
+function renderFollow() {
+  const saved = store.get("rsk.follow", {});
+  $("followSound").checked = !!saved.sound;
+  $("followRealPitch").checked = !!saved.realPitch;
+  $("followOffset").value = saved.offset || 0;
+  for (const tr of $("followParts").querySelectorAll("tbody tr")) {
+    const kind = tr.dataset.kind;
+    const cfg = (saved.parts || {})[kind] || {};
+    const changed = () => followChanged(true);
+    const cells = [
+      toneSelect(kind === "bass" ? "Default (085)" : "Default (079)", cfg.tone, changed),
+      toneSelect("Same", cfg.mute_tone, changed),
+      toneSelect("Same", cfg.low_tone, changed),
+      splitInput(cfg.split, changed),
+    ];
+    ["tone", "mute", "low", ""].forEach((cls, k) => {
+      const td = document.createElement("td");
+      if (cls) cells[k].className = cls;
+      td.appendChild(cells[k]);
+      tr.appendChild(td);
+    });
+  }
+  $("followSound").addEventListener("change", () => followChanged(true));
+  $("followRealPitch").addEventListener("change", () => followChanged(true));
+  $("followOffset").addEventListener("change", () => followChanged(false));
+}
+
+async function toggleFollow() {
+  if (state.mode === "following") {
+    await api("/api/stop", {});
+    return;
+  }
+  await api("/api/follow", followRequest());
+}
+
+// Settings
+
+async function loadSettings() {
+  const s = await api("/api/settings");
+  const ports = s.ports.includes(s.midi_port) ? s.ports : [s.midi_port, ...s.ports];
+  $("midiPort").innerHTML = ports.map((p) => `<option>${esc(p)}</option>`).join("");
+  $("midiPort").value = s.midi_port;
+  $("channel").value = s.channel;
+  $("lightsEarly").value = s.lights_early_ms;
+  $("fastestFlash").value = s.fastest_flash_ms;
+  $("gameDir").textContent = s.game_dir;
+}
+
+function settingsRequest() {
+  return {
+    midi_port: $("midiPort").value,
+    channel: Number($("channel").value),
+    lights_early_ms: Number($("lightsEarly").value) || 0,
+    fastest_flash_ms: Number($("fastestFlash").value) || 0,
+  };
+}
+
+async function saveSettings() {
+  await api("/api/settings", settingsRequest());
+  toast("Saved: the MIDI output and channel apply from the next song");
+  await loadSettings();
+}
+
+// Wiring
+
+$("search").addEventListener("input", renderLibrary);
+$("playBtn").addEventListener("click", () => act(play));
+$("pauseBtn").addEventListener("click", () => act(() => api("/api/pause", {})));
+$("stopBtn").addEventListener("click", () => act(() => api("/api/stop", {})));
+$("followBtn").addEventListener("click", () => act(toggleFollow));
+$("saveSettings").addEventListener("click", () => act(saveSettings));
+// The lights' timing applies at once, to what is playing or being followed
+for (const id of ["lightsEarly", "fastestFlash"]) {
+  $(id).addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+}
+$("reindex").addEventListener("click", () => act(async () => {
+  $("count").textContent = "Looking for new songs…";
+  await loadLibrary(await api("/api/reindex", {}));
+}));
+$("speed").addEventListener("change", () => {
+  store.set("rsk.speed", $("speed").value);
+  if (playingThis()) act(() => api("/api/speed", {speed: Number($("speed").value)}));
+});
+for (const id of ["realPitch", "silent"]) {
+  $(id).addEventListener("change", () => {
+    store.set("rsk." + id, $(id).checked);
+    liveUpdate();
+  });
+}
+$("startAt").addEventListener("change", () => {
+  const t = parseTime($("startAt").value);
+  if (t === null) { toast("Start at: a time such as 1:23"); return; }
+  $("startAt").value = fmt(t);
+  if (!playingThis()) { $("slider").value = String(t); $("pos").textContent = fmt(t); }
+  saveSong();
+});
+$("slider").addEventListener("input", () => {
+  dragging = true;
+  $("pos").textContent = fmt(Number($("slider").value));
+});
+$("slider").addEventListener("change", () => {
+  const position = Number($("slider").value);
+  dragging = false;
+  if (playingThis()) {
+    act(() => api("/api/seek", {position: position}));
+  } else {
+    $("startAt").value = fmt(position);
+    saveSong();
+  }
+});
+
+(async function start() {
+  $("speed").value = store.get("rsk.speed", "1");
+  $("realPitch").checked = !!store.get("rsk.realPitch", false);
+  $("silent").checked = !!store.get("rsk.silent", false);
+  try {
+    toneOptions = buildToneOptions(await api("/api/tones"));
+    renderFollow();
+    await Promise.all([loadLibrary(), loadSettings()]);
+    const last = store.get("rsk.last", null);
+    if (last && songs.some((s) => s.id === last)) await selectSong(last);
+  } catch (e) {
+    toast(e.message);
+  }
+  poll();
+})();
+</script>
+</body>
+</html>

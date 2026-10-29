@@ -31,6 +31,7 @@ runs only read new or changed archives. The game folder is RS Re-ARMed's, unless
 ## Use
 
 ```sh
+.venv/bin/rs-keylights gui                       # a page in the browser for all of the below
 .venv/bin/rs-keylights follow                      # Ctrl-C stops
 .venv/bin/rs-keylights follow --sound --tone 178   # play the notes too, on a saw lead
 .venv/bin/rs-keylights play "pursuit of vikings"   # the lead part, with lights and sound
@@ -87,6 +88,31 @@ Each tone option can be for one part: `--tone lead=178 --tone rhythm=79 --mute-t
 | `--real-pitch` | off | sound the notes' own pitch, not the lit keys' |
 | `--lights-early` | 15 ms | light the keys this much before the notes (`play` and `follow`) |
 | `--fastest-flash` | 70 ms | a key's repeats closer than this flash on every other note (`play` and `follow`) |
+
+## The page (`gui`)
+
+`rs-keylights gui` serves a page at `http://127.0.0.1:8040/` and opens it in the browser. It does what
+the commands do:
+
+- **Library**: every song in the game folder, searchable by song, artist or file name. Picking one shows
+  its parts, with their notes and tuning.
+- **Parts**: tick the parts to play together, how many keys each lights (4 in all), and each one's tone,
+  palm-mute tone, low tone and split note (from the keyboard's tone list).
+- **Playback**: Play, Pause and Stop, the speed, real pitch and lights only, a start time, and a slider
+  that shows where the song is and moves it while it plays.
+- **Follow Rocksmith**: start and stop following the game, with or without sound, and tones for guitar
+  and bass parts. It says when another `rs-keylights follow` (such as the RS Re-ARMed sidekick) is
+  running, since both would light the keys.
+- **Keyboard**: the MIDI output, the lights' channel, lights early and fastest flash (kept in
+  `~/Library/Application Support/rs-keylights/gui.json`), and a button to look for new songs. The two
+  timings apply at once, to what plays or is followed.
+
+Changes to the parts, their tones and the lights apply at once while a song plays, from where it is; while
+following, other tones load the arrangement again (the keys go dark for a moment).
+
+The page remembers each song's parts and tones, and its other choices, in the browser. The server
+answers only on 127.0.0.1, to pages it served. `--port` changes its port, `--no-browser` doesn't open
+the page, and `--midi-port`/`--channel` before `gui` override the saved keyboard settings for that run.
 
 ## How it works
 

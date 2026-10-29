@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
+from .gui import DEFAULT_GUI_PORT
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, Keyboard, KeyboardError
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .library import NO_NOTES, ArrangementRef, SongIndex, read_arrangements
@@ -78,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
     index = commands.add_parser("index", help="update the index of the game's songs")
     index.set_defaults(handler=run_index)
 
+    gui = commands.add_parser("gui", help="a page in the browser to pick songs, parts and tones, and play or follow")
+    gui.add_argument("--port", type=int, default=DEFAULT_GUI_PORT, help=f"its port on 127.0.0.1 (default: {DEFAULT_GUI_PORT})")
+    gui.add_argument("--overlay-port", type=int, default=DEFAULT_OVERLAY_PORT,
+                     help=f"RS Companion's stream overlay port, for following (default: {DEFAULT_OVERLAY_PORT})")
+    gui.add_argument("--no-browser", action="store_true", help="don't open the page in the browser")
+    gui.set_defaults(handler=run_gui)
     return parser
 
 
@@ -243,6 +250,36 @@ def run_follow(args: argparse.Namespace) -> int:
         keyboard.close()
         if trace is not None:
             trace.close()
+    return 0
+
+
+def run_gui(args: argparse.Namespace) -> int:
+    import webbrowser
+
+    from .gui import Gui, GuiServer
+
+    index = open_index(args)
+    overrides: dict[str, object] = {}
+    if args.midi_port != DEFAULT_PORT:
+        overrides["midi_port"] = args.midi_port
+    if args.channel != DEFAULT_CHANNEL:
+        overrides["channel"] = args.channel
+    gui = Gui(index, overlay_port=args.overlay_port, overrides=overrides)
+    try:
+        server = GuiServer(gui, args.port)
+    except OSError as exc:
+        raise OSError(f"Port {args.port} is in use ({exc.strerror}): is rs-keylights gui already running? "
+                      f"Or choose another with --port") from exc
+    print(f"{len(index)} arrangements. rs-keylights is at {server.url} . Ctrl-C stops.", flush=True)
+    if not args.no_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        gui.close()
+        server.server_close()
     return 0
 
 
