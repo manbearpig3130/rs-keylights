@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rs-keylights"
+version = "0.1.0"
+description = "Light a keyboard's keys with Rocksmith 2014's notes, live from the game or from a song file"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=42",
+    "python-rtmidi>=1.5.8",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pyright>=1.1",
+]
+
+[project.scripts]
+rs-keylights = "rs_keylights.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rs_keylights = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
