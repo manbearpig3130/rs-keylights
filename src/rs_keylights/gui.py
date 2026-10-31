@@ -1,33 +1,74 @@
 from __future__ import annotations
 
+import copy
+import hmac
+import ipaddress
 import json
+import math
 import os
+from bisect import bisect_left
+import queue
+import re
+import secrets
+import socket
+import socketserver
 import subprocess
+import tempfile
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import replace
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, cast
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, urlparse
 
-from .follow import DEFAULT_OVERLAY_PORT, OverlayClient
-from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, Keyboard
+from .follow import DEFAULT_OVERLAY_PORT, OverlayClient, PartsFor
+from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard
 from .library import NO_NOTES, ArrangementRef, SongIndex
-from .lights import LIGHTS_EARLY, MIN_PERIOD
-from .session import Following, Part, PlannedPart, Playback, plan, player_for
-from .sng import Arrangement
+from .psarc import Archive, ArchiveError
+from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
+from .parts import Part, PlannedPart, VoicesFor, plan, player_for
+from .session import Following, Playback
+from .sng import Arrangement, Section
+from .keyshow import KeyShow
+from .songkey import Key, find_key, scale_show, shapes, tuning_name
 from .sound import CHANNEL_SETS, SoundChoice, Voices, parse_note
 from .tones import TONES, Tone, tone
+from .watch import Watch
 
 # A page in the browser for what the commands do: the song library, parts and their tones, playback
-# with a time slider, following the game, and the keyboard's settings. The server answers on 127.0.0.1
-# only, to requests for 127.0.0.1 or localhost (not other names pointing there: DNS rebinding), and
-# changes things only for JSON requests from its own page.
+# with a time slider, following the game, and the keyboard's settings. The server answers on 127.0.0.1,
+# to requests for 127.0.0.1 or localhost (not other names pointing there: DNS rebinding), and changes
+# things only for JSON requests from its own page. With lan it answers on the network too, so a phone
+# can be the remote while the game has the screen: to the Mac's own names and addresses, and to
+# browsers that opened the link with its key once (then a cookie has it).
 
 DEFAULT_GUI_PORT = 8040
 PART_ORDER = ("lead", "rhythm", "combo", "bass")
+KINDS = ("lead", "rhythm", "bass")  # each has default tones, for parts without their own
+TONE_FIELDS = ("tone", "mute_tone", "low_tone")  # a set of tones: these tone numbers, and split (a note)
+SAME_TONE = 0  # palm mutes or low notes with the tone the rest has (over a default for them)
+SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
+WARM_AROUND = (0, 1, -1, 2, -2, 3, -3)  # the songs whose art gets ready around the one browsed or pointed at
+ARRANGEMENT_ID = re.compile(r"[0-9A-Za-z-]{1,64}")
+KEY_LETTERS = "abcdefghjkmnpqrstuvwxyz23456789"  # easy to type on a phone: no 0/o or 1/l/i
+KEY_COOKIE = "rsk_key"
+REMOTE_BUSY = 2.0  # seconds after a remote was last used that the page looks more often
+KEYS_CHANNEL = 1  # a remote's keys: no song's part and no light uses channel 1 (nor the keyboard's own keys)
+SECTION_NAMES = {"prechorus": "Pre-chorus", "postchorus": "Post-chorus", "preverse": "Pre-verse",
+                 "postvs": "Post-verse", "postverse": "Post-verse", "noguitar": "No guitar", "buildup": "Build-up",
+                 "fadein": "Fade in", "fadeout": "Fade out", "modverse": "Verse", "modchorus": "Chorus"}
+KEYS_TONE = 1  # STEREO GRAND PIANO
+KEY_RANGE = KeyRange()  # the keys that light
+TONE_NUMBERS = frozenset(t.number for t in TONES)
+COOKIE_AGE = 400 * 24 * 3600  # the most browsers keep one
+NO_KEY_PAGE = (b"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+               b"<title>rs-keylights</title><p style='font:17px -apple-system,sans-serif;margin:2em'>Open the "
+               b"link with the key once: the page on the Mac shows it under <b>Keyboard</b>, and "
+               b"<code>rs-keylights gui --lan</code> prints it.</p>")
 
 
 class GuiError(ValueError):
@@ -46,6 +87,160 @@ def part_order(ref: ArrangementRef) -> tuple[int, str]:
     return (PART_ORDER.index(ref.part) if ref.part in PART_ORDER else len(PART_ORDER), ref.part)
 
 
+def kind(ref: ArrangementRef) -> str:
+    """Whose default tones a part gets: bass, rhythm, or lead (combos too)."""
+    if ref.bass:
+        return "bass"
+    return "rhythm" if ref.part.startswith("rhythm") or ref.name.lower() == "rhythm" else "lead"
+
+
+def default_lights(kinds: list[str]) -> list[int]:
+    """The keys each of a song's parts lights by default when it's played (0: it doesn't play): with 4 parts or
+    fewer, a key each, and those left over to the lead parts and the rhythm parts in turn (to the bass only
+    without them); with more, so for the first lead, rhythm and bass part."""
+    chosen = list(range(len(kinds))) if len(kinds) <= 4 else [kinds.index(k) for k in KINDS if k in kinds]
+    lights = [1 if i in chosen else 0 for i in range(len(kinds))]
+    favoured = sorted([i for i in chosen if kinds[i] != "bass"] or chosen, key=lambda i: (kinds[i] != "lead", i))
+    for n in range(4 - len(chosen) if favoured else 0):
+        lights[favoured[n % len(favoured)]] += 1
+    return lights
+
+
+def default_follow() -> dict[str, Any]:
+    """Following's settings: real pitch, the offset, the default tones for lead, rhythm and bass parts
+    (playing songs uses them too), the tones of arrangements given their own, and the parts chosen to play
+    while an arrangement is played (all by persistent ID: {played: {arrangement: {play, lights}}}, where
+    only the one played plays on every key)."""
+    return {"real_pitch": False, "offset_ms": 0, "show_key": True, "lead": {}, "rhythm": {},
+            "bass": {}, "arrangements": {}, "parts": {}}
+
+
+def changed_follow(settings: dict[str, Any], change: dict[str, Any]) -> dict[str, Any]:
+    """Following's settings with a change to any of them, checked. Tones change field by field: an empty one
+    goes back to its default (an arrangement's: those for its kind of part)."""
+    out = copy.deepcopy(settings)
+    for key in ("real_pitch", "show_key"):  # (sound: one switch for playing and following, play options' silent)
+        if key in change:
+            out[key] = bool(change[key])
+    if "offset_ms" in change:
+        out["offset_ms"] = _number(change["offset_ms"], "offset", -2000, 2000)
+    for key in KINDS:
+        if key in change:
+            out[key] = _changed_tones(out[key], change[key])
+    arrangements = change.get("arrangements", {})
+    if not isinstance(arrangements, dict):
+        raise GuiError("Expected tones for each arrangement")
+    for arrangement_id, tones in arrangements.items():
+        arrangement_id = _arrangement_id(arrangement_id)
+        merged = _changed_tones(out["arrangements"].get(arrangement_id, {}), tones)
+        if merged:
+            out["arrangements"][arrangement_id] = merged
+        else:
+            out["arrangements"].pop(arrangement_id, None)
+    parts = change.get("parts", {})
+    if not isinstance(parts, dict):
+        raise GuiError("Expected the parts to play for each arrangement played")
+    for played, chosen in parts.items():
+        played = _arrangement_id(played)
+        if not isinstance(chosen, dict):
+            raise GuiError("Expected the parts to play")
+        along = out["parts"].setdefault(played, {})
+        for arrangement_id, fields in chosen.items():
+            arrangement_id = _arrangement_id(arrangement_id)
+            if not isinstance(fields, dict):
+                raise GuiError("Expected whether a part plays and its lit keys")
+            merged = {**along.get(arrangement_id, {}), **{k: v for k, v in fields.items() if k in ("play", "lights")}}
+            is_played, part = arrangement_id == played, {}
+            if merged.get("play") is not None and bool(merged["play"]) != is_played:
+                part["play"] = bool(merged["play"])
+            if merged.get("lights") is not None:
+                lights = int(_number(merged["lights"], "lit keys", 0, 4))
+                if lights != (4 if is_played else 0):
+                    part["lights"] = lights
+            if part:  # only what differs from the default is kept
+                along[arrangement_id] = part
+            else:
+                along.pop(arrangement_id, None)
+        if not along:
+            del out["parts"][played]
+    return out
+
+
+def _arrangement_id(value: str) -> str:
+    if not ARRANGEMENT_ID.fullmatch(value):
+        raise GuiError(f"Not an arrangement: {value!r}")
+    return value.upper()
+
+
+def _initial(artist: str) -> str:
+    """An artist's letter, going through the library a letter at a time (numbers and signs: "#")."""
+    first = artist.strip().casefold()[:1]
+    return first if first.isalpha() else "#"
+
+
+def _sections(sections: tuple[Section, ...]) -> list[dict[str, Any]]:
+    """A song's sections: each one's kind (as charted, without a number: chorus2 is a chorus), its name (the
+    kind's, and how many of them so far: "Chorus 2"), and its start and end."""
+    counts: dict[str, int] = {}
+    out = []
+    for section in sections:
+        kind = re.sub(r"\d+$", "", section.name.lower()) or section.name.lower()
+        counts[kind] = counts.get(kind, 0) + 1
+        out.append({"kind": kind, "name": f"{SECTION_NAMES.get(kind, kind.capitalize())} {counts[kind]}",
+                    "start": round(section.start, 3), "end": round(section.end, 3)})
+    return out
+
+
+def parts_chosen(settings: dict[str, Any], played: ArrangementRef,
+                 refs: list[ArrangementRef]) -> list[tuple[ArrangementRef, bool, int]]:
+    """Each arrangement of a song while one of them is played: whether it plays and the keys it lights (the
+    one played: yes, every key; the others: no, none; unless chosen otherwise for the one played)."""
+    chosen = settings["parts"].get(played.persistent_id, {})
+    out = []
+    for ref in refs:
+        own, is_played = chosen.get(ref.persistent_id, {}), ref.persistent_id == played.persistent_id
+        out.append((ref, own.get("play", is_played), own.get("lights", 4 if is_played else 0)))
+    return out
+
+
+def _changed_options(options: dict[str, Any], change: dict[str, Any]) -> dict[str, Any]:
+    """Playing's options with a change, checked: speed, real_pitch, silent, and the song picked."""
+    out = dict(options)
+    if "speed" in change:
+        out["speed"] = _number(change["speed"], "speed", 0.05, 4)
+    for key in ("real_pitch", "silent"):
+        if key in change:
+            out[key] = bool(change[key])
+    if "song" in change:
+        out["song"] = str(change["song"]) if change["song"] else None
+    return out
+
+
+def _volumes(volumes: Any) -> list[int]:
+    """Volumes kept by place (SLOTS of them, 0 to 127), checked."""
+    out = [int(_number(v, "volume", 0, 127)) for v in list(volumes)[:SLOTS]]
+    return out + [NORMAL_VOLUME] * (SLOTS - len(out))
+
+
+def _changed_tones(tones: dict[str, Any], change: Any) -> dict[str, Any]:
+    if not isinstance(change, dict):
+        raise GuiError("Expected tones")
+    merged = {**tones, **{k: v for k, v in change.items() if k in (*TONE_FIELDS, "split")}}
+    out: dict[str, Any] = {}
+    for field in TONE_FIELDS:
+        if field != "tone" and merged.get(field) in (SAME_TONE, str(SAME_TONE)) and merged.get(field) is not False:
+            out[field] = SAME_TONE  # (kept: it plays over a default)
+            continue
+        found = _tone(merged.get(field))
+        if found is not None:
+            out[field] = found.number
+    split = str(merged.get("split") or "").strip()
+    if split:
+        _split(split)
+        out["split"] = split
+    return out
+
+
 class Gui:
     def __init__(
         self,
@@ -56,8 +251,37 @@ class Gui:
         list_ports: Callable[[], list[str]] | None = None,
         other_follow: Callable[[], bool] | None = None,
         overrides: dict[str, Any] | None = None,
+        watch_factory: Callable[[Gui], Watch] = Watch,
+        trace: Callable[[dict[str, object]], None] | None = None,
     ):
         self.index = index
+        self._trace = trace  # what RS Companion reports while following, for debugging (follow.Follower's)
+        self._watch_factory = watch_factory
+        self._watch: Watch | None = None  # the Launchkey, and each followed song's key as it starts
+        self._keys: dict[str, dict[str, Any] | None] = {}  # each song's key, as the page shows it
+        self._library: dict[str, Any] | None = None  # the library as the page lists it, until it's read again
+        self._browse: dict[str, Any] | None = None  # a remote going through the library: where, and since when
+        self._loop: dict[str, Any] = {"song": None, "a": None, "b": None, "on": False}  # the A-B loop, of a song
+        self._dialling: dict[str, Any] = {"at": -math.inf}  # what a remote is setting (speed, position), and when it was last used
+        self._art: OrderedDict[str, bytes | None] = OrderedDict()  # album art as PNG, the last ones asked for
+        self._idle_show: KeyShow | None = None
+        self._show_quit = threading.Event()  # a show on the keys while nothing plays
+        self._show_thread: threading.Thread | None = None
+        # A remote's keys play the keyboard from its own MIDI thread: on the song's keyboard while one plays or
+        # is followed, else on one of their own (which a show shares while nothing plays)
+        self._keys_lock = threading.RLock()  # after _lock, when both are taken
+        self._idle_keyboard: Keyboard | None = None
+        self._followed: ArrangementRef | None = None  # following: the arrangement last played (its song stays shown)
+        self._keys_voiced: tuple[Keyboard, int] | None = None  # the keyboard given the keys' tone, and the tone
+        # Played by a thread of their own: the remote's MIDI thread only hands them on (CoreMIDI can deadlock if
+        # it waits, or opens ports); [] lets go of them all, None ends it
+        self._keys_queue: queue.Queue[list[int] | None] = queue.Queue()
+        self._keys_thread: threading.Thread | None = None
+        self._replays: dict[str, Callable[[], None]] = {}  # the parts to play again once a remote's changes pause
+        self._replay_timer: threading.Timer | None = None
+        self._warm: list[str] = []  # songs whose album art to get ready next, in the background
+        self._warm_ready = threading.Condition()
+        self._warm_thread: threading.Thread | None = None
         self.keyboard_factory = keyboard_factory
         self.settings_file = settings_file or default_settings_file()
         self.overlay_port = overlay_port
@@ -69,18 +293,64 @@ class Gui:
         self._loaded: OrderedDict[str, list[tuple[ArrangementRef, Arrangement]]] = OrderedDict()
         self._other = (0.0, False)
         self.settings: dict[str, Any] = {"midi_port": DEFAULT_PORT, "channel": DEFAULT_CHANNEL,
-                                         "lights_early_ms": LIGHTS_EARLY * 1000, "fastest_flash_ms": MIN_PERIOD * 1000}
+                                         "lights_early_ms": LIGHTS_EARLY * 1000, "fastest_flash_ms": MIN_PERIOD * 1000,
+                                         "launchkey": True, "keys_sound": True, "keys_lights": True,
+                                         "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME,
+                                         "volumes": [NORMAL_VOLUME] * SLOTS}
+        self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
+        self.follow_version = 0  # changes with them, so pages know to show them again
+        self._follow_saved = False
+        # Playing songs: the options, the song picked, and each song's parts, lit keys, tones and start
+        self.play_options: dict[str, Any] = {"speed": 1.0, "real_pitch": False, "silent": False, "song": None}
+        self.song_settings: dict[str, dict[str, Any]] = {}
+        self.play_version = 0
+        self._play_saved = False
+        self.songs_file = self.settings_file.with_name("songs.json")
+        self._lan_key: str | None = None
+        try:
+            songs = json.loads(self.songs_file.read_text())
+        except (OSError, ValueError):
+            songs = None
+        if isinstance(songs, dict):
+            self.song_settings = {sid: value for sid, value in songs.items() if isinstance(value, dict)}
         try:
             saved = json.loads(self.settings_file.read_text())
-            if isinstance(saved, dict):
-                self.settings.update({k: saved[k] for k in self.settings if k in saved})
         except (OSError, ValueError):
-            pass
+            saved = None
+        if isinstance(saved, dict):
+            if isinstance(saved.get("play"), dict):
+                try:
+                    self.play_options, self._play_saved = _changed_options(self.play_options, saved["play"]), True
+                except GuiError:
+                    pass
+            self.settings.update({k: saved[k] for k in self.settings if k in saved})
+            try:
+                self.settings["volumes"] = _volumes(self.settings["volumes"])
+                self.settings["keys_volume"] = int(_number(self.settings["keys_volume"], "volume", 0, 127))
+            except (GuiError, TypeError, ValueError):
+                self.settings.update(volumes=[NORMAL_VOLUME] * SLOTS, keys_volume=NORMAL_VOLUME)
+            if isinstance(saved.get("follow"), dict):
+                follow = dict(saved["follow"])
+                if "guitar" in follow:  # before lead and rhythm parts had defaults of their own
+                    guitar = follow.pop("guitar")
+                    follow.setdefault("lead", guitar)
+                    follow.setdefault("rhythm", guitar)
+                try:
+                    self.follow_settings, self._follow_saved = changed_follow(self.follow_settings, follow), True
+                except GuiError:
+                    pass
+            if isinstance(saved.get("lan_key"), str) and len(saved["lan_key"]) >= 8:
+                self._lan_key = saved["lan_key"]
+        self._kept = dict(self.settings)  # what the file keeps: not the command line's overrides
         self.settings.update(overrides or {})  # from the command line: for this run, not saved
 
     # Library and songs
 
     def library(self) -> dict[str, Any]:
+        """Every song, by artist, with what the index knows of it (no notes read): for the list and its details."""
+        with self._lock:
+            if self._library is not None:
+                return self._library
         songs: dict[str, list[ArrangementRef]] = {}
         for ref in self.index.arrangements():
             if ref.part not in NO_NOTES:
@@ -88,37 +358,286 @@ class Gui:
         out = []
         for sid, refs in songs.items():
             named = max(refs, key=lambda r: bool(r.artist))
+            guitar = next((r for r in sorted(refs, key=part_order) if not r.bass), refs[0])
             out.append({
                 "id": sid,
                 "artist": named.artist,
                 "song": named.song or named.song_key,
                 "file": Path(named.archive).name,
                 "parts": [r.name or r.part for r in sorted(refs, key=part_order)],
+                "album": named.album,
+                "year": named.year,
+                "length": max(r.length for r in refs),
+                "tempo": round(named.tempo),
+                "tuning": tuning_name(guitar.tuning, guitar.capo),
             })
         out.sort(key=lambda s: (s["artist"].casefold(), s["song"].casefold(), s["file"]))
-        return {"game_dir": str(self.index.game_dir), "songs": out}
+        library = {"game_dir": str(self.index.game_dir), "songs": out}
+        with self._lock:
+            self._library = library
+        return library
 
     def song(self, sid: str) -> dict[str, Any]:
+        """A song's details, with its parts as chosen to play (which, their lit keys and tones) and its start."""
         loaded = self._load(sid)
         first = loaded[0][0]
         named = next((r for r, _a in loaded if r.artist), first)
+        chosen = {p["part"]: p for p in self._song_parts(sid, loaded)}
         return {
             "id": sid,
             "artist": named.artist,
             "song": named.song or named.song_key,
+            "title": named.title,
             "file": Path(first.archive).name,
+            "key": self.song_key(sid),
             "length": max(a.length for _r, a in loaded),
+            "sections": _sections(next((a.sections for _r, a in loaded if a.sections), ())),
+            "start": self.song_settings.get(sid, {}).get("start", 0),
+            "saved": sid in self.song_settings,
+            "version": self.play_version,
             "parts": [
                 {
-                    "part": ref.part,
-                    "name": ref.name or ref.part,
-                    "bass": ref.bass,
+                    **chosen[ref.part],
                     "notes": len(a.notes),
                     "tuning": " ".join(f"{t:+d}" if t else "0" for t in a.tuning),
                 }
                 for ref, a in loaded
             ],
         }
+
+    def _song_parts(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> list[dict[str, Any]]:
+        """A song's parts as chosen to play: unless chosen otherwise, as default_lights has them."""
+        saved = self.song_settings.get(sid, {}).get("parts", {})
+        defaults = default_lights([kind(ref) for ref, _arrangement in loaded])
+        out = []
+        for i, (ref, _arrangement) in enumerate(loaded):
+            own = saved.get(ref.part, {})
+            out.append({"part": ref.part, "name": ref.name or ref.part, "kind": kind(ref),
+                        "play": bool(own.get("play", defaults[i] > 0)), "lights": int(own.get("lights", defaults[i])),
+                        "tones": {k: own[k] for k in (*TONE_FIELDS, "split") if own.get(k) not in (None, "")}})
+        return out
+
+    def set_song(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
+        """Changes to a song's parts (play, lights, and tone fields as following's) or its start, checked and
+        kept; the song goes on with them if it's playing: at once, or once changes stop coming for later
+        seconds (a remote's taps and turns)."""
+        sid = str(body.get("song", ""))
+        loaded = self._load(sid)
+        change = body.get("parts") or {}
+        if not isinstance(change, dict):
+            raise GuiError("Expected each part's choices")
+        with self._lock:
+            parts = {p["part"]: {"play": p["play"], "lights": p["lights"], **p["tones"]}
+                     for p in self._song_parts(sid, loaded)}
+            for name, fields in change.items():
+                if name not in parts:
+                    raise GuiError(f"No part {name} in this song")
+                if not isinstance(fields, dict):
+                    raise GuiError("Expected a part's choices")
+                part = parts[name]
+                tones = _changed_tones({k: part[k] for k in (*TONE_FIELDS, "split") if k in part}, fields)
+                play = bool(fields["play"]) if "play" in fields else part["play"]
+                lights = int(_number(fields["lights"], "lit keys", 0, 4)) if "lights" in fields else part["lights"]
+                parts[name] = {"play": play, "lights": lights, **tones}
+            for name, fields in change.items():  # a part turned on takes the keys still free
+                if fields.get("play") and "lights" not in fields:
+                    others = sum(p["lights"] for n, p in parts.items() if p["play"] and n != name)
+                    parts[name]["lights"] = min(parts[name]["lights"], max(0, 4 - others))
+            on = [p for p in parts.values() if p["play"]]
+            if len(on) > len(CHANNEL_SETS):
+                raise GuiError(f"{len(CHANNEL_SETS)} parts at most")
+            if sum(p["lights"] for p in on) > 4:
+                raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
+            kept = dict(self.song_settings.get(sid, {}), parts=parts)
+            if "start" in body:
+                kept["start"] = _number(body["start"], "start", 0, 24 * 3600)
+            self.song_settings[sid] = kept
+            self.play_version += 1
+            self._save_songs()
+            if any(field != "start" for field in body if field != "song"):
+                self._replay("song", lambda: self._play_on(sid), later)
+        return self.song(sid)
+
+    def set_volumes(self, changes: dict[int, Any]) -> dict[str, Any]:
+        """The volumes of songs' arrangements by their place in their song (0: the first; 0 to 127, NORMAL_VOLUME
+        as they start), the same in every song, playing or following: kept, and at once on the keyboard, the notes
+        going on. All of them. (An arrangement muted is one not played: a part's "play".)"""
+        with self._lock:
+            volumes = list(self.settings["volumes"])
+            for slot in changes:
+                if not 0 <= int(slot) < SLOTS:
+                    raise GuiError(f"Volumes for the first {SLOTS} arrangements of a song")
+            for slot, volume in changes.items():
+                volumes[int(slot)] = int(_number(volume, "volume", 0, 127))
+            self.settings["volumes"] = self._kept["volumes"] = volumes
+            self._save()
+            for slot in {int(slot) for slot in changes}:
+                self._volume_now(slot, self._volume(slot))
+        return {"volumes": volumes}
+
+    def _volume_now(self, slot: int, volume: int) -> None:
+        """(Holding _lock.) The volume of the arrangement in a place in its song on the keyboard at once, if it's
+        sounding."""
+        session = self._session
+        if isinstance(session, Playback) and session.running and self._playing:
+            sounding = [CHANNEL_SETS[i] for i, p in enumerate(self._playing["parts"]) if p["slot"] == slot]
+        elif isinstance(session, Following) and session.running:
+            sounding = [channels for ref, channels in session.follower.sounding() if self._slot(ref) == slot]
+        else:
+            return
+        for channels in sounding:
+            for channel in channels:
+                session.keyboard.set_volume(channel, volume)
+
+    def _slot(self, ref: ArrangementRef) -> int:
+        """An arrangement's place in its song (as its parts are listed: lead first)."""
+        return next((i for i, r in enumerate(self._song_refs(ref)) if r.persistent_id == ref.persistent_id), 0)
+
+    def _volume(self, slot: int) -> int:
+        """The volume of the arrangement in a place in its song."""
+        volumes = self.settings["volumes"]
+        return int(volumes[slot]) if slot < len(volumes) else NORMAL_VOLUME
+
+    def switch(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Makes a song the active one: the one Play plays and a remote shows (another one playing stops; following
+        the game goes on, the song waiting until it stops)."""
+        sid = str(body.get("song", ""))
+        self._load(sid)
+        with self._lock:
+            session = self._session
+            if isinstance(session, Playback) and session.running and self._playing and self._playing["id"] != sid:
+                self._stop()
+            self.play_options["song"], self._play_saved = sid, True
+            self.play_version += 1
+            self._save()
+        return self.state()
+
+    def toggle_real_pitch(self) -> bool:
+        """Real pitch on or off, for what's followed or played; whether it's on now."""
+        with self._lock:
+            following = isinstance(self._session, Following) and self._session.running
+        if following:
+            return bool(self.set_follow({"real_pitch": not self.follow_settings["real_pitch"]})["real_pitch"])
+        return bool(self.set_play_options({"real_pitch": not self.play_options["real_pitch"]})["real_pitch"])
+
+    # Going through the library with a remote
+
+    def browse_move(self, songs: float) -> dict[str, Any] | None:
+        """Moves a remote's place in the library by some songs (from the active song at first); the song there (its
+        place in it too, and how many songs it has: place, of)."""
+        listed = self.library()["songs"]
+        if not listed:
+            return None
+        with self._lock:
+            if self._browse is None:
+                active = self.play_options.get("song")
+                start = next((i for i, song in enumerate(listed) if song["id"] == active), 0)
+                self._browse = {"index": float(start), "version": 0}
+            index = min(max(self._browse["index"] + songs, 0.0), len(listed) - 1.0)
+            self._browse = {"index": index, "version": self._browse["version"] + 1, "at": time.monotonic()}
+        self.warm_around(listed[round(index)]["id"])
+        return {**listed[round(index)], "place": round(index), "of": len(listed)}
+
+    def browse_at(self, song_id: str | None) -> dict[str, Any] | None:
+        """Moves a remote's place in the library to a song (the active one, if not given or not listed); the song
+        there, as browse_move has it."""
+        listed = self.library()["songs"]
+        if not listed:
+            return None
+        ids = [song["id"] for song in listed]
+        active = self.play_options.get("song")
+        index = ids.index(song_id) if song_id in ids else ids.index(active) if active in ids else 0
+        with self._lock:
+            version = self._browse["version"] + 1 if self._browse is not None else 1
+            self._browse = {"index": float(index), "version": version, "at": time.monotonic()}
+        self.warm_around(listed[index]["id"])
+        return {**listed[index], "place": index, "of": len(listed)}
+
+    def browse_letter(self, steps: int) -> dict[str, Any] | None:
+        """Moves a remote's place in the library a letter at a time (its artists': the library is in their order):
+        on, to the first song of the next (past the last: the last song); back, to the first of the one it's on,
+        then of the one before. The song there, as browse_move has it."""
+        listed = self.library()["songs"]
+        if not listed:
+            return None
+        initials = [_initial(song["artist"]) for song in listed]
+        starts = [i for i in range(len(listed)) if i == 0 or initials[i] != initials[i - 1]]
+        with self._lock:
+            if self._browse is None:
+                active = self.play_options.get("song")
+                index = next((i for i, song in enumerate(listed) if song["id"] == active), 0)
+            else:
+                index = min(round(self._browse["index"]), len(listed) - 1)
+            for _step in range(abs(steps)):
+                if steps > 0:
+                    index = next((i for i in starts if i > index), len(listed) - 1)
+                else:
+                    index = max((i for i in starts if i < index), default=0)
+            version = self._browse["version"] + 1 if self._browse is not None else 1
+            self._browse = {"index": float(index), "version": version, "at": time.monotonic()}
+        self.warm_around(listed[index]["id"])
+        return {**listed[index], "place": index, "of": len(listed)}
+
+    def browse_select(self) -> dict[str, Any] | None:
+        """Switches to the song a remote stopped at; it."""
+        with self._lock:
+            browse = self._browse
+        listed = self.library()["songs"]
+        if browse is None or not listed:
+            return None
+        song = listed[min(round(browse["index"]), len(listed) - 1)]
+        self.switch({"song": song["id"]})
+        with self._lock:
+            if self._browse is not None:
+                self._browse = {**self._browse, "version": self._browse["version"] + 1, "chosen": song["id"]}
+        return song
+
+    def _browse_state(self) -> dict[str, Any] | None:
+        browse = self._browse
+        listed = (self._library or {}).get("songs", [])
+        if browse is None or "at" not in browse or not listed:
+            return None
+        return {"song": listed[min(round(browse["index"]), len(listed) - 1)]["id"], "version": browse["version"],
+                "chosen": browse.get("chosen")}
+
+    def _remote_state(self) -> dict[str, Any]:
+        dialling = self._dialling
+        return {"speed": dialling.get("speed"), "position": dialling.get("position"),
+                "busy": time.monotonic() - dialling["at"] < REMOTE_BUSY}
+
+    def play_options_info(self) -> dict[str, Any]:
+        return {**self.play_options, "saved": self._play_saved, "version": self.play_version}
+
+    def set_play_options(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Changes to the speed, real pitch, lights only (silent: following too), or the song picked, kept; a song
+        playing takes them at once."""
+        with self._lock:
+            options = _changed_options(self.play_options, body)
+            if not options["silent"] and self.play_options["silent"]:
+                self._check_sound_channel()
+            changed = {k for k in options if options[k] != self.play_options[k]}
+            self.play_options, self._play_saved = options, True
+            if changed - {"song"}:
+                self.play_version += 1
+            self._save()
+            session = self._session
+            if isinstance(session, Playback) and session.running and self._playing:
+                if "speed" in changed:
+                    session.set_speed(options["speed"])
+                if changed & {"real_pitch", "silent"}:
+                    self._play_on(self._playing["id"])
+            elif isinstance(session, Following) and session.running and "silent" in changed:  # (one switch for both)
+                self._follow_on(session)
+        return self.play_options_info()
+
+    def _play_on(self, sid: str) -> None:
+        """The song, if it's playing, goes on with its parts as chosen now, from where it is."""
+        session = self._session
+        if not isinstance(session, Playback) or not session.running or not self._playing or self._playing["id"] != sid:
+            return
+        planned, length = self._plan(sid)
+        session.replace(player_for(planned, session.keyboard, *self._light_timing()), length)
+        self._playing = self._describe(sid, planned)
 
     def _load(self, sid: str) -> list[tuple[ArrangementRef, Arrangement]]:
         with self._lock:
@@ -136,81 +655,149 @@ class Gui:
                 self._loaded.popitem(last=False)
         return loaded
 
+    def song_key(self, sid: str) -> dict[str, Any] | None:
+        """A song's key from all its arrangements' notes, for the page: its name and scale, notes outside the
+        scale it uses a lot, a key nearly as likely, and the key a guitarist's fingers play in its tuning."""
+        if sid in self._keys:
+            return self._keys[sid]
+        loaded = self._load(sid)
+        key = find_key([a for _r, a in loaded], [r.bass for r, _a in loaded])
+        info = None
+        if key is not None:
+            guitar = next((a for r, a in loaded if not r.bass), None)
+            played = shapes(key, guitar) if guitar else None
+            info = {"name": key.name, "tonic": key.tonic, "mode": key.mode, "scale": list(key.scale),
+                    "notes": list(key.notes), "other": list(key.other), "other_notes": [key.spell(pc) for pc in key.other],
+                    "alternative": key.alternative, "played_as": f"{played[0].name} in {played[1]}" if played else None}
+        self._keys[sid] = info
+        return info
+
+    def warm_around(self, sid: str) -> None:
+        """Gets the album art of the songs listed around one ready in the background (the one browsed with a
+        remote, or pointed at), so it's there at once going on through them: each is read from its archive
+        and converted, which takes a while (more on a slow drive)."""
+        listed = (self._library or {}).get("songs", [])
+        index = next((i for i, song in enumerate(listed) if song["id"] == sid), None)
+        if index is None:
+            return
+        with self._warm_ready:
+            self._warm = [listed[index + d]["id"] for d in WARM_AROUND
+                          if 0 <= index + d < len(listed) and listed[index + d]["id"] not in self._art]
+            if self._warm_thread is None:
+                self._warm_thread = threading.Thread(target=self._warm_run, name="rs-keylights art", daemon=True)
+                self._warm_thread.start()
+            self._warm_ready.notify()
+
+    def _warm_run(self) -> None:
+        while True:
+            with self._warm_ready:
+                while not self._warm:
+                    self._warm_ready.wait()
+                sid = self._warm.pop(0)
+            try:
+                self.album_art(sid)
+            except Exception:  # gone from the library: the next one
+                pass
+
+    def album_art(self, sid: str) -> bytes | None:
+        """A song's album art as PNG (its archive's texture, converted by macOS's sips), or None."""
+        with self._lock:
+            if sid in self._art:
+                self._art.move_to_end(sid)
+                return self._art[sid]
+        refs = [r for r in self.index.arrangements() if song_id(r) == sid]
+        if not refs:
+            raise GuiError("No such song")
+        art = None
+        try:
+            with Archive(Path(refs[0].archive)) as archive:
+                key = refs[0].song_key.lower()
+                names = sorted((n for n in archive.names if n.startswith("gfxassets/album_art/") and n.endswith(".dds")),
+                               key=lambda n: (key not in n.lower(), not n.endswith("_256.dds")))  # its own, biggest
+                if names:
+                    art = _png(archive.read(names[0]))
+        except (OSError, ArchiveError):
+            art = None
+        with self._lock:
+            self._art[sid] = art
+            while len(self._art) > 128:
+                self._art.popitem(last=False)
+        return art
+
     def tones(self) -> list[dict[str, Any]]:
         return [{"number": t.number, "name": t.name, "group": t.group} for t in TONES]
 
     # Playing
 
-    def _plan(self, body: dict[str, Any]) -> tuple[list[PlannedPart], float]:
-        """The parts to play from a request, checked and planned, and the song's length."""
-        loaded = dict((ref.part, (ref, a)) for ref, a in self._load(str(body.get("song", ""))))
-        wanted = body.get("parts") or []
-        if not isinstance(wanted, list) or not wanted:
-            raise GuiError("Choose a part to play")
-        if len(wanted) > len(CHANNEL_SETS):
-            raise GuiError(f"{len(CHANNEL_SETS)} parts at most")
-        silent = bool(body.get("silent"))
+    def _plan(self, sid: str) -> tuple[list[PlannedPart], float]:
+        """A song's parts as chosen, planned, and the song's length."""
+        loaded = self._load(sid)
+        by_part = {ref.part: (ref, a) for ref, a in loaded}
+        silent = bool(self.play_options["silent"])
         main: dict[str | None, Tone | None] = {}
         low: dict[str | None, Tone | None] = {}
         mute: dict[str | None, Tone | None] = {}
         split: dict[str | None, int | None] = {}
+        volume: dict[str, int] = {}
         parts = []
-        for w in wanted:
-            name = str(w.get("part", ""))
-            if name not in loaded:
-                raise GuiError(f"No part {name} in this song")
-            lights = _number(w.get("lights", 0), "lit keys", 0, 4)
-            ref, arrangement = loaded[name]
-            parts.append(Part(ref, arrangement, int(lights)))
-            main[name], low[name], mute[name] = _tone(w.get("tone")), _tone(w.get("low_tone")), _tone(w.get("mute_tone"))
-            split[name] = _split(w.get("split"))
-        if sum(p.lights for p in parts) > 4:
-            raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
-        channel = int(self.settings["channel"])
-        if not silent and channel in [c for s in CHANNEL_SETS[: len(parts)] for c in s]:
-            raise GuiError(f"The lights' channel ({channel}) is one these parts sound on: choose another in Keyboard")
-        choice = None if silent else SoundChoice(main, low, mute, split, bool(body.get("real_pitch")))
-        planned = plan(parts, choice)
-        length = max([p.arrangement.length for p in parts] + [l.off for pp in planned for l in pp.lights[-1:]])
+        for slot, chosen in enumerate(self._song_parts(sid, loaded)):
+            if not chosen["play"]:
+                continue
+            name = chosen["part"]
+            ref, arrangement = by_part[name]
+            parts.append(Part(ref, arrangement, chosen["lights"]))
+            own, defaults = chosen["tones"], self.follow_settings[kind(ref)]
+
+            def pick(field: str) -> Any:  # (SAME_TONE: over a default)
+                return own.get(field, defaults.get(field))
+
+            main[name], low[name], mute[name] = _tone(pick("tone")), _tone(pick("low_tone")), _tone(pick("mute_tone"))
+            split[name], volume[name] = _split(pick("split")), self._volume(slot)
+        if not silent and parts:
+            self._check_sound_channel()
+        choice = None if silent else SoundChoice(main, low, mute, split, bool(self.play_options["real_pitch"]))
+
+        def voices_for(ref: ArrangementRef, channels: tuple[int, int, int]) -> Voices:
+            assert choice is not None
+            return replace(choice.voices(ref, channels), volume=volume[ref.part])
+
+        planned = plan(parts, voices_for if choice else None)
+        length = max([a.length for _r, a in loaded] + [l.off for pp in planned for l in pp.lights[-1:]])
         return planned, length
 
-    def _describe(self, planned: list[PlannedPart]) -> dict[str, Any]:
-        first = planned[0].part.ref
+    def _describe(self, sid: str, planned: list[PlannedPart]) -> dict[str, Any]:
+        loaded = self._load(sid)
+        first, order = loaded[0][0], [ref.part for ref, _a in loaded]
         return {
-            "id": song_id(first),
+            "id": sid,
             "title": first.title,
-            "parts": [{"part": pp.part.ref.part, "name": pp.part.ref.name,
+            "parts": [{"part": pp.part.ref.part, "name": pp.part.ref.name, "slot": order.index(pp.part.ref.part),
                        "sound": pp.voices.describe() if pp.voices else "silent",
                        "lights": pp.part.lights} for pp in planned],
         }
 
     def play(self, body: dict[str, Any]) -> dict[str, Any]:
-        planned, length = self._plan(body)
-        start = _number(body.get("start", 0), "start", 0, 24 * 3600)
-        speed = _number(body.get("speed", 1), "speed", 0.05, 4)
+        """Plays a song with its parts as chosen, from a start (or its own) at a speed (or the one chosen)."""
+        sid = str(body.get("song", ""))
+        planned, length = self._plan(sid)  # (every part muted, it plays on: they can be played again as it goes)
+        start = _number(body.get("start", self.song_settings.get(sid, {}).get("start", 0)), "start", 0, 24 * 3600)
+        speed = _number(body.get("speed", self.play_options["speed"]), "speed", 0.05, 4)
         with self._lock:
-            self._stop()
-            keyboard = self._open_keyboard()
-            try:
-                playback = Playback(player_for(planned, keyboard, *self._light_timing()), keyboard, length, start, speed)
-            except Exception:
-                keyboard.close()
-                raise
-            playback.start()
-            self._session = playback
-            self._playing = self._describe(planned)
-        return self.state()
-
-    def update(self, body: dict[str, Any]) -> dict[str, Any]:
-        """The song playing goes on with other parts, tones or lights, from where it is."""
-        planned, length = self._plan(body)
-        with self._lock:
-            session = self._session
-            if not isinstance(session, Playback) or not session.running or not self._playing \
-                    or self._playing["id"] != song_id(planned[0].part.ref):
-                raise GuiError("This song isn't playing")
-            session.replace(player_for(planned, session.keyboard, *self._light_timing()), length)
-            self._playing = self._describe(planned)
+            self._end_idle_show()
+            with self._keys_lock:  # a remote's keys wait, then play on its keyboard
+                self._stop()
+                keyboard = self._open_keyboard()
+                try:
+                    playback = Playback(player_for(planned, keyboard, *self._light_timing()), keyboard, length, start,
+                                        speed)
+                except Exception:
+                    keyboard.close()
+                    raise
+                playback.set_loop(self._loop_for(sid))
+                playback.start()
+                self._session = playback
+            self._playing = self._describe(sid, planned)
+            self.play_options["song"] = sid
         return self.state()
 
     def pause(self) -> dict[str, Any]:
@@ -233,12 +820,6 @@ class Gui:
                 self._session.seek(_number(body.get("position"), "position", 0, 24 * 3600))
         return self.state()
 
-    def speed(self, body: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            if isinstance(self._session, Playback):
-                self._session.set_speed(_number(body.get("speed"), "speed", 0.05, 4))
-        return self.state()
-
     def stop(self) -> dict[str, Any]:
         with self._lock:
             self._stop()
@@ -246,53 +827,572 @@ class Gui:
 
     # Following the game
 
-    def _follow_voices(self, body: dict[str, Any]) -> Callable[[ArrangementRef], Voices] | None:
-        if not body.get("sound"):
-            return None
-        guitar, bass = body.get("guitar") or {}, body.get("bass") or {}
-        choice = SoundChoice(
-            {None: _tone(guitar.get("tone")), "bass": _tone(bass.get("tone"))},
-            {None: _tone(guitar.get("low_tone")), "bass": _tone(bass.get("low_tone"))},
-            {None: _tone(guitar.get("mute_tone")), "bass": _tone(bass.get("mute_tone"))},
-            {None: _split(guitar.get("split")), "bass": _split(bass.get("split"))},
-            bool(body.get("real_pitch")),
-        )
-        channel = int(self.settings["channel"])
-        if channel in CHANNEL_SETS[0]:
-            raise GuiError(f"The lights' channel ({channel}) is one the sound plays on: choose another in Keyboard")
-        return choice.voices
+    def follow_info(self) -> dict[str, Any]:
+        """Following's settings, and the song being followed (once it ends, until the next, the one last
+        followed: ended): its arrangements, each with its own tones."""
+        with self._lock:
+            settings, version, session = self.follow_settings, self.follow_version, self._session
+            shown, ended = self._shown_followed(session)
+        song = None
+        if shown is not None:
+            song = {"id": song_id(shown), "title": shown.title, "played": shown.persistent_id, "ended": ended,
+                    "key": self.song_key(song_id(shown)), "arrangements": [
+                {"id": r.persistent_id, "name": r.name or r.part, "kind": kind(r),
+                 "playing": not ended and r.persistent_id == shown.persistent_id, "play": play, "lights": lights,
+                 "tones": settings["arrangements"].get(r.persistent_id, {})}
+                for r, play, lights in parts_chosen(settings, shown, self._song_refs(shown))]}
+        return {"version": version, "saved": self._follow_saved,
+                **{k: v for k, v in settings.items() if k not in ("arrangements", "parts")}, "song": song}
+
+    def _shown_followed(self, session: Any) -> tuple[ArrangementRef | None, bool]:
+        """(Holding _lock.) While following: the arrangement played, or once its song ends (until the next) the one
+        last played; and whether its song ended."""
+        if not (isinstance(session, Following) and session.running):
+            return None, False
+        current = session.follower.current
+        if current is not None:
+            self._followed = current
+        return self._followed, current is None
+
+    def set_follow(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
+        """Changes to following's settings (changed_follow), kept, and applied while following: the arrangement
+        playing goes on with other tones from where it is, at once or once changes stop coming for later
+        seconds."""
+        with self._lock:
+            settings = changed_follow(self.follow_settings, body)
+            for played_id, chosen in (body.get("parts") or {}).items():
+                played = self.index.find(played_id)
+                if played is None:
+                    raise GuiError(f"No arrangement {played_id} in the library")
+                refs = self._song_refs(played)
+                for arrangement_id, fields in chosen.items():  # one turned on takes the keys still free
+                    if isinstance(fields, dict) and fields.get("play") and "lights" not in fields:
+                        others = sum(lights for r, play, lights in parts_chosen(settings, played, refs)
+                                     if play and r.persistent_id != arrangement_id.upper())
+                        mine = next((l for r, _p, l in parts_chosen(settings, played, refs)
+                                     if r.persistent_id == arrangement_id.upper()), 0)
+                        if mine > 4 - others:
+                            settings = changed_follow(settings, {"parts": {played_id: {arrangement_id: {
+                                "lights": max(0, 4 - others)}}}})
+                on = [lights for _r, play, lights in parts_chosen(settings, played, refs) if play]
+                if len(on) > len(CHANNEL_SETS):
+                    raise GuiError(f"{len(CHANNEL_SETS)} parts at most")
+                if sum(on) > 4:
+                    raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
+            self.follow_settings, self._follow_saved = settings, True
+            self.follow_version += 1
+            self._save()
+            session = self._session
+            if isinstance(session, Following) and session.running:
+                session.set_offset(settings["offset_ms"] / 1000)
+                self._replay("follow", lambda: self._follow_on(session), later)
+            if any(kind_ in body for kind_ in KINDS) and self._playing:  # a song playing takes new defaults
+                self._play_on(self._playing["id"])
+        return self.follow_info()
+
+    def _follow_on(self, session: Following) -> None:
+        """The arrangement played goes on with the parts and tones as chosen now."""
+        if session is self._session and session.running:
+            session.set_parts(self._follow_voices(), self._follow_parts())
+
+    def _replay(self, key: str, action: Callable[[], None], later: float) -> None:
+        """(Holding _lock.) Plays the parts again with changes: now, or once they stop coming for later seconds
+        (each time stops the notes sounding)."""
+        self._replays.pop(key, None)
+        if later <= 0:
+            action()
+            return
+        self._replays[key] = action
+        if self._replay_timer is not None:
+            self._replay_timer.cancel()
+        timer = threading.Timer(later, lambda: self._replay_due(timer))
+        timer.daemon = True
+        self._replay_timer = timer
+        timer.start()
+
+    def _replay_due(self, timer: threading.Timer) -> None:
+        with self._lock:
+            if timer is not self._replay_timer:  # more changes came
+                return
+            actions, self._replays, self._replay_timer = list(self._replays.values()), {}, None
+            for action in actions:
+                try:
+                    action()
+                except Exception:  # (the song stopped meanwhile)
+                    pass
 
     def follow(self, body: dict[str, Any]) -> dict[str, Any]:
-        voices_for = self._follow_voices(body)
-        offset = _number(body.get("offset_ms", 0), "offset", -2000, 2000) / 1000
+        """Starts following the game with the settings kept (after any changes to them in the request)."""
+        if body:
+            self.set_follow(body)
         with self._lock:
-            self._stop()
-            keyboard = self._open_keyboard()
-            following = Following(OverlayClient(self.overlay_port), self.index, keyboard, voices_for, offset,
-                                  *self._light_timing())
-            following.start()
-            self._session = following
+            if not self.play_options["silent"]:
+                self._check_sound_channel()
+            self._end_idle_show()
+            with self._keys_lock:  # a remote's keys wait, then play on its keyboard
+                self._stop()
+                keyboard = self._open_keyboard()
+                following = Following(OverlayClient(self.overlay_port), self.index, keyboard, self._follow_voices(),
+                                      self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
+                                      parts_for=self._follow_parts(), trace=self._trace)
+                following.start()
+                self._session, self._followed = following, None
         return self.state()
 
-    def update_follow(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Following goes on with other tones (the arrangement playing loads again) or another offset."""
-        voices_for = self._follow_voices(body)
-        offset = _number(body.get("offset_ms", 0), "offset", -2000, 2000) / 1000
+    def show_key(self) -> None:
+        """The followed song's scale on the keys, where the song leaves them free."""
         with self._lock:
             session = self._session
-            if not isinstance(session, Following) or not session.running:
-                raise GuiError("Not following the game")
-            session.set_offset(offset)
-            if body.get("tones_changed", True):
-                session.set_voices_for(voices_for)
+            current = session.follower.current if isinstance(session, Following) and session.running else None
+        key = self.song_key(song_id(current)) if current else None
+        if isinstance(session, Following) and key:
+            session.show(scale_show(_key_of(key)))
+
+    def show_scale(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A song's scale on the keys, over and over: the song followed's or played's, else the one asked for (or
+        picked). It gives way to the song's lights, and stops for a key pressed on the keyboard."""
+        with self._lock:
+            session = self._session
+            running = session is not None and session.running
+            if isinstance(session, Following) and running:
+                current = session.follower.current
+                sid = song_id(current) if current else None
+            elif isinstance(session, Playback) and running and self._playing:
+                sid = self._playing["id"]
+            else:
+                session, sid = None, str(body.get("song") or self.play_options.get("song") or "")
+        key = self.song_key(sid) if sid else None
+        if key is None:
+            raise GuiError("No song to show the key of" if not sid else "This song has no notes to find its key from")
+        frames = scale_show(_key_of(key))
+        with self._lock:
+            if session is not None:
+                session.show(frames)
+                return self.state()
+            self._end_idle_show()
+            with self._keys_lock:
+                if self._idle_keyboard is None:
+                    self._idle_keyboard = self._open_keyboard()
+                keyboard = self._idle_keyboard
+            self._show_quit = quit_ = threading.Event()
+            self._idle_show = show = KeyShow(frames)
+            self._show_thread = threading.Thread(target=_play_show, args=(keyboard, show, quit_, self._show_done),
+                                                 daemon=True)
+            self._show_thread.start()
         return self.state()
+
+    def stop_scale(self) -> dict[str, Any]:
+        with self._lock:
+            if isinstance(self._session, (Following, Playback)):
+                self._session.stop_show()
+            self._end_idle_show()
+        return self.state()
+
+    def showing(self) -> bool:
+        with self._lock:
+            if isinstance(self._session, (Following, Playback)) and self._session.running:
+                return self._session.showing
+            return self._show_thread is not None and self._show_thread.is_alive()
+
+    def _show_done(self, keyboard: Keyboard) -> None:
+        """A show over while nothing plays: its keyboard closes, unless a remote's keys are down on it."""
+        with self._keys_lock:
+            if keyboard.holding:
+                return
+            if self._idle_keyboard is keyboard:
+                self._idle_keyboard = None
+        keyboard.close()
+
+    def _end_idle_show(self) -> None:
+        self._show_quit.set()
+        if self._show_thread is not None:
+            self._show_thread.join(timeout=2)
+        self._show_thread = None
+
+    def remote_info(self) -> dict[str, Any]:
+        """What a remote (the Launchkey) shows: the song followed, else the one playing, else the one picked on
+        the page, with its arrangements as chosen; whether they sound; and the default tones (following, whether
+        Rocksmith is reached too)."""
+        with self._lock:
+            session = self._session
+            following = isinstance(session, Following) and session.running
+            playing = self._playing["id"] if isinstance(session, Playback) and session.running and self._playing else None
+        defaults = {k: self.follow_settings[k] for k in KINDS}
+        if following:
+            info = self.follow_info()
+            connected = session.follower.connected if isinstance(session, Following) else None
+            return {"mode": "follow", "sound": not self.play_options["silent"], "real_pitch": info["real_pitch"], **defaults,
+                    "song": info["song"], "position": None, "length": None, "paused": False, "connected": connected,
+                    "volumes": list(self.settings["volumes"]),
+                    "keys": self.keys_info()}
+        sid, song = playing or self.play_options.get("song"), None
+        position = length = None
+        if sid:
+            try:
+                details = self.song(sid)
+            except (GuiError, OSError, ValueError):  # gone from the library, or its drive unplugged
+                details = None
+            if details is not None:
+                song = {"id": sid, "title": details["title"], "key": details["key"], "played": None,
+                        "sections": details["sections"], "arrangements": [{"id": p["part"], "name": p["name"], "kind": p["kind"], "playing": False,
+                                          "play": p["play"], "lights": p["lights"], "tones": p["tones"]}
+                                         for p in details["parts"]]}
+                position, length = details["start"], details["length"]
+        paused = False
+        session = self._session
+        if playing and isinstance(session, Playback):
+            position, length, paused = session.position, session.length, session.paused
+        return {"mode": "play" if playing else "idle", "sound": not self.play_options["silent"],
+                "real_pitch": self.play_options["real_pitch"], **defaults, "song": song, "position": position,
+                "length": length, "paused": paused, "speed": self.play_options["speed"],
+                "volumes": list(self.settings["volumes"]), "loop": self.loop_info(sid),
+                "keys": self.keys_info()}
+
+    def remote_dialling(self, dialling: dict[str, Any]) -> None:
+        """A remote was used: what it's setting and will apply when it stops (speed, position), for the page."""
+        self._dialling = {**dialling, "at": time.monotonic()}
+
+    def remote_seek(self, position: float) -> None:
+        """A remote's move in the song: where it plays, or, while nothing plays, where the song picked starts."""
+        with self._lock:
+            session = self._session
+            if isinstance(session, Following) and session.running:
+                return
+            if isinstance(session, Playback) and session.running:
+                session.seek(min(max(position, 0.0), session.length))
+                return
+        sid = self.play_options.get("song")
+        if sid:
+            self.set_song({"song": sid, "start": min(max(position, 0.0), self.song(sid)["length"])})
+
+    def set_loop(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The A-B loop of the song playing (else the active one), its ends on the song's beats: "a" and "b" each a
+        time (seconds), "here" (where the song is) or None (none); "move_a" and "move_b" beats to move one by (from
+        where the song is, without it); "section" loops the section the song is in (or, looping it already, stops);
+        and "on". The end without the start: the start is its section's. The start moved to or past the end, the
+        end goes (moved by beats, it stops a beat before). Playing, the song goes back to a little before the
+        start each time it reaches the end. Its ends, and whether it's on."""
+        with self._lock:
+            session = self._session
+            if isinstance(session, Following) and session.running:
+                raise GuiError("Following the game: Rocksmith's Riff Repeater loops")
+        sid = self._loop_song()
+        if not sid:
+            raise GuiError("Pick a song on the page first")
+        loaded = self._load(sid)
+        length = max(a.length for _r, a in loaded)
+        beats = sorted(next((a.beats for _r, a in loaded if a.beats), ()))
+        sections = next((a.sections for _r, a in loaded if a.sections), ())
+        here = self._here(sid)
+
+        def nearest(at: float) -> int:
+            i = bisect_left(beats, at)
+            return min((j for j in (i - 1, i) if 0 <= j < len(beats)), key=lambda j: abs(beats[j] - at))
+
+        def at(value: Any) -> float:
+            if value == "here":
+                return beats[nearest(here)] if beats else here
+            return float(_number(value, "loop end", 0, length))
+
+        with self._lock:
+            loop = dict(self._loop) if self._loop["song"] == sid else {"song": sid, "a": None, "b": None, "on": False}
+            if body.get("section"):
+                found = next((x for x in sections if x.start <= here < x.end), None)
+                if found is None:
+                    raise GuiError("No section here")
+                wanted = {"a": round(found.start, 3), "b": round(found.end, 3)}
+                looping = loop["on"] and (loop["a"], loop["b"]) == (wanted["a"], wanted["b"])
+                loop.update(wanted, on=not looping)
+            for end, other in (("a", "b"), ("b", "a")):
+                if end in body:
+                    loop[end] = None if body[end] is None else round(at(body[end]), 3)
+                    if loop[end] is not None and loop[other] is not None and (loop["a"] >= loop["b"]):
+                        loop[other] = None  # (the start past the end: the end goes; the end before the start:
+                        # the start, its section's, below)
+                if f"move_{end}" in body and beats:
+                    steps = int(_number(body[f"move_{end}"], "beats", -1000, 1000))
+                    moved = round(beats[min(max(nearest(loop[end] if loop[end] is not None else here) + steps, 0),
+                                            len(beats) - 1)], 3)
+                    if loop[other] is None or (moved < loop["b"] if end == "a" else moved > loop["a"]):
+                        loop[end] = moved
+            if loop["b"] is not None and loop["a"] is None:
+                starts = [x.start for x in sections if x.start < loop["b"]]
+                loop["a"] = round(max(starts), 3) if starts else 0.0
+                if loop["a"] >= loop["b"]:
+                    loop["a"] = loop["b"] = None
+            if "on" in body:
+                loop["on"] = bool(body["on"])
+            loop["on"] = bool(loop["on"]) and loop["a"] is not None and loop["b"] is not None
+            self._loop = loop
+            session = self._session
+            if isinstance(session, Playback) and session.running and self._playing and self._playing["id"] == sid:
+                session.set_loop(self._loop_for(sid))
+        return self.loop_info(sid)
+
+    def loop_info(self, sid: str | None) -> dict[str, Any]:
+        """The loop of a song (None: the song playing, else the active one): its start, end, and whether it's on."""
+        with self._lock:
+            loop = self._loop
+            if loop["song"] != (sid or self._loop_song()):
+                return {"a": None, "b": None, "on": False}
+            return {"a": loop["a"], "b": loop["b"], "on": loop["on"]}
+
+    def _loop_for(self, sid: str) -> tuple[float, float] | None:
+        loop = self.loop_info(sid)
+        return (loop["a"], loop["b"]) if loop["on"] else None
+
+    def _loop_song(self) -> str | None:
+        with self._lock:
+            session = self._session
+            if isinstance(session, Playback) and session.running and self._playing:
+                return str(self._playing["id"])
+            return self.play_options.get("song")
+
+    def _here(self, sid: str) -> float:
+        """Where a song is: playing, where it plays; else where it starts."""
+        with self._lock:
+            session = self._session
+            if isinstance(session, Playback) and session.running and self._playing and self._playing["id"] == sid:
+                return session.position
+        return float(self.song_settings.get(sid, {}).get("start", 0))
+
+    def remote_play(self) -> str:
+        """A remote's Play: pauses or goes on with the song playing, or plays the one picked; what it does now."""
+        with self._lock:
+            session = self._session
+            if isinstance(session, Following) and session.running:
+                raise GuiError("Following the game: Rocksmith plays the song")
+            if isinstance(session, Playback) and session.running:
+                if session.paused:
+                    if session.ended:
+                        session.seek(0)
+                    session.resume()
+                    return "playing"
+                session.pause()
+                return "paused"
+        sid = self.play_options.get("song")
+        if not sid:
+            raise GuiError("Pick a song on the page first")
+        self.play({"song": sid})
+        return "playing"
+
+    def remote_stop(self) -> str:
+        """A remote's Stop: the song playing stops (following goes on: it has its own pad)."""
+        with self._lock:
+            if isinstance(self._session, Playback) and self._session.running:
+                self._stop()
+                return "stopped"
+        return "nothing playing"
+
+    def toggle_follow(self) -> bool:
+        """A remote's follow button: following the game, or stopping; whether it's following now."""
+        with self._lock:
+            following = isinstance(self._session, Following) and self._session.running
+        if following:
+            self.stop()
+            return False
+        self.follow({})
+        return True
+
+    def change_part(self, arrangement: str, fields: dict[str, Any], later: float = 0.0) -> None:
+        """A remote's change to an arrangement of its song (play, lights, tone fields or volume), kept at once (the
+        page shows it); the song playing takes it then too, or once changes stop coming for later seconds."""
+        self.change_parts({arrangement: fields}, later)
+
+    def change_parts(self, changes: dict[str, dict[str, Any]], later: float = 0.0) -> None:
+        """A remote's changes to arrangements of its song together (change_part's, each by its ID)."""
+        info = self.remote_info()
+        song = info["song"]
+        if song is None or not changes:
+            return
+        if info["mode"] == "follow":
+            body: dict[str, Any] = {}
+            for arrangement, fields in changes.items():
+                along = {k: v for k, v in fields.items() if k in ("play", "lights")}
+                tones = {k: v for k, v in fields.items() if k in (*TONE_FIELDS, "split")}
+                if along:
+                    body.setdefault("parts", {song["played"]: {}})[song["played"]][arrangement] = along
+                if tones:
+                    body.setdefault("arrangements", {})[arrangement] = tones
+            self.set_follow(body, later)
+        else:
+            self.set_song({"song": song["id"], "parts": changes}, later)
+
+    def toggle_sound(self) -> bool:
+        """Sound on or off (off: just the lights), playing or following; whether it's on now."""
+        return not self.set_play_options({"silent": not self.play_options["silent"]})["silent"]
+
+    def start_watch(self) -> None:
+        """The Launchkey as a remote, and each followed song's key as it starts, while this runs."""
+        with self._lock:
+            if self._watch is None:
+                self._watch = self._watch_factory(self)
+                self._watch.start()
+
+    def _follow_parts(self) -> PartsFor:
+        """The parts to play while an arrangement is played, and their lit keys."""
+        settings = self.follow_settings
+
+        def parts_for(played: ArrangementRef) -> list[tuple[ArrangementRef, int]]:
+            return [(r, lights) for r, play, lights in parts_chosen(settings, played, self._song_refs(played)) if play]
+
+        return parts_for
+
+    def _song_refs(self, ref: ArrangementRef) -> list[ArrangementRef]:
+        """The arrangements of a song with notes, lead first."""
+        sid = song_id(ref)
+        return sorted((r for r in self.index.arrangements() if song_id(r) == sid and r.part not in NO_NOTES),
+                      key=part_order)
+
+    def _follow_voices(self) -> VoicesFor | None:
+        """The voices for each arrangement played: its own tones, else the defaults for its kind of part, else the
+        built-in ones (None: silent lights)."""
+        settings = self.follow_settings
+        if self.play_options["silent"]:
+            return None
+
+        def voices_for(ref: ArrangementRef, channels: tuple[int, int, int]) -> Voices:
+            own, defaults = settings["arrangements"].get(ref.persistent_id, {}), settings[kind(ref)]
+
+            def pick(field: str) -> Any:
+                return own.get(field, defaults.get(field))
+
+            voices = SoundChoice({None: _tone(pick("tone"))}, {None: _tone(pick("low_tone"))},
+                                 {None: _tone(pick("mute_tone"))}, {None: _split(pick("split"))},
+                                 settings["real_pitch"]).voices(ref, channels)
+            return replace(voices, volume=self._volume(self._slot(ref)))
+
+        return voices_for
+
+    def _check_sound_channel(self) -> None:
+        channel = int(self.settings["channel"])
+        if channel in [c for channels in CHANNEL_SETS for c in channels]:
+            raise GuiError(f"The lights' channel ({channel}) is one the sound plays on: choose another in Keyboard")
+
+    # A remote's keys (the Launchkey's), played on the keyboard
+
+    def keys_info(self) -> dict[str, Any]:
+        number = self._keys_tone()
+        found = tone(number)
+        return {"sound": bool(self.settings["keys_sound"]), "lights": bool(self.settings["keys_lights"]),
+                "tone": number, "name": f"{found.number:03d} {found.name}", "volume": int(self.settings["keys_volume"])}
+
+    def set_keys(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Whether a remote's keys sound on the keyboard, with which tone and at what volume (at once), and light
+        its keys; kept."""
+        changed: dict[str, Any] = {}
+        if "sound" in body:
+            changed["keys_sound"] = bool(body["sound"])
+        if "lights" in body:
+            changed["keys_lights"] = bool(body["lights"])
+        if "tone" in body:
+            number = int(_number(body["tone"], "tone", 0, 1000))
+            if number not in TONE_NUMBERS:
+                raise GuiError(f"No tone {number}")
+            changed["keys_tone"] = number
+        if "volume" in body:
+            changed["keys_volume"] = int(_number(body["volume"], "volume", 0, 127))
+        with self._keys_lock:
+            self.settings.update(changed)
+            keyboard = self._keys_keyboard(open_one=False)
+            if "keys_volume" in changed and keyboard is not None and self._keys_voiced is not None:
+                keyboard.set_volume(KEYS_CHANNEL, changed["keys_volume"])
+        self._kept.update(changed)
+        self._save()
+        return self.keys_info()
+
+    def play_keys(self, message: list[int]) -> None:
+        """A remote's key going down or up, its sustain pedal or its modulation, from its MIDI thread: handed on to
+        the keys' own thread."""
+        with self._keys_lock:
+            if self._keys_thread is None:
+                self._keys_thread = threading.Thread(target=self._keys_run, name="rs-keylights keys", daemon=True)
+                self._keys_thread.start()
+        self._keys_queue.put(list(message))
+
+    def release_keys(self) -> None:
+        """A remote gone: its keys let go, its notes stopped (after the ones it sent)."""
+        if self._keys_thread is not None:
+            self._keys_queue.put([])
+
+    def _keys_run(self) -> None:
+        while True:
+            message = self._keys_queue.get()
+            try:
+                if message is None:
+                    return
+                self._play_key(message) if message else self._release_keys()
+            except Exception:  # no keyboard (unplugged, or the lights on channel 1): the next key tries again
+                pass
+            finally:
+                self._keys_queue.task_done()
+
+    def _play_key(self, message: list[int]) -> None:
+        """A key sounds on a channel of its own with the keys' tone, and lights before the song's lights (which
+        get the room left until it's let go)."""
+        status, number, value = message[0] & 0xF0, message[1], message[2]
+        down = status == 0x90 and value > 0
+        sound = bool(self.settings["keys_sound"]) and not self.play_options["silent"]  # (the one mute: theirs too)
+        lights = bool(self.settings["keys_lights"])
+        with self._keys_lock:
+            keyboard = self._keys_keyboard(open_one=down and (sound or lights))
+            if keyboard is None:
+                return
+            if status == 0xB0:  # the sustain pedal, or modulation
+                if sound or value == 0:
+                    keyboard.control(KEYS_CHANNEL, number, value)
+            elif down:
+                if lights and KEY_RANGE.lowest <= number <= KEY_RANGE.highest:
+                    keyboard.hold((number,))
+                if sound:
+                    self._voice_keys(keyboard)
+                    keyboard.sound(KEYS_CHANNEL, number, value)
+            else:
+                keyboard.let_go((number,))
+                keyboard.sound(KEYS_CHANNEL, number, 0)
+
+    def _release_keys(self) -> None:
+        with self._keys_lock:
+            keyboard = self._keys_keyboard(open_one=False)
+            if keyboard is not None:
+                keyboard.let_go_all()
+
+    def _keys_keyboard(self, open_one: bool) -> Keyboard | None:
+        """The keyboard a remote's keys play: the song's while one plays or is followed, else their own (or a
+        show's while nothing plays), opened if asked."""
+        session = self._session
+        if session is not None and session.running:
+            return session.keyboard
+        if self._idle_keyboard is None and open_one:
+            self._idle_keyboard = self._open_keyboard()
+        return self._idle_keyboard
+
+    def _voice_keys(self, keyboard: Keyboard) -> None:
+        number = self._keys_tone()
+        voiced = self._keys_voiced
+        if voiced is None or voiced[0] is not keyboard or voiced[1] != number:
+            found = tone(number)
+            keyboard.set_voice(KEYS_CHANNEL, found.program, found.bank, ours=False,
+                               volume=int(self.settings["keys_volume"]))
+            self._keys_voiced = (keyboard, number)
+
+    def _keys_tone(self) -> int:
+        number = self.settings.get("keys_tone")
+        return number if isinstance(number, int) and number in TONE_NUMBERS else KEYS_TONE
 
     # State and settings
 
     def state(self) -> dict[str, Any]:
         with self._lock:
             session = self._session
-            out: dict[str, Any] = {"mode": "idle", "other_follow": self._other_follow_cached()}
+            out: dict[str, Any] = {"mode": "idle", "sound": not self.play_options["silent"],
+                                   "volumes": list(self.settings["volumes"]),
+                                   "other_follow": self._other_follow_cached(),
+                                   "follow_version": self.follow_version, "play_version": self.play_version,
+                                   "showing": self.showing(), "active": self.play_options.get("song"),
+                                   "browse": self._browse_state(), "remote": self._remote_state(),
+                                   "keys": self.keys_info(), "loop": self.loop_info(None),
+                                   "launchkey": self._watch.status if self._watch is not None else None}
             if isinstance(session, Playback):
                 if not session.running:
                     self._session = None
@@ -310,8 +1410,12 @@ class Gui:
                     out["follow"] = {"messages": list(session.messages)}
                 else:
                     current = session.follower.current
+                    shown, _ended = self._shown_followed(session)
                     out.update(mode="following", follow={
+                        "parts": session.follower.playing() if current else [],
                         "song": f"{current.title} ({current.name})" if current else None,
+                        "song_id": song_id(shown) if shown else None,  # (once its song ends, the last one)
+                        "arrangement": shown.persistent_id if shown else None,
                         "position": session.follower.position(time.monotonic()),
                         "messages": list(session.messages),
                     })
@@ -329,15 +1433,47 @@ class Gui:
         channel = int(_number(body.get("channel", self.settings["channel"]), "lights channel", 1, 16))
         early = _number(body.get("lights_early_ms", self.settings["lights_early_ms"]), "lights early", 0, 200)
         flash = _number(body.get("fastest_flash_ms", self.settings["fastest_flash_ms"]), "fastest flash", 0, 300)
+        launchkey = bool(body.get("launchkey", self.settings["launchkey"]))
         if not port:
             raise GuiError("Choose the keyboard's MIDI output")
-        self.settings.update(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash)
-        self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-        self.settings_file.write_text(json.dumps(self.settings, indent=2) + "\n")
+        changed = dict(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash, launchkey=launchkey)
+        self.settings.update(changed)
+        self._kept.update(changed)
+        self._save()
         with self._lock:  # the lights' timing applies at once; the output and channel from the next song
             if isinstance(self._session, (Playback, Following)) and self._session.running:
                 self._session.retime_lights(*self._light_timing())
         return self.get_settings()
+
+    def lan_key(self) -> str:
+        """The key a browser on the network needs (in the link the first time, then a cookie): made once, kept."""
+        with self._lock:
+            if not self._lan_key:
+                self._lan_key = "".join(secrets.choice(KEY_LETTERS) for _ in range(12))
+                self._save()
+            return self._lan_key
+
+    def _save(self) -> None:
+        """Keeps the settings (not the command line's overrides), following's once changed, and the key."""
+        with self._lock:
+            data: dict[str, Any] = dict(self._kept)
+            if self._follow_saved:
+                data["follow"] = self.follow_settings
+            if self._play_saved:
+                data["play"] = self.play_options
+            if self._lan_key:
+                data["lan_key"] = self._lan_key
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.settings_file.with_suffix(".tmp")
+            temp.write_text(json.dumps(data, indent=2) + "\n")
+            temp.replace(self.settings_file)
+
+    def _save_songs(self) -> None:
+        with self._lock:
+            self.songs_file.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.songs_file.with_suffix(".tmp")
+            temp.write_text(json.dumps(self.song_settings, indent=1) + "\n")
+            temp.replace(self.songs_file)
 
     def _light_timing(self) -> tuple[float, float]:
         """(lights early, fastest flash) in seconds."""
@@ -347,17 +1483,34 @@ class Gui:
         self.index.refresh()
         with self._lock:
             self._loaded.clear()
+            self._library = None
         return self.library()
 
     def close(self) -> None:
-        with self._lock:
-            self._stop()
+        watch, self._watch = self._watch, None
+        if watch is not None:  # first: the Launchkey given back even if something else is stuck
+            watch.stop()
+            watch.join()
+        if self._lock.acquire(timeout=5):  # (something stuck mustn't keep it from quitting)
+            try:
+                self._stop()
+            finally:
+                self._lock.release()
+        if self._keys_thread is not None:
+            self._keys_queue.put(None)
 
     def _stop(self) -> None:
-        if self._session is not None:
-            self._session.stop()
-        self._session = None
-        self._playing = None
+        """Stops what plays, and closes the keyboard a remote's keys had (before another opens: closing one
+        turns the lights' channel up again)."""
+        self._end_idle_show()
+        with self._keys_lock:
+            if self._session is not None:
+                self._session.stop()
+            self._session = None
+            self._playing = None
+            idle, self._idle_keyboard = self._idle_keyboard, None
+            if idle is not None:
+                idle.close()
 
     def _open_keyboard(self) -> Keyboard:
         keyboard = self.keyboard_factory(str(self.settings["midi_port"]), int(self.settings["channel"]))
@@ -413,6 +1566,61 @@ def _midi_outputs() -> list[str]:
         del out
 
 
+def _png(dds: bytes) -> bytes | None:
+    with tempfile.TemporaryDirectory(prefix="rs-keylights-art") as folder:
+        source, target = Path(folder) / "art.dds", Path(folder) / "art.png"
+        source.write_bytes(dds)
+        try:
+            subprocess.run(["sips", "-s", "format", "png", str(source), "--out", str(target)], capture_output=True,
+                           timeout=10, check=True)
+            return target.read_bytes()
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+
+def _key_of(info: dict[str, Any]) -> Key:
+    return Key(info["tonic"], info["mode"])
+
+
+def _play_show(keyboard: Keyboard, show: KeyShow, quit_: threading.Event, done: Callable[[Keyboard], None]) -> None:
+    """A show on the keys while nothing plays."""
+    try:
+        while not quit_.is_set() and not show.done:
+            show.step(keyboard, time.monotonic())
+            quit_.wait(0.02)
+    finally:
+        show.end(keyboard)
+        done(keyboard)
+
+
+def _bonjour_name() -> str | None:
+    """This Mac's name on the local network (NAME.local, as System Settings > Sharing shows it)."""
+    try:
+        found = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    name = found.stdout.strip()
+    return f"{name}.local" if name else None
+
+
+def _lan_address() -> str | None:
+    """This Mac's address on the network it reaches others through (nothing is sent)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.connect(("192.0.2.1", 9))  # TEST-NET-1: picks the route, not a destination
+            return probe.getsockname()[0]
+        except OSError:
+            return None
+
+
+def _is_address(text: str) -> bool:
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _other_follow_running() -> bool:
     """Another `rs-keylights follow` (e.g. the RS Re-ARMed sidekick) would light the keys too."""
     found = subprocess.run(["pgrep", "-f", "rs-keylights follow"], capture_output=True, text=True)
@@ -422,9 +1630,16 @@ def _other_follow_running() -> bool:
 class GuiServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, gui: Gui, port: int = DEFAULT_GUI_PORT):
+    def __init__(self, gui: Gui, port: int = DEFAULT_GUI_PORT, lan: bool = False, address: str | None = None):
         self.gui = gui
-        super().__init__(("127.0.0.1", port), _Handler)
+        self.lan_key = gui.lan_key() if lan else None  # on the network: the key browsers there need
+        self.bonjour = _bonjour_name() if lan else None
+        self.names = {n.lower() for n in (socket.gethostname(), self.bonjour) if n} if lan else set()
+        super().__init__((address or ("0.0.0.0" if lan else "127.0.0.1"), port), _Handler)
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)  # without HTTPServer's name lookup, which can be slow
+        self.server_name, self.server_port = "rs-keylights", self.port
 
     @property
     def port(self) -> int:
@@ -433,6 +1648,16 @@ class GuiServer(ThreadingHTTPServer):
     @property
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/"
+
+    def phone_urls(self) -> list[str]:
+        """Links for a browser on the network (a phone on the same Wi-Fi), with the key; none without lan."""
+        if not self.lan_key:
+            return []
+        return [f"http://{host}:{self.port}/?key={self.lan_key}" for host in (self.bonjour, _lan_address()) if host]
+
+    def trusted(self, client: str) -> bool:
+        """A request from this Mac: no key needed."""
+        return _is_address(client) and ipaddress.ip_address(client).is_loopback
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -443,55 +1668,111 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 (the base class's name)
         pass
 
-    def _hosts(self) -> set[str]:
-        return {f"127.0.0.1:{self._server.port}", f"localhost:{self._server.port}"}
-
-    def _send(self, status: int, body: bytes, content_type: str) -> None:
+    def _send(self, status: int, body: bytes, content_type: str, cookie: str | None = None,
+              cache: str = "no-store") -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_header("Cache-Control", cache)
+        self.send_header("Referrer-Policy", "no-referrer")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):  # the page went (reloaded or closed) first: no one to answer
+            self.close_connection = True
 
     def _json(self, status: int, value: Any) -> None:
         self._send(status, json.dumps(value).encode(), "application/json")
 
-    def _allowed(self) -> bool:
-        if self.headers.get("Host") not in self._hosts():
-            self._json(403, {"error": "Use http://127.0.0.1 or http://localhost"})
+    def _host_allowed(self) -> bool:
+        """For this server's own names and addresses (not other names pointing at it: DNS rebinding)."""
+        name, _, port = (self.headers.get("Host") or "").lower().rpartition(":")
+        server = self._server
+        if port != str(server.port):
             return False
-        return True
+        if name in ("127.0.0.1", "localhost"):
+            return True
+        return bool(server.lan_key) and (name in server.names or _is_address(name.strip("[]")))
+
+    def _link_key(self, url: ParseResult) -> str | None:
+        return parse_qs(url.query).get("key", [None])[0] if url.path == "/" else None
+
+    def _has_key(self, url: ParseResult) -> bool:
+        """The key, in the link to the page or in the cookie."""
+        given = self._link_key(url)
+        if given is None:
+            try:
+                cookie = SimpleCookie(self.headers.get("Cookie") or "")
+            except CookieError:
+                return False
+            given = cookie[KEY_COOKIE].value if KEY_COOKIE in cookie else None
+        key = self._server.lan_key
+        return bool(key and given) and hmac.compare_digest(str(given).encode(), str(key).encode())
+
+    def _allowed(self, url: ParseResult) -> bool:
+        """For this server's names, and from this Mac or a browser with the key; anything else is refused here."""
+        if not self._host_allowed():
+            self._json(403, {"error": f"Use http://127.0.0.1:{self._server.port}/"})
+            return False
+        if self._server.trusted(self.client_address[0]) or self._has_key(url):
+            return True
+        if url.path == "/":
+            self._send(403, NO_KEY_PAGE, "text/html; charset=utf-8")
+        else:
+            self._json(403, {"error": "Open the link with the key first: the page on the Mac shows it, under Keyboard"})
+        return False
 
     def do_GET(self) -> None:  # noqa: N802 (the base class's name)
-        if not self._allowed():
-            return
         url = urlparse(self.path)
+        if not self._allowed(url):
+            return
         gui = self._server.gui
         try:
             if url.path == "/":
                 page = files("rs_keylights").joinpath("gui.html").read_bytes()
-                self._send(200, page, "text/html; charset=utf-8")
+                key, given = self._server.lan_key, self._link_key(url)
+                cookie = None
+                if key and given and hmac.compare_digest(given.encode(), key.encode()):  # remembered from now on
+                    cookie = f"{KEY_COOKIE}={key}; Max-Age={COOKIE_AGE}; Path=/; HttpOnly; SameSite=Lax"
+                self._send(200, page, "text/html; charset=utf-8", cookie)
             elif url.path == "/api/library":
                 self._json(200, gui.library())
             elif url.path == "/api/song":
                 self._json(200, gui.song(parse_qs(url.query).get("id", [""])[0]))
+            elif url.path == "/api/art":
+                sid = parse_qs(url.query).get("id", [""])[0]
+                art = gui.album_art(sid)
+                gui.warm_around(sid)  # the songs around it next, in the background
+                if art is None:
+                    self._json(404, {"error": "No album art"})
+                else:
+                    self._send(200, art, "image/png", cache="private, max-age=86400")
+            elif url.path == "/api/key":
+                self._json(200, gui.song_key(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/tones":
                 self._json(200, gui.tones())
             elif url.path == "/api/state":
                 self._json(200, gui.state())
+            elif url.path == "/api/follow":
+                self._json(200, gui.follow_info())
+            elif url.path == "/api/play/options":
+                self._json(200, gui.play_options_info())
             elif url.path == "/api/settings":
-                self._json(200, gui.get_settings())
+                self._json(200, {**gui.get_settings(), "lan": bool(self._server.lan_key),
+                                 "phone": self._server.phone_urls()})
             else:
                 self._json(404, {"error": "Not found"})
         except Exception as exc:  # shown on the page
             self._json(400 if isinstance(exc, (GuiError, ValueError, OSError)) else 500, {"error": str(exc)})
 
     def do_POST(self) -> None:  # noqa: N802 (the base class's name)
-        if not self._allowed():
+        url = urlparse(self.path)
+        if not self._allowed(url):
             return
         origin = self.headers.get("Origin")
-        if origin and origin.removeprefix("http://") not in self._hosts():
+        if origin and origin.lower() != f"http://{(self.headers.get('Host') or '').lower()}":
             self._json(403, {"error": "Not from this page"})
             return
         if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
@@ -511,15 +1792,21 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/pause": gui.pause,
             "/api/resume": gui.resume,
             "/api/seek": lambda: gui.seek(body),
-            "/api/speed": lambda: gui.speed(body),
+            "/api/play/options": lambda: gui.set_play_options(body),
+            "/api/song/settings": lambda: gui.set_song(body),
+            "/api/switch": lambda: gui.switch(body),
             "/api/stop": gui.stop,
             "/api/follow": lambda: gui.follow(body),
-            "/api/update": lambda: gui.update(body),
-            "/api/follow/update": lambda: gui.update_follow(body),
+            "/api/follow/settings": lambda: gui.set_follow(body),
+            "/api/scale": lambda: gui.show_scale(body),
+            "/api/scale/stop": gui.stop_scale,
             "/api/settings": lambda: gui.set_settings(body),
+            "/api/keys": lambda: gui.set_keys(body),
+            "/api/volumes": lambda: gui.set_volumes(body.get("volumes") or {}),
+            "/api/loop": lambda: gui.set_loop(body),
             "/api/reindex": gui.reindex,
         }
-        route = routes.get(urlparse(self.path).path)
+        route = routes.get(url.path)
         if route is None:
             self._json(404, {"error": "Not found"})
             return

@@ -68,3 +68,19 @@ def test_cache_for_another_game_folder_is_ignored(tmp_path):
     cache = tmp_path / "index.json"
     SongIndex(root, cache).refresh()
     assert len(SongIndex(tmp_path / "elsewhere", cache)) == 0
+
+
+def test_the_index_keeps_a_songs_details(tmp_path):
+    from builders import N, Song, song_archive
+    from rs_keylights.library import SongIndex
+
+    extra = {"AlbumName": "Twilight", "SongYear": 2008, "SongLength": 248.5, "SongAverageTempo": "112.4",
+             "Tuning": {f"string{i}": -5 for i in range(6)}, "CapoFret": None}
+    dlc = tmp_path / "game" / "dlc"
+    dlc.mkdir(parents=True)
+    (dlc / "twilight_m.psarc").write_bytes(song_archive("twil", {"lead": ("L1", Song(levels={0: [N(1.0)]}))}, extra=extra))
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    index.refresh()
+    for found in (index.find("L1"), SongIndex(tmp_path / "game", tmp_path / "index.json").find("L1")):  # and cached
+        assert (found.album, found.year, found.length, found.tempo, found.tuning, found.capo) == (
+            "Twilight", 2008, 248.5, 112.4, (-5,) * 6, 0)

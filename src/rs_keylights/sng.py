@@ -42,11 +42,20 @@ class Note:
 
 
 @dataclass(frozen=True)
+class Section:
+    name: str  # as charted: intro, verse, chorus, riff, noguitar...
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
 class Arrangement:
     notes: tuple[Note, ...]
     tuning: tuple[int, ...]  # semitones per string, low to high
     capo: int
     length: float
+    beats: tuple[float, ...] = ()  # when each beat is
+    sections: tuple[Section, ...] = ()
 
 
 def note_name(pitch: int) -> str:
@@ -97,7 +106,7 @@ class _Reader:
 
 def parse(data: bytes, bass: bool = False) -> Arrangement:
     r = _Reader(data)
-    r.skip(16)  # beats
+    beats = tuple(r.take("f2h2i")[0] for _ in range(r.count()))
     phrase_levels = [r.take("4b2i32s")[4] for _ in range(r.count())]  # max difficulty per phrase
     chord_frets = [r.take("I6b6b6i32s")[1:7] for _ in range(r.count())]
     r.skip(2376)  # chord notes (techniques)
@@ -114,7 +123,10 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
     r.skip(260)  # events
     r.skip(8)  # tones
     r.skip(8)  # DNA
-    r.skip(88)  # sections
+    sections = []
+    for _ in range(r.count()):
+        name, _number, start, end = r.take("32siff8x36x")  # (then its phrase iterations and string mask)
+        sections.append(Section(name.split(b"\0")[0].decode("ascii", "replace"), start, end))
 
     levels: dict[int, list[tuple[int, float, int, int, int, int, float]]] = {}
     for _ in range(r.count()):
@@ -144,7 +156,7 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
     if r.pos != len(data):
         raise SngError(f"read {r.pos} of {len(data)} bytes")
     if not levels:
-        return Arrangement((), tuning, capo, length)
+        return Arrangement((), tuning, capo, length, beats, tuple(sections))
 
     open_strings = BASS if bass else GUITAR
     offsets = tuning + (0,) * (len(open_strings) - len(tuning))
@@ -167,4 +179,4 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
             if pitches:
                 notes.append(Note(time, sustain, tuple(pitches), mask))
     notes.sort(key=lambda n: n.time)
-    return Arrangement(tuple(notes), tuning, capo, length)
+    return Arrangement(tuple(notes), tuning, capo, length, beats, tuple(sections))

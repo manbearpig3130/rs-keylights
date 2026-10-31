@@ -8,9 +8,10 @@ from rs_keylights.sng import Arrangement, Note
 
 
 def test_parse_state_reads_the_readout_before_the_song_details():
-    head = {"memoryReadout": {"songTimer": 12.5, "songID": "AmonPurs", "arrangementID": "4DC3"}, "currentState": 4}
+    head = {"memoryReadout": {"songTimer": 12.5, "songID": "AmonPurs", "arrangementID": "4DC3", "gameStage": "las_game"},
+            "currentState": 4}
     body = json.dumps(head)[:-1].encode() + b',"songDetails":{"albumArt":"' + b"x" * 1000 + b'"}}'
-    assert parse_state(body) == GameState(4, 12.5, "AmonPurs", "4DC3")
+    assert parse_state(body) == GameState(4, 12.5, "AmonPurs", "4DC3", "las_game")
     assert parse_state(b'{"memoryReadout":{"songTimer":0,"songID":"","arrangementID":""},"currentState":0,'
                        b'"songDetails":null}') == GameState(0, 0.0, "", "")
     with pytest.raises(OverlayError):
@@ -225,7 +226,7 @@ class FakeSoundKeys(FakeKeys):
         self.voices = []
         self.played = []
 
-    def set_voice(self, channel, program, bank=None):
+    def set_voice(self, channel, program, bank=None, volume=100):
         self.voices.append((channel, program, bank))
 
     def play(self, channel, notes, velocity):
@@ -242,12 +243,91 @@ def test_with_sound_each_song_gets_its_voices_and_the_trace_records_the_polls():
     client, index, keys, messages, trace = FakeClient(), FakeIndex([REF]), FakeSoundKeys(), [], []
     voices = Voices(Voice(11, tone(178)), mute=Voice(13, tone(77)))
     f = Follower(client, index, keys, status=messages.append, load=lambda ref: NOTES,  # type: ignore[arg-type]
-                 voices_for=lambda ref: voices, trace=trace.append)
+                 voices_for=lambda ref, channels: voices, trace=trace.append)
     client.state = GameState(4, 9.8, "X", "ID1")
     f.step(0.0)
     assert keys.voices == [(11, 81, 2), (13, 28, 2)]
     assert messages[-1] == "Artist - Song (Lead): 2 notes; tone 178 SAW LEAD 1, palm mutes 077 MUTE GUITAR"
-    assert trace[0] == {"t": 0.0, "state": 4, "timer": 9.8, "song": "X", "arrangement": "ID1", "estimate": None}
+    assert trace[0] == {"t": 0.0, "state": 4, "stage": "", "timer": 9.8, "song": "X", "arrangement": "ID1",
+                        "estimate": None}
     assert trace[1] == {"t": 0.0, "playing": 9.8, "rate": 1.0}
     f.step(1.0)  # the timer hasn't moved for a second: paused
     assert {"t": 1.0, "stopped": True} in trace
+
+
+def test_other_tones_go_on_from_where_the_song_is():
+    from rs_keylights.sound import Voice, Voices
+    from rs_keylights.tones import tone
+
+    client, index, keys, messages, loads = FakeClient(), FakeIndex([REF]), FakeSoundKeys(), [], []
+    f = Follower(client, index, keys, status=messages.append,  # type: ignore[arg-type]
+                 load=lambda ref: loads.append(ref) or NOTES, voices_for=lambda ref, channels: Voices(Voice(11, tone(178))))
+    client.state = GameState(4, 10.05, "X", "ID1")
+    f.step(0.0)
+    assert keys.lit == {60} and keys.played == [(11, (60,), 100)]
+    f.set_parts(lambda ref, channels: Voices(Voice(11, tone(178))), None)  # the same voices: nothing to do
+    assert keys.voices == [(11, 81, 2)] and keys.lit == {60}
+    f.set_parts(lambda ref, channels: Voices(Voice(11, tone(77))), None)
+    assert keys.voices[-1] == (11, 28, 2)
+    assert messages[-1] == "Artist - Song (Lead): tone 077 MUTE GUITAR"
+    f.step(0.05)  # no new timer value: the song goes on where it was, the note again in the new tone
+    assert keys.lit == {60} and keys.played[-1] == (11, (60,), 100) and len(keys.played) == 2
+    f.set_parts(None, None)
+    assert messages[-1] == "Artist - Song (Lead): lights only"
+    f.step(0.1)
+    assert keys.lit == {60} and len(keys.played) == 2 and len(loads) == 1
+
+
+def test_other_arrangements_play_along_and_can_change_while_the_song_plays():
+    from rs_keylights.sound import SoundChoice
+    from rs_keylights.tones import tone
+
+    bass = ArrangementRef("ID2", "/x.psarc", "songs/bin/macos/x_bass.sng", "X", "Bass", "Song", "Artist")
+    bass_notes = Arrangement((Note(10.0, 1.0, (40,)),), (0,) * 4, -1, 60.0)
+    client, index, keys, messages, loads = FakeClient(), FakeIndex([REF, bass]), FakeSoundKeys(), [], []
+    choice = SoundChoice({None: tone(178)}, {}, {}, {}, False)
+    chosen = {"ID1": 4}
+    f = Follower(client, index, keys, status=messages.append,  # type: ignore[arg-type]
+                 load=lambda ref: loads.append(ref.persistent_id) or (bass_notes if ref is bass else NOTES),
+                 voices_for=choice.voices, parts_for=lambda played: [(r, chosen[r.persistent_id])
+                                                                     for r in (REF, bass) if r.persistent_id in chosen])
+    client.state = GameState(4, 10.05, "X", "ID1")
+    f.step(0.0)
+    assert messages[-1] == "Artist - Song (Lead): 2 notes; tone 178 SAW LEAD 1"
+    assert keys.played == [(11, (60,), 100)] and loads == ["ID1"]
+
+    chosen.update(ID1=2, ID2=2)  # the bass along, on channels of its own, two keys each
+    f.set_parts(choice.voices, f._parts_for)
+    assert messages[-1] == ("Artist - Song (Lead): Lead lighting 2 keys, tone 178 SAW LEAD 1; "
+                            "Bass lighting 2 keys, tone 178 SAW LEAD 1")
+    assert (14, 81, 2) in keys.voices
+    f.step(0.05)
+    assert keys.lit == {60, 40} and sorted(keys.played[1:]) == [(11, (60,), 100), (14, (40,), 100)]
+
+    del chosen["ID1"]  # just the bass, and its notes aren't read again
+    f.set_parts(choice.voices, f._parts_for)
+    f.step(0.06)
+    assert keys.lit == {40} and loads == ["ID1", "ID2"]
+    assert messages[-1] == "Artist - Song (Lead): Bass lighting 2 keys, tone 178 SAW LEAD 1"
+
+
+def test_a_show_on_the_keys_gives_way_to_the_songs_lights():
+    client, index, keys, messages = FakeClient(), FakeIndex([REF]), FakeKeys(), []
+    f = follower(client, index, keys, messages)
+    client.state = GameState(4, 9.0, "X", "ID1")  # a second before the first note, at 10.0
+    f.step(0.0)
+    f.show([(0.0, (50, 52)), (0.5, (53,)), (3.0, ())])
+    f.step(0.01)
+    assert keys.lit == {50, 52}
+    client.state = GameState(4, 9.6, "X", "ID1")
+    f.step(0.6)
+    assert keys.lit == {53}
+    client.state = GameState(4, 9.9, "X", "ID1")
+    f.step(0.9)  # the first note's light is less than SHOW_GAP away: the show is over
+    assert keys.lit == set()
+    client.state = GameState(4, 10.0, "X", "ID1")
+    f.step(1.0)
+    assert keys.lit == {60}
+    f.show([(0.0, (50,)), (1.0, ())])  # the song's key is lit: no room for a show
+    f.step(1.01)
+    assert keys.lit == {60}

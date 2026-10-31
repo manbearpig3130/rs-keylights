@@ -3,65 +3,23 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable
 
-from .follow import TICK, Follower, OverlayClient
+from .follow import TICK, Follower, OverlayClient, PartsFor
 from .keyboard import Keyboard
-from .library import ArrangementRef
-from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule
-from .player import Player, Track
-from .sng import Arrangement
-from .sound import CHANNEL_SETS, SoundChoice, Voices
+from .keyshow import KeyShow
+from .lights import LIGHTS_EARLY, MIN_PERIOD
+from .parts import VoicesFor
+from .player import Player
 
-# What play and the GUI share: the parts of a song made into tracks, and sessions that run in the
-# background (play with pause, seek and speed; follow) and can be stopped.
+# Sessions that run in the background and can be stopped: playing a song (pause, seek, speed and an A-B loop
+# while it plays) and following the game.
 
-
-@dataclass(frozen=True)
-class Part:
-    ref: ArrangementRef
-    arrangement: Arrangement
-    lights: int  # keys it lights (0: none); the keyboard lights 4 in all
-
-
-@dataclass(frozen=True)
-class PlannedPart:
-    part: Part
-    shift: int  # octaves (in semitones) its lit keys are moved up
-    lights: list[Light]
-    voices: Voices | None
-
-
-def plan(parts: Sequence[Part], choice: SoundChoice | None) -> list[PlannedPart]:
-    """Lights and voices for each part. The lit parts share an octave shift, so their keys line up; each
-    part sounds on channels of its own (CHANNEL_SETS, in order)."""
-    if len(parts) > len(CHANNEL_SETS):
-        raise ValueError(f"{len(CHANNEL_SETS)} parts at most")
-    full = KeyRange()
-    lit_shift = full.octave_shift([n for p in parts if p.lights for n in p.arrangement.notes])
-    planned = []
-    for i, part in enumerate(parts):
-        shift = lit_shift if part.lights else full.octave_shift(part.arrangement.notes)
-        lights = schedule(part.arrangement.notes, KeyRange(max_lit=part.lights or 4), shift)
-        voices = choice.voices(part.ref, CHANNEL_SETS[i]).for_arrangement(shift) if choice else None
-        planned.append(PlannedPart(part, shift, lights, voices))
-    return planned
-
-
-def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float = LIGHTS_EARLY,
-               min_period: float = MIN_PERIOD) -> Player:
-    """Sets the parts' tones on the keyboard and makes their player (lead: seconds the keys light early;
-    min_period: repeats closer than this flash on every other note)."""
-    for p in planned:
-        for voice in p.voices.all() if p.voices else []:
-            keyboard.set_voice(voice.channel, voice.tone.program, voice.tone.bank)
-    return Player([Track(p.lights, p.voices, lit=bool(p.part.lights)) for p in planned], keyboard,
-                  lead=lead, min_period=min_period)
+LOOP_LEAD_IN = 1.0  # seconds of the song before a loop's start that it goes back to, to come in on it
 
 
 class Playback:
-    """Plays a song in real time in a thread: pause, resume, seek and speed while it plays. It closes the
+    """Plays a song in real time in a thread: pause, resume, seek, speed and a loop while it plays. It closes the
     keyboard when it stops, or at the song's end."""
 
     def __init__(
@@ -87,7 +45,10 @@ class Playback:
         self._lock = threading.Lock()
         self._from = min(max(start, 0.0), length)  # song position at _since
         self._since = clock()
+        self.loop: tuple[float, float] | None = None  # from, to: reaching its end, back to a little before its start
+        self._last = self._from  # the position last played to (passing the loop's end from there: back)
         player.retime(rate=speed)
+        self._show: KeyShow | None = None  # a show on the keys where the song leaves them free
         self._quit = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -120,10 +81,21 @@ class Playback:
 
     def seek(self, position: float) -> None:
         with self._lock:
-            self._from, self._since = min(max(position, 0.0), self.length), self._clock()
-            self.ended = False
-            if not self.paused:
-                self.player.seek(self._from)
+            self._seek(position)
+
+    def _seek(self, position: float) -> None:
+        self._from, self._since = min(max(position, 0.0), self.length), self._clock()
+        self._last = self._from  # (moved past the loop's end: it plays on, until it's back before it)
+        self.ended = False
+        if not self.paused:
+            self.player.seek(self._from)
+
+    def set_loop(self, loop: tuple[float, float] | None) -> None:
+        """An A-B loop (None: none): past its end already, back to its start at once."""
+        with self._lock:
+            self.loop = loop
+            if loop is not None and self._now() > loop[1]:
+                self._seek(max(loop[0] - LOOP_LEAD_IN, 0.0))
 
     def set_speed(self, speed: float) -> None:
         if speed <= 0:
@@ -132,6 +104,25 @@ class Playback:
             self._from, self._since = self._now(), self._clock()
             self.speed = speed
             self.player.retime(rate=speed)
+
+    @property
+    def showing(self) -> bool:
+        return self._show is not None
+
+    def show(self, frames, repeat: bool = True) -> None:
+        """A show on the keys where the song leaves them free (keyshow.KeyShow)."""
+        with self._lock:
+            self._end_show()
+            self._show = KeyShow(frames, repeat)
+
+    def stop_show(self) -> None:
+        with self._lock:
+            self._end_show()
+
+    def _end_show(self) -> None:
+        if self._show is not None:
+            self._show.end(self.keyboard)
+        self._show = None
 
     def retime_lights(self, lead: float, min_period: float) -> None:
         """Other lights early and fastest flash, from where the song is."""
@@ -166,10 +157,20 @@ class Playback:
         try:
             while not self._quit.is_set():
                 with self._lock:
+                    show = self._show
+                    if show is not None:
+                        show.step(self.keyboard, self._clock(), self.player, None if self.paused else self._now())
+                        if show.done:
+                            self._show = None
                     if self.paused:
-                        wait = 0.05
+                        wait = 0.02 if self._show is not None else 0.05
                     else:
                         position = self._now()
+                        loop = self.loop
+                        if loop is not None and self._last < loop[1] <= position:  # its end reached: back
+                            self._seek(max(loop[0] - LOOP_LEAD_IN, 0.0))
+                            position = self._from
+                        self._last = position
                         self.player.advance(position)
                         if position >= self.length:
                             self.ended = True
@@ -181,6 +182,7 @@ class Playback:
                 self._sleep(wait)
         finally:
             with self._lock:
+                self._end_show()
                 self.player.stop()
             self.keyboard.close()
 
@@ -193,18 +195,20 @@ class Following:
         client: OverlayClient,
         index,
         keyboard: Keyboard,
-        voices_for: Callable[[ArrangementRef], Voices] | None = None,
+        voices_for: VoicesFor | None = None,
         offset: float = 0.0,
         lights_early: float = LIGHTS_EARLY,
         fastest_flash: float = MIN_PERIOD,
+        parts_for: PartsFor | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        trace: Callable[[dict[str, object]], None] | None = None,
     ):
         self.messages: deque[str] = deque(maxlen=40)
         self.keyboard = keyboard
         self.follower = Follower(client, index, keyboard, offset=offset, status=self.messages.append,
-                                 voices_for=voices_for, lights_early=lights_early, fastest_flash=fastest_flash,
-                                 clock=clock, sleep=sleep)
+                                 voices_for=voices_for, parts_for=parts_for, lights_early=lights_early,
+                                 fastest_flash=fastest_flash, clock=clock, sleep=sleep, trace=trace)
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
@@ -215,10 +219,23 @@ class Following:
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def set_voices_for(self, voices_for: Callable[[ArrangementRef], Voices] | None) -> None:
-        """Other tones (or none): the arrangement being followed is loaded again with them."""
+    def set_parts(self, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
+        """Other tones (or none) or parts: what plays goes on with them from where the song is."""
         with self._lock:
-            self.follower.set_voices_for(voices_for)
+            self.follower.set_parts(voices_for, parts_for)
+
+    @property
+    def showing(self) -> bool:
+        return self.follower.showing
+
+    def show(self, frames, repeat: bool = True) -> None:
+        """A show on the keys where the song leaves them free (follow.Follower.show)."""
+        with self._lock:
+            self.follower.show(frames, repeat)
+
+    def stop_show(self) -> None:
+        with self._lock:
+            self.follower.stop_show()
 
     def set_offset(self, offset: float) -> None:
         with self._lock:

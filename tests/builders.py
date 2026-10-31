@@ -37,6 +37,8 @@ class Song:
     capo: int = -1
     length: float = 60.0
     vocals: int = 0
+    beats: list[float] = field(default_factory=lambda: [0.0])
+    sections: list[tuple[str, float, float]] = field(default_factory=list)  # name, start, end
 
 
 def array(records: list[bytes]) -> bytes:
@@ -53,7 +55,7 @@ def note_record(n: N) -> bytes:
 
 
 def sng_plain(song: Song) -> bytes:
-    out = array([struct.pack("<fhhii", 0.0, 0, 0, 0, 0)])  # beats
+    out = array([struct.pack("<fhhii", beat, 0, 0, 0, 0) for beat in song.beats])
     out += array([struct.pack("<4b2i32s", 0, 0, 0, 0, level, 1, b"p") for level in song.phrase_levels])
     out += array([struct.pack("<I6b6b6i32s", 0, *frets, *([-1] * 6), *([-1] * 6), b"c") for frets in song.chords])
     out += array([])  # chord notes
@@ -63,7 +65,8 @@ def sng_plain(song: Song) -> bytes:
     out += array([struct.pack("<iff3i", phrase, 0.0, 0.0, 0, 0, 0) for phrase in song.iterations])
     out += array([])  # phrase extra info
     out += struct.pack("<i", 1) + struct.pack("<i", 0) + array([struct.pack("<i", 0)])  # new linked difficulties
-    out += array([]) + array([]) + array([struct.pack("<fi", 1.0, 1)]) + array([]) + array([])  # actions .. sections
+    out += array([]) + array([]) + array([struct.pack("<fi", 1.0, 1)]) + array([])  # actions .. DNA
+    out += array([struct.pack("<32siffii36s", name.encode(), 1, start, end, 0, 0, b"") for name, start, end in song.sections])
     out += struct.pack("<i", len(song.levels))
     for difficulty, notes in song.levels.items():
         out += struct.pack("<i", difficulty) + array([]) + array([]) + array([]) + array([])
@@ -111,19 +114,20 @@ def psarc(files: dict[str, bytes], encrypt: bool = True, block_size: int = 0x100
 
 
 def manifest(persistent_id: str, sng_name: str, name: str, song: str = "Song", artist: str = "Artist",
-             song_key: str = "SongKey") -> bytes:
+             song_key: str = "SongKey", extra: dict | None = None) -> bytes:
     return json.dumps({"Entries": {persistent_id: {"Attributes": {
         "PersistentID": persistent_id, "SongKey": song_key, "ArrangementName": name,
         "SongName": song, "ArtistName": artist,
         "SongAsset": f"urn:application:musicgame-song:{sng_name}",
+        **(extra or {}),
     }}}}).encode()
 
 
-def song_archive(key: str, parts: dict[str, tuple[str, Song]], **names: str) -> bytes:
-    """parts: {part: (persistent id, Song)}"""
+def song_archive(key: str, parts: dict[str, tuple[str, Song]], extra: dict | None = None, **names: str) -> bytes:
+    """parts: {part: (persistent id, Song)}; extra: more manifest attributes (album, year...)"""
     files: dict[str, bytes] = {}
     for part, (persistent_id, song) in parts.items():
         files[f"songs/bin/macos/{key}_{part}.sng"] = sng(song)
         files[f"manifests/songs_dlc_{key}/{key}_{part}.json"] = manifest(
-            persistent_id, f"{key}_{part}", part.capitalize(), song_key=key, **names)
+            persistent_id, f"{key}_{part}", part.capitalize(), song_key=key, extra=extra, **names)
     return psarc(files)

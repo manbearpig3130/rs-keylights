@@ -6,14 +6,17 @@ import urllib.error
 import urllib.request
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Sequence
 
 from .keyboard import Keyboard
 from .library import ArrangementRef
-from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, schedule
-from .player import Player, Track
-from .sng import Arrangement
-from .sound import Voices
+from .keyshow import KeyShow
+from .lights import LIGHTS_EARLY, MIN_PERIOD
+from .parts import Part, PlannedPart, VoicesFor, plan, player_for
+from .player import Player
+from .sng import Arrangement, note_name
+from .sound import CHANNEL_SETS
+from .tones import Tone
 
 # Follows the song Rocksmith plays through RS Companion's stream overlay API (RockSniffer's API,
 # 127.0.0.1:9938, Settings > Stream overlays): the song timer, the song and the selected
@@ -23,6 +26,9 @@ DEFAULT_OVERLAY_PORT = 9938
 POLL_INTERVAL = 0.1
 TICK = 0.005
 MENUS = (0, 1)  # currentState: no game, menus
+
+# The parts to play while an arrangement is played: arrangements of its song, each with the keys it lights
+PartsFor = Callable[[ArrangementRef], Sequence[tuple[ArrangementRef, int]]]
 
 
 class OverlayError(RuntimeError):
@@ -35,6 +41,7 @@ class GameState:
     timer: float
     song_key: str
     arrangement_id: str
+    stage: str = ""  # its gameStage (traced, to learn what it says, e.g. while paused)
 
 
 class OverlayClient:
@@ -68,6 +75,7 @@ def parse_state(body: bytes) -> GameState:
         timer=float(timer) if isinstance(timer, (int, float)) else 0.0,
         song_key=str(readout.get("songID") or ""),
         arrangement_id=str(readout.get("arrangementID") or ""),
+        stage=str(readout.get("gameStage") or ""),
     )
 
 
@@ -214,11 +222,11 @@ class Follower:
         client: OverlayClient,
         index: IndexProtocol,
         keyboard: Keyboard,
-        key_range: KeyRange = KeyRange(),
         offset: float = 0.0,
         status: Callable[[str], None] = print,
         load: Callable[[ArrangementRef], Arrangement] = lambda ref: ref.load(),
-        voices_for: Callable[[ArrangementRef], Voices] | None = None,
+        voices_for: VoicesFor | None = None,
+        parts_for: PartsFor | None = None,
         trace: Callable[[dict[str, object]], None] | None = None,
         lights_early: float = LIGHTS_EARLY,
         fastest_flash: float = MIN_PERIOD,
@@ -228,11 +236,11 @@ class Follower:
         self.client = client
         self.index = index
         self.keyboard = keyboard
-        self.key_range = key_range
         self.offset = offset
         self._status = status
         self._load = load
         self._voices_for = voices_for  # with sound: the voices (channels and tones) for each arrangement
+        self._parts_for = parts_for  # None: just the arrangement played, on every key
         self.lights_early = lights_early  # seconds the keys light before the notes
         self.fastest_flash = fastest_flash  # a key's repeats closer than this flash on every other note
         self._trace = trace  # what RS Companion reports and what the clock makes of it, for debugging
@@ -242,6 +250,9 @@ class Follower:
         self._arrangement_id = ""
         self._player: Player | None = None
         self.current: ArrangementRef | None = None  # the arrangement being followed
+        self._loaded: dict[str, Arrangement] = {}  # its song's arrangements read so far, by persistent ID
+        self._planned: list[PlannedPart] = []  # what plays
+        self._show: KeyShow | None = None  # a show on the keys while the song leaves them free
         self._next_poll = 0.0
         self._connected: bool | None = None
         self._playing = False
@@ -252,7 +263,32 @@ class Follower:
 
     def stop(self) -> None:
         """Turns everything off (until the next step)."""
+        self.stop_show()
         self._unload()
+
+    @property
+    def showing(self) -> bool:
+        return self._show is not None
+
+    def sounding(self) -> list[tuple[ArrangementRef, tuple[int, int, int]]]:
+        """The arrangements played, and the channels each sounds on."""
+        return [(planned.part.ref, CHANNEL_SETS[i]) for i, planned in enumerate(self._planned)]
+
+    @property
+    def connected(self) -> bool | None:
+        """It reaches RS Companion's overlay API (None: not tried yet)."""
+        return self._connected
+
+    def show(self, frames: Sequence[tuple[float, tuple[int, ...]]], repeat: bool = True) -> None:
+        """Lights a show on the keys (frames: seconds into it and the keys lit; the last one's time is its length)
+        where the song leaves them free, over and over (repeat) until it needs them or a key is pressed."""
+        self.stop_show()
+        self._show = KeyShow(frames, repeat)
+
+    def stop_show(self) -> None:
+        if self._show is not None:
+            self._show.end(self.keyboard)
+        self._show = None
 
     def set_lights(self, lights_early: float, fastest_flash: float) -> None:
         """Other lights early and fastest flash, also for the arrangement playing."""
@@ -260,10 +296,20 @@ class Follower:
         if self._player is not None:
             self._player.retime(lead=lights_early, min_period=fastest_flash)
 
-    def set_voices_for(self, voices_for: Callable[[ArrangementRef], Voices] | None) -> None:
-        """Other tones (or none, for silent lights): the arrangement playing is loaded again at the next poll."""
-        self._voices_for = voices_for
-        self._unload()
+    def set_parts(self, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
+        """Other voices (None: silent) or parts, also for the song playing: it goes on with them from where it
+        is, without reading the arrangement again."""
+        self._voices_for, self._parts_for = voices_for, parts_for
+        if self._player is None or self.current is None:
+            return
+        planned = self._plan(self.current)
+        if _sound_of(planned) == _sound_of(self._planned):
+            return
+        player = self._player_with(planned)
+        player.retime(rate=self._player.rate)
+        self._player.stop()
+        self._player = player  # the next step seeks it to where the song is
+        self._status(f"{self.current.title} ({self.current.name}): {self._describe(planned) or 'lights only'}")
 
     def run(self) -> None:
         while True:
@@ -274,9 +320,13 @@ class Follower:
         if now >= self._next_poll:
             self._next_poll = now + POLL_INTERVAL
             self._poll(now)
+        position = self._song_clock.position(now) if self._player is not None else None
+        if self._show is not None:
+            self._show.step(self.keyboard, now, self._player, None if position is None else position + self.offset)
+            if self._show.done:
+                self._show = None
         if self._player is None:
             return
-        position = self._song_clock.position(now)
         if position is None:
             if self._playing:
                 self._player.stop()
@@ -303,8 +353,8 @@ class Follower:
             self._status("Connected to RS Companion")
             self._connected = True
         estimate = self._song_clock.position(now)
-        self._record({"t": now, "state": state.state, "timer": state.timer, "song": state.song_key,
-                      "arrangement": state.arrangement_id,
+        self._record({"t": now, "state": state.state, "stage": state.stage, "timer": state.timer,
+                      "song": state.song_key, "arrangement": state.arrangement_id,
                       "estimate": None if estimate is None else round(estimate, 3)})
 
         arrangement_id = state.arrangement_id if state.state not in MENUS else ""
@@ -330,19 +380,59 @@ class Follower:
         except Exception as exc:  # a broken or unreadable song file: keep following the game
             self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
             return None
-        shift = self.key_range.octave_shift(arrangement.notes)
-        lights = schedule(arrangement.notes, self.key_range, shift)
-        moved = ", an octave up" if shift == 12 else f", {shift // 12} octaves up" if shift else ""
-        if self._voices_for is None:
-            self._status(f"{ref.title} ({ref.name}): {len(lights)} notes{moved}")
-            self.current = ref
-            return Player([Track(lights)], self.keyboard, lead=self.lights_early, min_period=self.fastest_flash)
-        voices = self._voices_for(ref).for_arrangement(shift)
-        for voice in voices.all():
-            self.keyboard.set_voice(voice.channel, voice.tone.program, voice.tone.bank)
-        self._status(f"{ref.title} ({ref.name}): {len(lights)} notes{moved}; {voices.describe()}")
-        self.current = ref
-        return Player([Track(lights, voices)], self.keyboard, lead=self.lights_early, min_period=self.fastest_flash)
+        self.current, self._loaded = ref, {ref.persistent_id: arrangement}
+        planned = self._plan(ref)
+        notes = ""
+        for p in planned:
+            if p.part.ref == ref:
+                moved = ", an octave up" if p.shift == 12 else f", {p.shift // 12} octaves up" if p.shift else ""
+                notes = f": {len(p.lights)} notes{moved}"
+        described = self._describe(planned)
+        self._status(f"{ref.title} ({ref.name}){notes}" + (f"; {described}" if described else ""))
+        return self._player_with(planned)
+
+    def _plan(self, current: ArrangementRef) -> list[PlannedPart]:
+        """The parts to play while this arrangement is played, read when first needed."""
+        chosen = self._parts_for(current) if self._parts_for else [(current, 4)]
+        parts = []
+        for ref, lights in list(chosen)[: len(CHANNEL_SETS)]:
+            arrangement = self._loaded.get(ref.persistent_id)
+            if arrangement is None:
+                try:
+                    arrangement = self._loaded[ref.persistent_id] = self._load(ref)
+                except Exception as exc:  # a broken song file: the other parts play on
+                    self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
+                    continue
+            parts.append(Part(ref, arrangement, lights))
+        return plan(parts, self._voices_for)
+
+    def _player_with(self, planned: list[PlannedPart]) -> Player:
+        self._planned = planned
+        return player_for(planned, self.keyboard, self.lights_early, self.fastest_flash)
+
+    def _describe(self, planned: list[PlannedPart]) -> str:
+        """How the parts play; for the arrangement played alone on every key, just its voices."""
+        if [(p.part.ref, p.part.lights) for p in planned] == [(self.current, 4)]:
+            return planned[0].voices.describe() if planned[0].voices else ""
+        return "; ".join(
+            f"{p.part.ref.name or p.part.ref.part} lighting {_keys(p.part.lights)}, "
+            f"{p.voices.describe() if p.voices else 'silent'}"
+            for p in planned
+        ) or "nothing plays"
+
+    def playing(self) -> list[dict[str, object]]:
+        """What plays, part by part: its lit keys, notes, octaves up, and tones (None: silent)."""
+        out: list[dict[str, object]] = []
+        for p in self._planned:
+            voices = p.voices
+            out.append({
+                "name": p.part.ref.name or p.part.ref.part, "lights": p.part.lights, "notes": len(p.lights),
+                "octaves": p.shift // 12,
+                "tone": _tone_text(voices.main.tone) if voices else None,
+                "mute": _tone_text(voices.mute.tone) if voices and voices.mute else None,
+                "low": f"{_tone_text(voices.low.tone)} below {note_name(voices.split)}" if voices and voices.low else None,
+            })
+        return out
 
     def _record(self, entry: dict[str, object]) -> None:
         if self._trace is not None:
@@ -353,6 +443,20 @@ class Follower:
             self._player.stop()
         self._player = None
         self.current = None
+        self._loaded, self._planned = {}, []
         self._playing = False
         self._arrangement_id = ""
         self._song_clock.reset()
+
+
+def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, int, object]]:
+    """What makes parts play differently: which, their lit keys, octave shift and voices."""
+    return [(p.part.ref.persistent_id, p.part.lights, p.shift, p.voices) for p in planned]
+
+
+def _tone_text(tone: Tone) -> str:
+    return f"{tone.number:03d} {tone.name}"
+
+
+def _keys(count: int) -> str:
+    return "no keys" if count == 0 else "1 key" if count == 1 else f"{count} keys"

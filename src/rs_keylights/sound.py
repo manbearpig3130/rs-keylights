@@ -37,6 +37,7 @@ class Voices:
     real_pitch: bool = False  # sound the notes' own pitches, not the lit keys' (moved into range)
     key_range: KeyRange = KeyRange()
     shift: int = 0  # the arrangement's octave shift, for the lit keys' pitches
+    volume: int = 100  # its channels' volume (Control Change 7; 100: as they start)
 
     def for_arrangement(self, shift: int) -> Voices:
         return replace(self, shift=shift)

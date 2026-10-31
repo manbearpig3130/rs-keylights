@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 from .psarc import Archive, ArchiveError
 from .sng import Arrangement, decrypt, parse
@@ -13,7 +13,7 @@ from .sng import Arrangement, decrypt, parse
 # reports), with an index of the game's archives that is cached between runs and updated for new
 # or changed archives.
 
-INDEX_VERSION = 1
+INDEX_VERSION = 2  # 2: with the songs' album, year, length, tempo, tuning and capo
 SNG_PREFIX = "songs/bin/macos/"
 MANIFEST_PREFIX = "manifests/"
 NO_NOTES = ("vocals", "jvocals", "showlights")  # parts without notes to play
@@ -28,6 +28,12 @@ class ArrangementRef:
     name: str  # Lead, Rhythm, Bass, ...
     song: str = ""
     artist: str = ""
+    album: str = ""
+    year: int = 0
+    length: float = 0.0  # seconds
+    tempo: float = 0.0  # average beats per minute
+    tuning: tuple[int, ...] = ()  # semitones per string, low to high
+    capo: int = 0
 
     @property
     def title(self) -> str:
@@ -89,12 +95,20 @@ def read_arrangements(path: Path) -> list[ArrangementRef]:
                 sng = sngs.get(asset) or sngs.get(Path(name).stem.lower())
                 persistent_id = str(attributes.get("PersistentID", "")).upper()
                 if sng and persistent_id:
+                    tuning = attributes.get("Tuning")
                     refs.append(ArrangementRef(
                         persistent_id, str(path), sng,
                         song_key=str(attributes.get("SongKey", "")),
                         name=str(attributes.get("ArrangementName", "")),
                         song=str(attributes.get("SongName", "")),
                         artist=str(attributes.get("ArtistName", "")),
+                        album=str(attributes.get("AlbumName") or ""),
+                        year=_number(attributes.get("SongYear"), int),
+                        length=_number(attributes.get("SongLength"), float),
+                        tempo=_number(attributes.get("SongAverageTempo"), float),
+                        tuning=tuple(_number(tuning.get(f"string{i}"), int) for i in range(6))
+                        if isinstance(tuning, dict) else (),
+                        capo=_number(attributes.get("CapoFret"), int),
                     ))
         return refs
 
@@ -161,7 +175,7 @@ class SongIndex:
         self._by_id = {}
         for entry in self._archives.values():
             for fields in entry["arrangements"]:
-                ref = ArrangementRef(**fields)
+                ref = ArrangementRef(**{**fields, "tuning": tuple(fields.get("tuning", ()))})
                 self._by_id[ref.persistent_id] = ref
 
     def _load_cache(self) -> None:
@@ -184,3 +198,11 @@ class SongIndex:
         temp = self.cache.with_suffix(".tmp")
         temp.write_text(json.dumps({"version": INDEX_VERSION, "game_dir": str(self.game_dir), "archives": self._archives}))
         temp.replace(self.cache)
+
+
+def _number(value: object, kind: type[int] | type[float]) -> Any:
+    """A manifest's number (they come as numbers, strings or nothing), else 0."""
+    try:
+        return kind(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return kind(0)

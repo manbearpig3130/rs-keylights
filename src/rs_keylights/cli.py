@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -14,7 +16,7 @@ from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .library import NO_NOTES, ArrangementRef, SongIndex, read_arrangements
 from .player import play
 from .psarc import ArchiveError
-from .session import Part, plan, player_for
+from .parts import Part, plan, player_for
 from .sng import SngError, note_name
 from .sound import BASS_TONE, CHANNEL_SETS, DEFAULT_SPLIT, GUITAR_TONE, SoundChoice, parse_note
 from .tones import TONES, Tone, find_tones, tone
@@ -84,7 +86,18 @@ def build_parser() -> argparse.ArgumentParser:
     gui.add_argument("--overlay-port", type=int, default=DEFAULT_OVERLAY_PORT,
                      help=f"RS Companion's stream overlay port, for following (default: {DEFAULT_OVERLAY_PORT})")
     gui.add_argument("--no-browser", action="store_true", help="don't open the page in the browser")
+    gui.add_argument("--trace", type=Path, metavar="FILE",
+                     help="append what RS Companion reports while following (and the timing made of it) to FILE, "
+                          "one JSON object a line, to look into how it went")
+    gui.add_argument("--lan", action="store_true",
+                     help="answer on the network too, so a phone on the same Wi-Fi can use the page: it prints a link "
+                          "with a key to open there once")
     gui.set_defaults(handler=run_gui)
+
+    launchkey = commands.add_parser("launchkey", help="show what a Launchkey MK4 sends as the page's remote, to check "
+                                                      "its buttons, strips and Scale button (quit the page first)")
+    launchkey.add_argument("--seconds", type=float, default=30, help="how long to listen (default: 30)")
+    launchkey.set_defaults(handler=run_launchkey)
     return parser
 
 
@@ -264,15 +277,31 @@ def run_gui(args: argparse.Namespace) -> int:
         overrides["midi_port"] = args.midi_port
     if args.channel != DEFAULT_CHANNEL:
         overrides["channel"] = args.channel
-    gui = Gui(index, overlay_port=args.overlay_port, overrides=overrides)
+    trace = open(args.trace, "a") if args.trace else None
+
+    def record(entry: dict[str, object]) -> None:  # (from the following thread)
+        if trace is not None:
+            trace.write(json.dumps(entry) + "\n")
+            trace.flush()
+
+    gui = Gui(index, overlay_port=args.overlay_port, overrides=overrides, trace=record if trace is not None else None)
     try:
-        server = GuiServer(gui, args.port)
+        server = GuiServer(gui, args.port, lan=args.lan)
     except OSError as exc:
         raise OSError(f"Port {args.port} is in use ({exc.strerror}): is rs-keylights gui already running? "
                       f"Or choose another with --port") from exc
     print(f"{len(index)} arrangements. rs-keylights is at {server.url} . Ctrl-C stops.", flush=True)
+    gui.start_watch()
+    for url in server.phone_urls():
+        print(f"On a phone on the same Wi-Fi, open once: {url}", flush=True)
     if not args.no_browser:
         webbrowser.open(server.url)
+
+    def quit_(_signal: int, _frame: object) -> None:
+        raise KeyboardInterrupt  # quit, or the terminal closed: stop as Ctrl-C does, giving the Launchkey back
+
+    for stop in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(stop, quit_)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -280,6 +309,30 @@ def run_gui(args: argparse.Namespace) -> int:
     finally:
         gui.close()
         server.server_close()
+        if trace is not None:
+            trace.close()
+    return 0
+
+
+def run_launchkey(args: argparse.Namespace) -> int:
+    from .launchkey import Launchkey
+
+    launchkey = Launchkey()
+    if not launchkey.open():
+        print("rs-keylights: no Launchkey MK4 found (is it plugged in?)", file=sys.stderr)
+        return 1
+    print(f"{launchkey.name}, as the remote: press its buttons and Scale, turn its knobs and slide its strips "
+          f"({args.seconds:g} seconds, Ctrl-C stops).", flush=True)
+    try:
+        end = time.monotonic() + args.seconds
+        while time.monotonic() < end:
+            for port, message, event in launchkey.received():
+                print(f"{port:4} {' '.join(f'{byte:02X}' for byte in message):12}  {event or ''}", flush=True)
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        launchkey.close()
     return 0
 
 
@@ -345,7 +398,7 @@ def run_play(args: argparse.Namespace) -> int:
         return 1
 
     parts = [Part(ref, ref.load(), counts.get(ref.part, 0)) for ref in chosen]
-    planned = plan(parts, None if args.silent else choice)
+    planned = plan(parts, None if args.silent else choice.voices)
     print(chosen[0].title)
     for p in planned:
         lit = p.part.lights

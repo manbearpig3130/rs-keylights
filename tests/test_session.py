@@ -6,7 +6,8 @@ from rs_keylights.keyboard import Keyboard
 from rs_keylights.library import read_arrangements
 from rs_keylights.player import Player, Track
 from rs_keylights.lights import Light
-from rs_keylights.session import Part, Playback, plan
+from rs_keylights.parts import Part, plan
+from rs_keylights.session import LOOP_LEAD_IN, Playback
 from rs_keylights.sound import SoundChoice
 from rs_keylights.tones import tone
 
@@ -43,7 +44,7 @@ def test_plan_shares_the_lit_parts_shift_and_gives_each_part_its_channels(tmp_pa
     refs = {r.part: r for r in read_arrangements(path)}
     parts = [Part(refs["lead"], refs["lead"].load(), 2), Part(refs["rhythm"], refs["rhythm"].load(), 2)]
     choice = SoundChoice({"lead": tone(178)}, {}, {}, {}, False)
-    planned = plan(parts, choice)
+    planned = plan(parts, choice.voices)
     assert planned[0].shift == planned[1].shift == 12
     assert [v.channel for v in planned[0].voices.all()] == [11]
     assert planned[1].voices.main.channel == 14 and planned[1].voices.main.tone.number == 79
@@ -98,3 +99,26 @@ def test_replace_goes_on_from_where_the_song_is():
     assert out.sent[:2] == [[0x83, 60, 0], [0xB3, 123, 0]] and [0x93, 64, 100] in out.sent  # old off, new lit at once
     p.replace(Player([Track([Light(1.0, 2.0, (67,))])], k), length=2.5)
     assert p.position == 2.5 and p.length == 2.5
+
+
+def test_a_loop_goes_back_to_a_little_before_its_start_on_reaching_its_end():
+    now, played = [100.0], []
+    k, _out = keyboard()
+
+    def sleep(_seconds):  # half a second a tick, the position played to each time
+        now[0] += 0.5
+        played.append(p._last)
+        if len(played) == 8:
+            p._quit.set()
+
+    p = Playback(Player([Track([Light(1.0, 9.0, (60,))])], k), k, length=20.0, start=4.5, clock=lambda: now[0],
+                 sleep=sleep)
+    p.set_loop((4.0, 6.0))
+    p._run()
+    assert played == [4.5, 5.0, 5.5, 3.0, 3.5, 4.0, 4.5, 5.0]  # its end reached: back to a second before its start
+    k, _out = keyboard()
+    p = Playback(Player([Track([Light(1.0, 9.0, (60,))])], k), k, length=20.0, start=4.5, clock=lambda: now[0])
+    p.seek(12.0)  # moved past it: it plays on (nothing to pass)
+    assert p.position == 12.0 and p._last == 12.0
+    p.set_loop((4.0, 6.0))  # set while past it: back at once
+    assert p.position == 4.0 - LOOP_LEAD_IN

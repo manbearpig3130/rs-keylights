@@ -1,7 +1,7 @@
 import pytest
 from builders import N, Song, sng, sng_plain
 
-from rs_keylights.sng import CHORD, FRET_HAND_MUTE, IGNORE, SngError, decrypt, note_name, parse
+from rs_keylights.sng import CHORD, FRET_HAND_MUTE, IGNORE, Section, SngError, decrypt, note_name, parse
 
 
 def load(song: Song, bass: bool = False):
@@ -69,3 +69,10 @@ def test_rejects_other_files_and_layout_mistakes():
 
 def test_note_name():
     assert [note_name(p) for p in (36, 47, 60, 61)] == ["C2", "B2", "C4", "C#4"]
+
+
+def test_beats_and_sections():
+    song = Song(levels={0: [N(1.0)]}, beats=[0.5, 1.0, 1.5], sections=[("intro", 0.5, 10.0), ("chorus2", 10.0, 20.0)])
+    a = parse(sng_plain(song))
+    assert a.beats == (0.5, 1.0, 1.5)
+    assert a.sections == (Section("intro", 0.5, 10.0), Section("chorus2", 10.0, 20.0))

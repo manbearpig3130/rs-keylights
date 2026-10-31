@@ -128,6 +128,10 @@ class Player:
                 self._start(ti, current)
         self._position = position
 
+    def keys_at(self, position: float) -> list[int]:
+        """The keys lit at a song position."""
+        return [k.key for k in self.display[: bisect_right(self._display_ons, position)] if k.off > position]
+
     def stop(self) -> None:
         if self._position is not None:
             self._all_off()
