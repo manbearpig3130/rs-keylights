@@ -1,3 +1,5 @@
+import math
+
 from rs_keylights.lights import Light
 from rs_keylights.player import Player, Track, play
 
@@ -6,6 +8,15 @@ class FakeKeys:
     def __init__(self):
         self.events = []
         self.lit = set()
+
+    def set_voice(self, channel, program, bank=None, ours=True, volume=100):
+        self.events.append(("voice", channel, program, bank))
+
+    def bend(self, channel, semitones):
+        self.events.append(("bend", channel, round(semitones, 2)))
+
+    def modulate(self, channel, depth):
+        self.events.append(("vibrato", channel, depth))
 
     def light(self, keys):
         self.events.append(("on", keys))
@@ -85,8 +96,14 @@ def test_play_runs_to_the_end_at_speed():
 
 
 class FakeVoices:
+    def __init__(self, ring=True, techniques=True):
+        self.ring, self.volume, self.techniques = ring, 100, techniques
+
     def pick(self, light):
         return (13 if light.keys == (64,) else 11), light.keys, 100
+
+    def notes_for(self, light):
+        return light.keys or light.pitches  # (an extra sound: no keys)
 
 
 def test_with_voices_each_light_plays_and_stops_its_sound():
@@ -147,3 +164,88 @@ def test_retime_makes_the_keys_timeline_again_and_goes_on_from_where_it_is():
     player.retime(rate=0.5)  # half speed: every one flashes
     assert len(player.display) == 8 and player.position == 0.12
     assert keys.events[-2:] == [("all off",), ("on", (60,))]  # re-lit where it is (the note at 0.1)
+
+
+def test_each_note_sounds_as_long_as_it_rings():
+    keys = FakeKeys()
+    chord = Light(1.0, 1.1, (40, 47, 52), rings=(3.0, 2.0, 3.0))  # its light short; its second string played again
+    again = Light(2.0, 2.1, (47,), rings=(2.5,))
+    player = Player([Track([chord, again], FakeVoices(), lit=False)], keys)
+    player.advance(0.5)
+    player.advance(1.5)
+    assert keys.events[-1] == ("play", 11, (40, 47, 52), 100)  # (its light off: still sounding)
+    player.advance(2.2)
+    assert keys.events[-2:] == [("stop", 11, (47,)), ("play", 11, (47,), 100)]  # (just it, played again)
+    player.advance(2.7)
+    player.advance(3.1)
+    assert keys.events[-2:] == [("stop", 11, (47,)), ("stop", 11, (40, 52))]
+    player.seek(1.5)  # from there: the notes still sounding there
+    assert keys.events[-1] == ("play", 11, (40, 47, 52), 100)
+    keys.events.clear()
+    player = Player([Track([chord, again], FakeVoices(ring=False), lit=False)], keys)  # not letting them ring
+    player.advance(0.5)
+    player.advance(1.5)
+    assert keys.events[-1] == ("stop", 11, (40, 47, 52))  # (as its light)
+
+
+def test_a_note_sounding_twice_at_once_stops_once_both_are_done():
+    keys = FakeKeys()
+    low, high = Light(1.0, 1.1, (48,), rings=(3.0,)), Light(1.5, 1.6, (48,), rings=(2.0,))  # (two strings, a note)
+    player = Player([Track([low, high], FakeVoices(), lit=False)], keys)
+    player.advance(0.5)
+    player.advance(2.5)
+    assert ("stop", 11, (48,)) not in keys.events
+    player.advance(3.1)
+    assert keys.events[-1] == ("stop", 11, (48,))
+
+
+def test_a_parts_tone_switches_as_the_song_does():
+    keys = FakeKeys()
+    changes = [(-math.inf, 11, 75, 0), (5.0, 11, 79, 0), (9.0, 11, 75, 0)]  # clean, distortion at 5, clean at 9
+    player = Player([Track([Light(1.0, 1.1, (60,))], FakeVoices(), lit=False, changes=changes)], keys)
+    player.advance(0.5)
+    assert ("voice", 11, 75, 0) in keys.events  # (from the start: as it starts)
+    player.advance(5.5)
+    assert keys.events[-1] == ("voice", 11, 79, 0)
+    player.seek(10.0)  # moved: the tone there
+    assert ("voice", 11, 75, 0) in keys.events[-3:]
+    player.seek(6.0)
+    assert ("voice", 11, 79, 0) in keys.events[-3:]
+
+
+def test_bends_and_vibrato_on_the_notes_channel_and_extras_sounding_unlit():
+    keys = FakeKeys()
+    bent = Light(1.0, 1.1, (60,), (60,), rings=(2.0,), bends=((1.5, 2.0),), vibrato=True)
+    step = Light(2.5, 2.5, (), (61,), rings=(2.8,), extra=True)
+    player = Player([Track([bent], FakeVoices(), extras=[step])], keys)
+    player.advance(0.5)
+    player.advance(1.2)
+    assert ("vibrato", 11, 64) in keys.events and not [e for e in keys.events if e[0] == "bend"]  # (held, then
+    # bent, as it nears the bend's point)
+    player.advance(1.6)
+    assert keys.events[-1] == ("bend", 11, 2.0)
+    player.advance(2.1)
+    assert keys.events[-3] == ("stop", 11, (60,)) and set(keys.events[-2:]) == {("bend", 11, 0.0), ("vibrato", 11, 0)}
+    # (back as it stops)
+    player.advance(2.6)
+    assert keys.events[-1] == ("play", 11, (61,), 100) and (61,) not in [e[1] for e in keys.events if e[0] == "on"]
+    player.seek(1.7)  # into the bend: bent again there
+    assert ("bend", 11, 2.0) in keys.events[-4:] and ("vibrato", 11, 64) in keys.events[-4:]
+    keys = FakeKeys()
+    player = Player([Track([bent], FakeVoices(techniques=False))], keys)  # (techniques off: none)
+    player.advance(0.5)
+    player.advance(2.1)
+    assert not [e for e in keys.events if e[0] in ("bend", "vibrato")]
+
+
+def test_a_part_can_sound_on_another_device_its_lights_on_the_keyboard():
+    keys, synth = FakeKeys(), FakeKeys()
+    player = Player([Track([Light(1.0, 1.5, (40,), (40,), rings=(1.5,))], FakeVoices(), sound=synth)], keys)
+    player.advance(0.5)
+    player.advance(1.2)
+    assert ("on", (40,)) in keys.events and ("play", 11, (40,), 100) in synth.events  # (lit here, sounding there)
+    assert not [e for e in keys.events if e[0] == "play"]
+    player.advance(1.6)
+    assert synth.events[-1] == ("stop", 11, (40,))
+    player.stop()
+    assert keys.events[-1] == ("all off",) and synth.events[-1] == ("all off",)

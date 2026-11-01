@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .psarc import Archive, ArchiveError
-from .sng import Arrangement, decrypt, parse
+from .sng import Arrangement, SongTone, decrypt, parse
 
 # Finds the .sng of an arrangement from its manifest PersistentID (what RS Companion's overlay API
 # reports), with an index of the game's archives that is cached between runs and updated for new
@@ -49,8 +49,40 @@ class ArrangementRef:
         return self.part == "bass" or self.name.lower() == "bass"
 
     def load(self) -> Arrangement:
+        """Its notes and the rest (and its tones, from its manifest)."""
         with Archive(Path(self.archive)) as archive:
-            return parse(decrypt(archive.read(self.sng)), bass=self.bass)
+            arrangement = parse(decrypt(archive.read(self.sng)), bass=self.bass)
+            base, tones = _song_tones(archive, self.persistent_id)
+        return replace(arrangement, base_tone=base, tones=tones)
+
+
+def _song_tones(archive: Archive, persistent_id: str) -> tuple[SongTone | None, tuple[SongTone | None, ...]]:
+    """An arrangement's tones as its manifest has them: the one it starts with, and A to D (None: none)."""
+    for name in archive.names:
+        if not (name.startswith(MANIFEST_PREFIX) and name.endswith(".json")):
+            continue
+        try:
+            manifest = json.loads(archive.read(name))
+        except (ValueError, ArchiveError):
+            continue
+        for entry in ((manifest.get("Entries") if isinstance(manifest, dict) else None) or {}).values():
+            attributes = entry.get("Attributes") if isinstance(entry, dict) else None
+            if not isinstance(attributes, dict) or str(attributes.get("PersistentID", "")).upper() != persistent_id:
+                continue
+            defined = {}
+            for tone in attributes.get("Tones") or []:
+                if isinstance(tone, dict) and tone.get("Key"):
+                    gear = tone.get("GearList")
+                    defined[str(tone["Key"])] = SongTone(str(tone.get("Name") or tone["Key"]), tuple(
+                        str(g["Key"]) for g in (gear.values() if isinstance(gear, dict) else ())
+                        if isinstance(g, dict) and g.get("Key")))
+
+            def tone_for(slot: str) -> SongTone | None:
+                key = str(attributes.get(slot) or "")
+                return defined.get(key, SongTone(key)) if key else None
+
+            return tone_for("Tone_Base"), tuple(tone_for(f"Tone_{letter}") for letter in "ABCD")
+    return None, ()
 
 
 def default_cache() -> Path:

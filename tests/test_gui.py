@@ -1,15 +1,20 @@
 import json
+import math
 import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
+from types import SimpleNamespace
 
 import pytest
 from builders import N, Song, song_archive
+from test_pedal import backup
 
-from rs_keylights.gui import Gui, GuiServer, default_lights
+from rs_keylights.gui import Gui, GuiServer, _guitar, default_lights
+from rs_keylights.songtones import KINDS as TONE_KINDS
 from rs_keylights.keyboard import Keyboard
+from rs_keylights.tones import tone
 from rs_keylights.library import SongIndex
 
 
@@ -57,7 +62,8 @@ def server(tmp_path):
     dlc.mkdir(parents=True)
     notes = [N(1.0 + i * 0.25, fret=i % 5) for i in range(40)]
     (dlc / "song_m.psarc").write_bytes(song_archive(
-        "song", {"lead": ("L", Song(levels={0: notes}, beats=[i * 0.5 for i in range(121)], sections=[
+        "song", {"lead": ("L", Song(levels={0: notes}, chords=[(0, 2, 2, -1, -1, -1)], chord_names=["Em"],
+                                    shapes={0: [(0, 1.0, 2.0)]}, beats=[i * 0.5 for i in range(121)], sections=[
             ("intro", 0.0, 10.0), ("verse", 10.0, 20.0), ("chorus", 20.0, 30.0), ("verse", 30.0, 40.0),
             ("chorus2", 40.0, 60.0)])), "rhythm": ("R", Song(levels={0: notes}))},
         song="The Pursuit", artist="Band"))
@@ -125,6 +131,7 @@ def test_page_library_song_and_tones(server):
     _, details = call(server, f"/api/song?id={urllib.request.quote(song['id'])}")
     assert [(p["part"], p["notes"], p["tuning"]) for p in details["parts"]] == [("lead", 40, "0 0 0 0 0 0"), ("rhythm", 40, "0 0 0 0 0 0")]
     assert details["length"] == 60.0
+    assert details["guitar"] == {"strings": [40, 45, 50, 55, 59, 64], "capo": 0, "tuning": "E standard", "bass": False}
     _, tones = call(server, "/api/tones")
     assert len(tones) == 426 and tones[177] == {"number": 178, "name": "SAW LEAD 1", "group": "SYNTH-LEAD"}
 
@@ -193,7 +200,10 @@ def test_settings_are_kept(server, tmp_path):
     _, settings = call(server, "/api/settings", {"midi_port": "CASIO USB-MIDI", "channel": 11})
     assert json.loads((tmp_path / "gui.json").read_text()) == {
         "midi_port": "CASIO USB-MIDI", "channel": 11, "lights_early_ms": 15, "fastest_flash_ms": 70, "launchkey": True,
-        "keys_sound": True, "keys_lights": True, "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8}
+        "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
+        "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {},
+        "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8, "pedal_backup": "",
+        "pedal_favourites": [51, 187]}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
@@ -645,3 +655,238 @@ def test_palm_mutes_can_have_the_same_tone_over_a_default(server):
     call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"mute_tone": None}}})
     assert wait_for(lambda: sounds(server)[0], lambda sound: "palm mutes 077" in sound)  # the default again
     call(server, "/api/stop", {})
+
+
+def test_a_remote_has_each_arrangements_chords_and_where_the_song_is(server):
+    sid = first_song(server)
+    call(server, "/api/switch", {"song": sid})
+    lead, rhythm = server.gui.remote_info()["song"]["arrangements"]
+    assert [(c.name, c.start, c.end) for c in lead["chords"]] == [("Em", 1.0, 2.0)] and rhythm["chords"] == ()
+    assert server.gui.song_position() is None  # (nothing plays)
+    call(server, "/api/play", {"song": sid, "start": 5.0})
+    assert 5.0 <= server.gui.song_position() < 6.0
+    call(server, "/api/stop", {})
+
+
+def test_a_remote_has_the_songs_lyrics_from_its_vocals_part(tmp_path):
+    dlc = tmp_path / "game" / "dlc"
+    dlc.mkdir(parents=True)
+    (dlc / "v_m.psarc").write_bytes(song_archive(
+        "v", {"lead": ("L", Song(levels={0: [N(1.0)]})), "vocals": ("V", Song(vocals=3))}, song="Song", artist="Band"))
+    (dlc / "w_m.psarc").write_bytes(song_archive("w", {"lead": ("W", Song(levels={0: [N(1.0)]}))}, song="Other"))
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    index.refresh()
+    gui = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    with_lyrics, without = sorted(gui.library()["songs"], key=lambda song: song["song"] != "Song")
+    gui.switch({"song": with_lyrics["id"]})
+    assert [line.text for line in gui.remote_info()["song"]["lyrics"]] == ["la la la"]
+    gui.switch({"song": without["id"]})
+    assert gui.remote_info()["song"]["lyrics"] == ()
+
+
+def test_notes_ring_on_unless_turned_off(server):
+    sid = first_song(server)
+    call(server, "/api/play", {"song": sid})
+    gui = server.gui
+    assert gui._session.player.tracks[0].voices.ring  # (as they start)
+    call(server, "/api/settings", {"ring": False})  # the song playing takes it at once
+    assert wait_for(lambda: not gui._session.player.tracks[0].voices.ring, bool)
+    assert not json.loads(gui.settings_file.read_text())["ring"]
+    call(server, "/api/stop", {})
+
+
+def test_a_songs_tone_changes_switch_its_parts_tone(tmp_path):
+    dlc = tmp_path / "game" / "dlc"
+    dlc.mkdir(parents=True)
+    tones = [{"Key": "t_clean", "Name": "t_clean"}, {"Key": "t_dist", "Name": "t_dist"}]
+    (dlc / "t_m.psarc").write_bytes(song_archive(
+        "t", {"lead": ("L", Song(levels={0: [N(1.0 + i) for i in range(20)]}, tone_changes=[(5.0, 1), (9.0, 0)]))},
+        song="Toned", artist="Band", extra={"Tone_Base": "t_clean", "Tone_A": "t_clean", "Tone_B": "t_dist",
+                                            "Tones": tones}))
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    index.refresh()
+    gui = Gui(index, keyboard_factory=lambda port, channel: Keyboard(port, channel, midi_out_factory=FakeMidiOut),
+              settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    sid = gui.library()["songs"][0]["id"]
+    gui.switch({"song": sid})
+    assert gui.remote_info()["song"]["arrangements"][0]["tone_changes"] == (
+        (-math.inf, "clean"), (5.0, "distortion"), (9.0, "its own tone"))  # (first, what it starts with)
+    assert gui.song(sid)["parts"][0]["song_tones"] == [{"at": 0.0, "said": "clean", "known": True},
+                                                       {"at": 5.0, "said": "distortion", "known": True},
+                                                       {"at": 9.0, "said": "clean", "known": True}]
+    gui.set_song({"song": sid, "parts": {"lead": {"tone": 30}}})  # its own tone, for its own (clean) one
+    gui.play({"song": sid})
+    lead = gui._session.player.tracks[0]
+    assert [(at, (program, bank)) for at, _channel, program, bank in lead.changes] == [
+        (-math.inf, (tone(30).program, tone(30).bank)), (5.0, (tone(297).program, tone(297).bank)),
+        (9.0, (tone(30).program, tone(30).bank))]  # (distortion: 297 GM DISTORTION GT)
+    gui.set_settings({"tone_map": {"distortion": 80}})  # another tone for distortion: at once
+    assert wait_for(lambda: gui._session.player.tracks[0].changes[1][2], lambda program: program == tone(80).program)
+    gui.set_settings({"tone_changes": False})  # not followed
+    assert wait_for(lambda: not gui._session.player.tracks[0].changes, bool)
+    assert gui.remote_info()["song"]["arrangements"][0]["tone_changes"] == ()
+    gui.stop()
+
+
+def test_a_kind_of_part_can_sound_on_another_midi_device(tmp_path):
+    from rs_keylights.keyboard import Synth
+    dlc = tmp_path / "game" / "dlc"
+    dlc.mkdir(parents=True)
+    (dlc / "b_m.psarc").write_bytes(song_archive(
+        "b", {"lead": ("L", Song(levels={0: [N(1.0 + i * 0.5, fret=i % 5) for i in range(20)]})),
+              "bass": ("B", Song(levels={0: [N(1.0 + i * 0.5, fret=i % 5) for i in range(20)]}))}, song="Low"))
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    index.refresh()
+
+    class SynthOut(FakeMidiOut):
+        def get_ports(self):
+            return ["monologue SOUND"]
+
+    synth_out, keyboard_outs = SynthOut(), []
+
+    def keyboard(port, channel):
+        keyboard_outs.append(FakeMidiOut())
+        return Keyboard(port, channel, midi_out_factory=lambda: keyboard_outs[-1])
+
+    there = [True]
+    gui = Gui(index, keyboard_factory=keyboard, settings_file=tmp_path / "gui.json", list_ports=list,
+              other_follow=lambda: False,
+              synth_factory=lambda port: Synth(port, midi_out_factory=lambda: synth_out if there[0] else FakeMidiOut()))
+    gui.set_settings({"outputs": {"bass": {"port": "monologue SOUND", "channel": 1}}})
+    assert gui.settings["outputs"] == {"bass": {"port": "monologue SOUND", "channel": 1, "mono": True, "program": None,
+                                                "octave": 0}}
+    sid = gui.library()["songs"][0]["id"]
+    gui.set_song({"song": sid, "parts": {"bass": {"play": True, "lights": 2}, "lead": {"lights": 2}}})
+    gui.play({"song": sid})
+    assert wait_for(lambda: [m for m in synth_out.sent if m[0] == 0x90], bool)  # the bass's notes there, channel 1
+    assert not [m for m in keyboard_outs[-1].sent if m[0] in (0x9B, 0x9C, 0x9D)]  # (none on the keyboard's for it)
+    assert not [m for m in synth_out.sent if m[0] & 0xF0 == 0xC0]  # (its own sound: no tone)
+    gui.set_volumes({1: 90})  # the mixer: its volume on it too
+    assert [0xB0, 7, 90] in synth_out.sent
+    gui.set_program("bass", 11)  # its program (a remote's knob): kept, sent at once
+    assert synth_out.sent[-1] == [0xC0, 11] and gui.settings["outputs"]["bass"]["program"] == 11
+    sent = len(synth_out.sent)
+    gui.set_settings({"outputs": {"bass": {"port": "monologue SOUND", "channel": 1, "program": 11, "octave": 1}}})
+    assert wait_for(lambda: [m for m in synth_out.sent[sent:] if m[0] == 0x90], bool)
+    played = [m[1] for m in synth_out.sent[sent:] if m[0] == 0x90]
+    assert min(played) >= 40 + 12  # (an octave up)
+    gui.stop()
+    assert gui.output_status() == {"bass": True}
+    gui.close()  # (closed with the page)
+    there[0] = False
+    assert gui.output_status() == {"bass": False}  # unplugged: the keyboard plays it
+    gui.set_settings({"outputs": {"bass": None}})
+    assert gui.settings["outputs"] == {}
+
+
+def test_tone_changes_first_defaults_the_keyboards_own_tones_become_its_gm_ones(tmp_path):
+    from rs_keylights.songtones import FIRST_KINDS
+    (tmp_path / "gui.json").write_text(json.dumps({"tone_map": {**FIRST_KINDS, "clean": 76}}))  # (clean: chosen)
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    gui = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    assert gui.settings["tone_map"]["distortion"] == 297 and gui.settings["tone_map"]["clean"] == 76
+
+
+def test_the_guitar_heard_lights_its_keys_and_the_song_says_what_it_expects(server, monkeypatch):
+    import rs_keylights.gui as gui_module
+
+    started = []
+
+    class FakeListener:  # (not the cable: what's heard is said by the test)
+        def __init__(self, heard, expected, device, lowest):
+            self.device, self.now, self.level, self.error, self.running = device, (), 0.0, None, False
+            started.append(self)
+
+        def start(self):
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+    monkeypatch.setattr(gui_module, "Listener", FakeListener)
+    gui = server.gui
+    sid = first_song(server)
+    call(server, "/api/play", {"song": sid})
+    monkeypatch.setattr(gui, "song_position", lambda: 2.0)
+    assert gui._expected_now() == (43, 44)  # (the notes about then: frets 3 and 4 on the low E, G2 and Ab2)
+    out = server.outs[-1]
+    sent = len(out.sent)
+    gui._hear((40, 47))  # heard: lit first
+    assert [0x93, 40, 100] in out.sent[sent:] and [0x93, 47, 100] in out.sent[sent:]
+    call(server, "/api/settings", {"listen": True})
+    assert started and started[-1].running and gui.listening()["on"]
+    call(server, "/api/settings", {"listen": False})
+    assert not started[-1].running
+    call(server, "/api/stop", {})
+
+
+def test_the_pedal_switches_from_the_page_its_presets_named_by_a_backup(server, tmp_path, no_real_pedal):
+    path = tmp_path / "DNAfx GiT Core backup.bhb"
+    path.write_bytes(backup({49: "5050 CL", 50: "5050 DS"}))
+    _, settings = call(server, "/api/settings", {"pedal_backup": str(path)})
+    assert settings["pedal_backup_used"] == str(path) and len(settings["pedal_names"]) == 200
+    assert settings["pedal_names"][48:50] == ["5050 CL", "5050 DS"]
+    assert call(server, "/api/state")[1]["pedal"] == {"slot": None, "name": "", "previous": None, "previous_name": "",
+                                                      "error": None, "favourites": [51, 187]}
+    _, settings = call(server, "/api/settings", {"pedal_favourites": [187, 51, 187, 5]})
+    assert settings["pedal_favourites"] == [187, 51, 5]
+    assert call(server, "/api/settings", {"pedal_favourites": [0]})[0] == 400
+    _, pedal = call(server, "/api/pedal", {"slot": 49})
+    assert (pedal["slot"], pedal["name"]) == (49, "5050 CL")
+    assert wait_for(lambda: list(no_real_pedal), lambda switched: switched == [49]) == [49]
+    _, pedal = call(server, "/api/pedal", {"step": 1})  # (the one after)
+    assert wait_for(lambda: list(no_real_pedal), lambda switched: switched == [49, 50]) == [49, 50]
+    _, pedal = call(server, "/api/state")
+    assert (pedal["pedal"]["slot"], pedal["pedal"]["previous_name"]) == (50, "5050 CL")
+    _, pedal = call(server, "/api/pedal", {"back": True})
+    assert pedal["slot"] == 49 and wait_for(lambda: list(no_real_pedal), lambda switched: len(switched) == 3)[-1] == 49
+    assert call(server, "/api/pedal", {"slot": 201})[0] == 400
+    assert server.gui.remote_info()["pedal"]["slot"] == 49  # (the Launchkey's)
+
+
+def test_the_fretboard_has_the_guitar_a_song_is_played_on():
+    lead, rhythm, bass = (SimpleNamespace(bass=False), SimpleNamespace(bass=False), SimpleNamespace(bass=True))
+    b_standard, drop_c = SimpleNamespace(tuning=(-5,) * 6, capo=0), SimpleNamespace(tuning=(-4, -2, -2, -2, -2, -2), capo=2)
+    assert _guitar([(bass, b_standard), (lead, b_standard)]) == {  # (its guitar's, not its bass's)
+        "strings": [35, 40, 45, 50, 54, 59], "capo": 0, "tuning": "B standard", "bass": False}
+    assert _guitar([(rhythm, drop_c)])["strings"] == [36, 43, 48, 53, 57, 62]
+    assert _guitar([(rhythm, drop_c)])["tuning"] == "Drop C, capo 2"
+    assert _guitar([(bass, SimpleNamespace(tuning=(-5,) * 6, capo=0))]) == {  # (a bass's four, with no guitar)
+        "strings": [23, 28, 33, 38], "capo": 0, "tuning": "B standard", "bass": True}
+    assert _guitar([]) is None
+
+
+def test_the_fretboard_gets_an_arrangements_notes_where_theyre_played(server):
+    [song] = call(server, "/api/library")[1]["songs"]
+    sid = urllib.request.quote(song["id"])
+    _, details = call(server, f"/api/song?id={sid}")
+    lead = next(p for p in details["parts"] if p["part"] == "lead")
+    _, board = call(server, f"/api/fretboard?id={sid}&part=rhythm")
+    assert (board["part"], board["name"], board["strings"], board["tuning"]) == (
+        "rhythm", "Rhythm", [40, 45, 50, 55, 59, 64], "E standard")
+    assert len(board["notes"]) == 40 and board["chords"] == []
+    for start, end, places in board["notes"]:  # (each one's strings and frets: its pitches, on this guitar)
+        assert start <= end and places and all(0 <= string < 6 and 0 <= fret <= 24 for string, fret in places)
+    assert call(server, f"/api/fretboard?id={sid}&part={lead['arrangement']}")[1]["part"] == "lead"  # (as the game has it)
+    assert call(server, f"/api/fretboard?id={sid}")[1]["part"] == "lead"  # (its first guitar part)
+
+
+def test_following_the_loop_goes_to_the_games_riff_repeater(server, no_real_game_loop):
+    game = no_real_game_loop[-1]
+    server.overlay.state = {"memoryReadout": {"songTimer": 21.1, "songID": "song", "arrangementID": "L"}, "currentState": 4}
+    call(server, "/api/follow", {})
+    wait_for(lambda: call(server, "/api/follow")[1], lambda i: i["song"])
+    loop = call(server, "/api/loop", {"a": "here"})[1]  # (where the game is: the nearest beat)
+    assert 21.0 <= loop["a"] <= 22.0 and loop["game"] == {"answered": True, "hook": True, "riff": False}
+    loop = call(server, "/api/loop", {"move_b": 4})[1]
+    assert loop["b"] == loop["a"] + 2.0 and game.sent == [("off",), ("off",)]  # (not on yet: its own phrases)
+    call(server, "/api/loop", {"on": True})
+    assert game.sent[-1] == ("loop", loop["a"], loop["b"])  # Riff Repeater loops it
+    assert server.gui.remote_info()["loop"]["on"]  # (the Launchkey shows it)
+    game.range = None  # the game started again: its mod has no range,
+    time.sleep(0.06)
+    call(server, "/api/state")
+    assert game.sent[-1] == ("loop", loop["a"], loop["b"]) and game.range == (loop["a"], loop["b"])  # so it's sent again
+    call(server, "/api/stop", {})  # following stopped: Riff Repeater's own phrases again
+    call(server, "/api/state")
+    assert game.sent[-1] == ("off",)

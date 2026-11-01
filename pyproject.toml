@@ -18,6 +18,10 @@ test = [
     "pytest>=8.0",
     "pyright>=1.1",
 ]
+listen = [  # hearing a guitar (the Guitar card, rs-keylights listen)
+    "numpy>=1.26",
+    "sounddevice>=0.4.6",
+]
 
 [project.scripts]
 rs-keylights = "rs_keylights.cli:main"

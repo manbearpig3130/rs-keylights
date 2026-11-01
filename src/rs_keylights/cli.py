@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import time
+import wave
 from pathlib import Path
 from typing import Sequence
 
@@ -13,6 +14,7 @@ from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
 from .gui import DEFAULT_GUI_PORT
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, Keyboard, KeyboardError
 from .lights import LIGHTS_EARLY, MIN_PERIOD
+from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, HOP, LOWEST, RATE, Detector
 from .library import NO_NOTES, ArrangementRef, SongIndex, read_arrangements
 from .player import play
 from .psarc import ArchiveError
@@ -98,6 +100,17 @@ def build_parser() -> argparse.ArgumentParser:
                                                       "its buttons, strips and Scale button (quit the page first)")
     launchkey.add_argument("--seconds", type=float, default=30, help="how long to listen (default: 30)")
     launchkey.set_defaults(handler=run_launchkey)
+
+    listen = commands.add_parser("listen", help="show the notes heard on a guitar's input (the Rocksmith cable), to "
+                                                "check how it hears them (needs: pip install -e \".[listen]\")")
+    listen.add_argument("--device", default=GUITAR_INPUT, help=f"the audio input (default: {GUITAR_INPUT})")
+    listen.add_argument("--bass", action="store_true", help="listen for a bass's lower notes")
+    listen.add_argument("--seconds", type=float, default=30, help="how long to listen (default: 30)")
+    listen.add_argument("--record", metavar="FILE", help="save what it hears to a WAV file too (to hear it again with "
+                                                         "--replay)")
+    listen.add_argument("--replay", metavar="FILE", help="hear a WAV file (one saved with --record) instead of the "
+                                                         "input")
+    listen.set_defaults(handler=run_listen)
     return parser
 
 
@@ -311,6 +324,71 @@ def run_gui(args: argparse.Namespace) -> int:
         server.server_close()
         if trace is not None:
             trace.close()
+    return 0
+
+
+def run_listen(args: argparse.Namespace) -> int:
+    """Prints the notes heard as they change, when, with the pitch played and how loud."""
+    try:
+        import numpy as np
+        import sounddevice
+    except ImportError:
+        print('Needs numpy and sounddevice: pip install -e ".[listen]"', file=sys.stderr)
+        return 1
+    lowest = BASS_LOWEST if args.bass else LOWEST
+    shown: tuple[int, ...] | None = None
+
+    def hear(detector: Detector, samples: object, at: float) -> None:
+        nonlocal shown
+        heard = detector.feed(samples)
+        if heard != shown:
+            played = f"{detector.pitch:.2f}" if detector.pitch is not None else "-"
+            print(f"{at:7.2f} s  {' '.join(note_name(p) for p in heard) or '-':16} pitch {played:>6}  level "
+                  f"{detector.level:.4f}", flush=True)
+            shown = heard
+
+    if args.replay:
+        try:
+            with wave.open(args.replay, "rb") as wav:
+                rate, width, channels = wav.getframerate(), wav.getsampwidth(), wav.getnchannels()
+                frames = wav.readframes(wav.getnframes())
+        except (OSError, EOFError, wave.Error) as exc:
+            print(f"Can't read {args.replay}: {exc}", file=sys.stderr)
+            return 1
+        if width != 2:
+            print(f"{args.replay} isn't 16-bit (as --record saves)", file=sys.stderr)
+            return 1
+        sound = np.frombuffer(frames, dtype="<i2").reshape(-1, channels)[:, 0] / 32768.0
+        detector = Detector(rate=rate, lowest=lowest)
+        for i in range(0, len(sound) - HOP + 1, HOP):
+            hear(detector, sound[i:i + HOP], i / rate)
+        return 0
+    detector = Detector(lowest=lowest)
+    recording: wave.Wave_write | None = None
+    print(f"Listening to {args.device} for {args.seconds:g} s: play some notes", flush=True)
+    try:
+        if args.record:
+            recording = wave.open(args.record, "wb")
+            recording.setnchannels(1)
+            recording.setsampwidth(2)
+            recording.setframerate(RATE)
+        with sounddevice.InputStream(samplerate=RATE, channels=1, device=args.device, blocksize=HOP,
+                                     dtype="float32") as stream:
+            start = time.monotonic()
+            while time.monotonic() < start + args.seconds:
+                samples, _overflowed = stream.read(HOP)
+                if recording is not None:
+                    recording.writeframes((np.clip(samples[:, 0], -1.0, 1.0) * 32767).astype("<i2").tobytes())
+                hear(detector, samples[:, 0], time.monotonic() - start)
+    except KeyboardInterrupt:
+        pass
+    except Exception as exc:
+        print(f"Can't listen to {args.device}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if recording is not None:
+            recording.close()
+            print(f"Saved it to {args.record}", flush=True)
     return 0
 
 

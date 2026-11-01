@@ -270,6 +270,11 @@ class Follower:
     def showing(self) -> bool:
         return self._show is not None
 
+    @property
+    def planned(self) -> list[PlannedPart]:
+        """The parts playing, as planned (their voices too)."""
+        return list(self._planned)
+
     def sounding(self) -> list[tuple[ArrangementRef, tuple[int, int, int]]]:
         """The arrangements played, and the channels each sounds on."""
         return [(planned.part.ref, CHANNEL_SETS[i]) for i, planned in enumerate(self._planned)]

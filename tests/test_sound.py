@@ -48,3 +48,24 @@ def test_parse_note():
     for bad in ("H2", "E", "200", "B10"):
         with pytest.raises(ValueError):
             parse_note(bad)
+
+
+def test_the_main_tone_switches_as_the_chart_does():
+    from rs_keylights.sng import Arrangement, SongTone
+    from rs_keylights.sound import Voice, Voices
+    base, dist, acoustic = SongTone("s_clean"), SongTone("s_dist"), SongTone("s_acc")
+    a = Arrangement((), (), 0, 60.0, tone_changes=((5.0, 1), (9.0, 0), (12.0, 2), (14.0, 2)), base_tone=base,
+                    tones=(base, dist, acoustic))
+    voices = Voices(Voice(11, tone(30)), tone_map=(("distortion", tone(79)),))
+    assert voices.changes_for(a) == ((5.0, tone(79)), (9.0, tone(30)))  # (back: its own; acoustic: none for it)
+    assert Voices(Voice(11, tone(30))).changes_for(a) == ()  # (not followed)
+
+
+def test_how_hard_a_technique_is_played():
+    from rs_keylights.sng import FRET_HAND_MUTE, HAMMER_ON, SLAP
+    from rs_keylights.sound import ACCENT_VELOCITY, DEAD_VELOCITY, LEGATO_VELOCITY, VELOCITY
+    voices = Voices(Voice(11, tone(30)))
+    assert [voices.velocity(mask) for mask in (0, ACCENT, SLAP, HAMMER_ON, FRET_HAND_MUTE)] == [
+        VELOCITY, ACCENT_VELOCITY, ACCENT_VELOCITY, LEGATO_VELOCITY, DEAD_VELOCITY]
+    plain = Voices(Voice(11, tone(30)), techniques=False)
+    assert [plain.velocity(mask) for mask in (ACCENT, SLAP, HAMMER_ON)] == [ACCENT_VELOCITY, VELOCITY, VELOCITY]

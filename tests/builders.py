@@ -25,6 +25,11 @@ class N:
     chord: int = -1
     iteration: int = 0
     bends: int = 0
+    slide_to: int = -1
+    slide_off_to: int = -1
+    vibrato: int = 0
+    bend_points: list[tuple[float, float]] = field(default_factory=list)  # (when, semitones), after the bends' zeros
+    chord_notes: int = -1  # its chord's strings' techniques (Song.chord_notes)
 
 
 @dataclass
@@ -39,6 +44,11 @@ class Song:
     vocals: int = 0
     beats: list[float] = field(default_factory=lambda: [0.0])
     sections: list[tuple[str, float, float]] = field(default_factory=list)  # name, start, end
+    chord_names: list[str] = field(default_factory=list)  # each chord's, as charted ("c" without)
+    shapes: dict[int, list[tuple[int, float, float]]] = field(default_factory=dict)  # each level's: chord, start, end
+    tone_changes: list[tuple[float, int]] = field(default_factory=lambda: [(1.0, 1)])  # when, and to which (A to D)
+    chord_notes: list[dict] = field(default_factory=list)  # each: masks, slides, slides_off, vibratos (6 each), bends
+    # ({string: [(when, semitones)]})
 
 
 def array(records: list[bytes]) -> bytes:
@@ -46,30 +56,46 @@ def array(records: list[bytes]) -> bytes:
 
 
 def note_record(n: N) -> bytes:
+    points = [(0.0, 0.0)] * n.bends + n.bend_points
     return (
-        struct.pack("<IIIfbbbbiiii", n.mask, 0, 0, n.time, n.string, n.fret, 0, 4, n.chord, -1, 0, n.iteration)
-        + struct.pack("<2h3h7bh", -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, -1, 0)
-        + struct.pack("<ffi", n.sustain, 0.0, n.bends)
-        + b"\x00" * (12 * n.bends)
+        struct.pack("<IIIfbbbbiiii", n.mask, 0, 0, n.time, n.string, n.fret, 0, 4, n.chord, n.chord_notes, 0,
+                    n.iteration)
+        + struct.pack("<2h3h7bh", -1, -1, -1, -1, -1, n.slide_to, n.slide_off_to, -1, -1, -1, 0, -1, n.vibrato)
+        + struct.pack("<ffi", n.sustain, 0.0, len(points))
+        + b"".join(struct.pack("<ff4x", at, step) for at, step in points)
     )
+
+
+def chord_notes_record(c: dict) -> bytes:
+    out = struct.pack("<6I", *c.get("masks", [0] * 6))
+    for string in range(6):
+        points = c.get("bends", {}).get(string, [])
+        out += b"".join(struct.pack("<ff4x", at, step) for at, step in points) + b"\x00" * (12 * (32 - len(points)))
+        out += struct.pack("<i", len(points))
+    return (out + struct.pack("<6b", *c.get("slides", [-1] * 6)) + struct.pack("<6b", *c.get("slides_off", [-1] * 6))
+            + struct.pack("<6h", *c.get("vibratos", [0] * 6)))
 
 
 def sng_plain(song: Song) -> bytes:
     out = array([struct.pack("<fhhii", beat, 0, 0, 0, 0) for beat in song.beats])
     out += array([struct.pack("<4b2i32s", 0, 0, 0, 0, level, 1, b"p") for level in song.phrase_levels])
-    out += array([struct.pack("<I6b6b6i32s", 0, *frets, *([-1] * 6), *([-1] * 6), b"c") for frets in song.chords])
-    out += array([])  # chord notes
+    names = [name.encode() for name in song.chord_names] + [b"c"] * len(song.chords)
+    out += array([struct.pack("<I6b6b6i32s", 0, *frets, *([-1] * 6), *([-1] * 6), name)
+                  for frets, name in zip(song.chords, names)])
+    out += array([chord_notes_record(c) for c in song.chord_notes])
     out += array([struct.pack("<fif48s", 0.0, 60, 0.5, b"la")] * song.vocals)
     if song.vocals:
         out += array([]) + array([]) + array([])  # symbols
     out += array([struct.pack("<iff3i", phrase, 0.0, 0.0, 0, 0, 0) for phrase in song.iterations])
     out += array([])  # phrase extra info
     out += struct.pack("<i", 1) + struct.pack("<i", 0) + array([struct.pack("<i", 0)])  # new linked difficulties
-    out += array([]) + array([]) + array([struct.pack("<fi", 1.0, 1)]) + array([])  # actions .. DNA
+    out += array([]) + array([]) + array([struct.pack("<fi", *change) for change in song.tone_changes]) + array([])
+    # (actions, events, tone changes, DNA)
     out += array([struct.pack("<32siffii36s", name.encode(), 1, start, end, 0, 0, b"") for name, start, end in song.sections])
     out += struct.pack("<i", len(song.levels))
     for difficulty, notes in song.levels.items():
-        out += struct.pack("<i", difficulty) + array([]) + array([]) + array([]) + array([])
+        out += struct.pack("<i", difficulty) + array([]) + array([])  # anchors, their extensions
+        out += array([struct.pack("<iffff", *shape, 0.0, 0.0) for shape in song.shapes.get(difficulty, [])]) + array([])
         out += array([note_record(n) for n in notes])
         out += array([]) + array([]) + array([])
     out += struct.pack("<4d2fb32shf", 0, 0, 0, 0, 0, 0, song.capo, b"", 0, song.length)

@@ -3,6 +3,7 @@ import json
 from builders import N, Song, psarc, song_archive
 
 from rs_keylights.library import SongIndex, read_arrangements, song_archives
+from rs_keylights.sng import SongTone
 
 LEAD = Song(levels={0: [N(1.0, fret=5)]})
 BASS = Song(levels={0: [N(2.0, string=0)]}, tuning=(0, 0, 0, 0))
@@ -84,3 +85,16 @@ def test_the_index_keeps_a_songs_details(tmp_path):
     for found in (index.find("L1"), SongIndex(tmp_path / "game", tmp_path / "index.json").find("L1")):  # and cached
         assert (found.album, found.year, found.length, found.tempo, found.tuning, found.capo) == (
             "Twilight", 2008, 248.5, 112.4, (-5,) * 6, 0)
+
+
+def test_an_arrangements_tones_come_from_its_manifest(tmp_path):
+    tones = [{"Key": "s_clean", "Name": "s_clean", "GearList": {"Amp": {"Key": "Amp_TW22"}}},
+             {"Key": "s_dist", "Name": "s_dist", "GearList": {"PrePedal1": {"Key": "Pedal_SuperDrive"}}}]
+    path = tmp_path / "s_m.psarc"
+    path.write_bytes(song_archive("s", {"lead": ("L", Song(levels={0: [N(1.0)]}, tone_changes=[(5.0, 1), (9.0, 0)]))},
+                                  extra={"Tone_Base": "s_clean", "Tone_A": "s_clean", "Tone_B": "s_dist", "Tone_C": "",
+                                         "Tones": tones}))
+    a = read_arrangements(path)[0].load()
+    assert a.tone_changes == ((5.0, 1), (9.0, 0))
+    assert a.base_tone == SongTone("s_clean", ("Amp_TW22",))
+    assert a.tones == (SongTone("s_clean", ("Amp_TW22",)), SongTone("s_dist", ("Pedal_SuperDrive",)), None, None)

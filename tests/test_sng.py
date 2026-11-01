@@ -1,7 +1,10 @@
 import pytest
 from builders import N, Song, sng, sng_plain
 
-from rs_keylights.sng import CHORD, FRET_HAND_MUTE, IGNORE, Section, SngError, decrypt, note_name, parse
+from rs_keylights.chords import chord_name
+from rs_keylights.lyrics import Line, lyric_lines
+from rs_keylights.sng import (CHORD, FRET_HAND_MUTE, HARMONIC, IGNORE, SLIDE, Chord, Section, SngError, Syllable,
+                               decrypt, note_name, parse)
 
 
 def load(song: Song, bass: bool = False):
@@ -76,3 +79,57 @@ def test_beats_and_sections():
     a = parse(sng_plain(song))
     assert a.beats == (0.5, 1.0, 1.5)
     assert a.sections == (Section("intro", 0.5, 10.0), Section("chorus2", 10.0, 20.0))
+
+
+def test_chords_are_named_from_the_chart_or_their_notes_and_held_for_their_hand_shapes():
+    song = Song(levels={0: [N(1.0, chord=0, mask=CHORD), N(3.0, chord=1, mask=CHORD)]},
+                chords=[(0, 2, 2, -1, -1, -1), (3, 5, 5, 4, 3, 3), (0, 2, -1, -1, -1, -1)],
+                chord_names=["Em", "", "°7"],
+                shapes={0: [(0, 1.0, 2.5), (1, 3.0, 4.0), (2, 5.0, 6.0)]})
+    a = parse(sng_plain(song))
+    assert a.chords == (Chord("Em", 1.0, 2.5, (0, 2, 2, -1, -1, -1)), Chord("G", 3.0, 4.0, (3, 5, 5, 4, 3, 3)),
+                        Chord("dim7", 5.0, 6.0, (0, 2, -1, -1, -1, -1)))  # (the second unnamed: its notes G B D G B G;
+    # the third's sign spelt out; each with its shape)
+    assert [n.frets for n in a.notes] == [(0, 2, 2), (3, 5, 5, 4, 3, 3)]  # (each note's frets, as its pitches are)
+
+
+def test_with_a_capo_its_open_strings_are_at_the_capo():
+    song = Song(levels={0: [N(1.0, string=1, fret=0), N(2.0, string=1, fret=5), N(3.0, chord=0, mask=CHORD)]},
+                chords=[(0, 2, 2, -1, -1, -1)], chord_names=["Em"], shapes={0: [(0, 3.0, 4.0)]}, capo=2)
+    a = parse(sng_plain(song))
+    assert [n.frets for n in a.notes] == [(2,), (5,), (2, 2, 2)]
+    assert a.chords[0].frets == (2, 2, 2, -1, -1, -1)
+
+
+def test_chord_names_from_their_notes():
+    assert [chord_name(p) for p in [(40, 47, 52), (48, 52, 55), (47, 50, 55, 59), (48, 52, 55, 57), (45, 52, 55, 60),
+                                     (60, 64), (60,)]] == ["E5", "C", "G/B", "C6", "Am7", "", ""]
+
+
+def test_a_vocals_parts_syllables_make_lines():
+    a = parse(sng_plain(Song(vocals=3)))
+    assert a.lyrics == (Syllable("la", 0.0, 0.5),) * 3  # (as the builder has them)
+    lines = lyric_lines([Syllable("Hey", 1.0, 1.5), Syllable("lit-", 1.5, 2.0), Syllable("tle", 2.0, 2.5),
+                         Syllable("kid+", 2.5, 3.0), Syllable("Did", 4.0, 4.5), Syllable("you", 4.5, 5.0),
+                         Syllable("Up", 20.0, 21.0)])
+    assert lines == (Line("Hey little kid", 1.0, 3.0, ((1.0, 0, 3), (1.5, 4, 7), (2.0, 7, 10), (2.5, 11, 14))),
+                     Line("Did you", 4.0, 5.0, ((4.0, 0, 3), (4.5, 4, 7))),  # (a long gap: a new line)
+                     Line("Up", 20.0, 21.0, ((20.0, 0, 2),)))
+
+
+def test_techniques_slides_bends_vibrato_harmonics_and_dead_notes():
+    song = Song(levels={0: [
+        N(1.0, string=0, fret=5, sustain=0.5, slide_to=7),  # slid up 2 frets
+        N(2.0, string=0, fret=7, slide_off_to=3),  # slid off, 4 frets down
+        N(3.0, string=1, fret=5, bend_points=[(3.2, 2.0), (3.5, 0.0)], vibrato=80),  # a full step bend, released
+        N(4.0, string=2, fret=7, mask=HARMONIC),  # a natural harmonic: an octave and a fifth over the open string
+        N(5.0, string=0, fret=3, mask=FRET_HAND_MUTE),  # dead
+        N(6.0, chord=0, mask=CHORD | SLIDE, chord_notes=0),  # a power chord slid up 2
+    ]}, chords=[(5, 7, -1, -1, -1, -1)], chord_notes=[{"slides": [7, 9, -1, -1, -1, -1]}])
+    a = parse(sng_plain(song))
+    slid, off, bent, harmonic, chord = a.notes
+    assert (slid.pitches, slid.slide, off.slide_off) == ((45,), 2, -4)
+    assert [(round(at, 3), step) for at, step in bent.bends] == [(3.2, 2.0), (3.5, 0.0)] and bent.vibrato  # (semitones)
+    assert harmonic.pitches == (50 + 19,)
+    assert chord.pitches == (45, 52) and chord.slide == 2
+    assert [(n.time, n.pitches) for n in a.muted] == [(5.0, (43,))]  # (not among the notes: no keys)

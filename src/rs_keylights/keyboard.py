@@ -21,6 +21,8 @@ MAX_LIT = 4  # keys lit at once, at most (on both navigate channels together)
 NORMAL_VOLUME = 100
 VELOCITY = 100
 SILENCE_EVERY = 5.0  # seconds; the keyboard forgets the volume when it's switched off and on
+BEND_RANGE = 2  # semitones a pitch bend goes either way (as General MIDI keyboards start, the LK-170 too)
+MODULATION = 1  # its Control Change: vibrato
 LISTEN_EVERY = 0.002  # seconds between looks at a MIDI input for what came (a remote's keys: about 1 ms late)
 HEARD_EVERY = 0.02  # for a key pressed on the keyboard (stopping a show)
 
@@ -88,6 +90,8 @@ class Keyboard:
         self._volumes: dict[int, int] = {}  # channel -> volume set
         self._played: dict[int, set[int]] = {}  # channel -> notes from another keyboard
         self._controls: set[tuple[int, int]] = set()  # another keyboard's pedal down or modulation: (channel, number)
+        self._bent: set[int] = set()  # the song's channels bent or with vibrato (put back as everything stops)
+        self._guitar: tuple[int, ...] = ()  # keys played on a guitar, heard (listen): lit first too
         self._silenced_at = float("-inf")
 
     @property
@@ -223,6 +227,19 @@ class Keyboard:
                 self._send([0x80 | (channel - 1), note, 0])
                 played.discard(note)
 
+    def bend(self, channel: int, semitones: float) -> None:
+        """A song's channel's pitch bend (a note bent: semitones up, or down; BEND_RANGE at most; 0: none)."""
+        value = min(max(8192 + round(semitones / BEND_RANGE * 8192), 0), 16383)
+        with self._lock:
+            self._send([0xE0 | (channel - 1), value & 0x7F, value >> 7])
+            self._bent.add(channel)
+
+    def modulate(self, channel: int, depth: int) -> None:
+        """A song's channel's vibrato (Modulation, 0: none)."""
+        with self._lock:
+            self._send([0xB0 | (channel - 1), MODULATION, min(max(depth, 0), 127)])
+            self._bent.add(channel)
+
     def control(self, channel: int, number: int, value: int) -> None:
         """Another keyboard's sustain pedal or modulation, as a Control Change (0: up, or none)."""
         with self._lock:
@@ -267,13 +284,24 @@ class Keyboard:
                     self._send([0x80 | (channel - 1), note, 0])
                 notes.clear()
                 self._send([0xB0 | (channel - 1), ALL_NOTES_OFF, 0])
+            for channel in sorted(self._bent):  # (no bend, no vibrato)
+                self._send([0xE0 | (channel - 1), 0, 64])
+                self._send([0xB0 | (channel - 1), MODULATION, 0])
+            self._bent.clear()
             self._stop_played()
 
+    def hear(self, keys: tuple[int, ...]) -> None:
+        """The keys a guitar plays, heard (listen): lit first, as another keyboard's held keys are (the song's
+        lights get the room left)."""
+        with self._lock:
+            self._guitar = tuple(dict.fromkeys(keys))
+            self._show()
+
     def _show(self, keys: tuple[int, ...] = (), again: bool = False) -> None:
-        """Lights what should be: the keys held on another keyboard (the latest MAX_LIT), and the song's in the
-        room left, its lowest (all of them, with none held). The keys asked about go first, in their order;
-        again: lit again, even if they are."""
-        held = self._held[-MAX_LIT:]
+        """Lights what should be: the keys held on another keyboard (the latest MAX_LIT) and a guitar's heard, and
+        the song's in the room left, its lowest (all of them, with none held or heard). The keys asked about go
+        first, in their order; again: lit again, even if they are."""
+        held = list(dict.fromkeys([*self._held[-MAX_LIT:], *self._guitar]))[:MAX_LIT]
         song = sorted(k for k in self._lit if k not in held)
         target = set(held) | set(song[:MAX_LIT - len(held)] if held else song)
         asked = list(dict.fromkeys(keys))
@@ -322,6 +350,110 @@ def _default_midi_out() -> MidiOutputProtocol:
     if not callable(midi_out):
         raise KeyboardError("python-rtmidi has no MidiOut on this platform")
     return cast(MidiOutputProtocol, midi_out())
+
+
+class Synth:
+    """Another MIDI device sounding parts (a synth, say): their notes, bends and vibrato on its channel, with its own
+    sound (no tones sent: it keeps the one it's on). The keyboard keeps their lights. Unplugged while it plays, its
+    sound stops; the rest goes on."""
+
+    def __init__(self, port_name: str, midi_out_factory: Callable[[], MidiOutputProtocol] | None = None) -> None:
+        self.port_name = port_name
+        self._factory = midi_out_factory or _default_midi_out
+        self._out: MidiOutputProtocol | None = None
+        self._lock = threading.RLock()  # (the song's thread, and a seek)
+        self._sounding: dict[int, set[int]] = {}  # channel -> its notes on
+        self._bent: set[int] = set()
+        self._volumes: dict[int, int] = {}
+
+    def open(self) -> None:
+        out = self._factory()
+        ports = out.get_ports()
+        wanted = self.port_name.casefold()
+        index = next((i for i, port in enumerate(ports) if port.casefold() == wanted), None)
+        if index is None:
+            index = next((i for i, port in enumerate(ports) if wanted in port.casefold()), None)
+        if index is None:
+            raise KeyboardError(f"No MIDI output {self.port_name!r}")
+        out.open_port(index, "rs-keylights")
+        self._out = out
+
+    @property
+    def is_open(self) -> bool:
+        return self._out is not None
+
+    def set_voice(self, channel: int, program: int, bank: int | None = None, ours: bool = True,
+                  volume: int = NORMAL_VOLUME) -> None:
+        """Its volume (the keyboard's tones aren't sent: it keeps its own sound)."""
+        self.set_volume(channel, volume)
+
+    def set_volume(self, channel: int, volume: int) -> None:
+        """A channel's volume (Control Change 7: if it takes it), sent again only if it's another."""
+        with self._lock:
+            if self._volumes.get(channel) != volume:
+                self._send([0xB0 | (channel - 1), VOLUME, min(max(volume, 0), 127)])
+                self._volumes[channel] = volume
+
+    def program(self, channel: int, number: int) -> None:
+        """One of its own programs (Program Change, 0 the first), chosen for the part."""
+        with self._lock:
+            self._send([0xC0 | (channel - 1), min(max(number, 0), 127)])
+
+    def play(self, channel: int, notes: tuple[int, ...], velocity: int = VELOCITY) -> None:
+        with self._lock:
+            sounding = self._sounding.setdefault(channel, set())
+            for note in notes:
+                self._send([0x90 | (channel - 1), note, velocity])
+                sounding.add(note)
+
+    def stop(self, channel: int, notes: tuple[int, ...]) -> None:
+        with self._lock:
+            sounding = self._sounding.get(channel, set())
+            for note in notes:
+                self._send([0x80 | (channel - 1), note, 0])
+                sounding.discard(note)
+
+    def bend(self, channel: int, semitones: float) -> None:
+        value = min(max(8192 + round(semitones / BEND_RANGE * 8192), 0), 16383)
+        with self._lock:
+            self._send([0xE0 | (channel - 1), value & 0x7F, value >> 7])
+            self._bent.add(channel)
+
+    def modulate(self, channel: int, depth: int) -> None:
+        with self._lock:
+            self._send([0xB0 | (channel - 1), MODULATION, min(max(depth, 0), 127)])
+            self._bent.add(channel)
+
+    def all_off(self) -> None:
+        with self._lock:
+            for channel, notes in self._sounding.items():
+                for note in sorted(notes):
+                    self._send([0x80 | (channel - 1), note, 0])
+                notes.clear()
+                self._send([0xB0 | (channel - 1), ALL_NOTES_OFF, 0])
+            for channel in sorted(self._bent):
+                self._send([0xE0 | (channel - 1), 0, 64])
+                self._send([0xB0 | (channel - 1), MODULATION, 0])
+            self._bent.clear()
+
+    def close(self) -> None:
+        with self._lock:
+            if self._out is None:
+                return
+            self.all_off()
+            try:
+                self._out.close_port()
+            except Exception:  # unplugged
+                pass
+            self._out = None
+
+    def _send(self, message: list[int]) -> None:
+        if self._out is None:
+            return
+        try:
+            self._out.send_message(message)
+        except Exception:  # unplugged: its sound stops, the rest goes on
+            pass
 
 
 class PolledMidiIn:

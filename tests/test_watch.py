@@ -1,9 +1,13 @@
-from rs_keylights.bitmap import (arrangements_picture, keys_picture, mixer_picture, parts_picture, playback_picture,
-                                 song_picture, with_note)
+import math
+
+from rs_keylights.bitmap import (arrangements_picture, keys_picture, lyrics_picture, mixer_picture, parts_picture,
+                                 pedal_picture, playback_picture, song_picture, with_note)
 from rs_keylights.launchkey import PLAY, RECORD, Button, Pad, ScaleMode, Strip, Turn
+from rs_keylights.lyrics import lyric_lines
+from rs_keylights.sng import Chord, Syllable
 from rs_keylights.tones import tone
-from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, KEYS_COLUMN, LOOP_KNOBS, PAD_WAIT, PICTURE_SHOWN, SECTION_KNOB,
-                                SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
+from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, PAD_WAIT, PEDAL_WAIT,
+                                PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
 
 
 class FakeGui:
@@ -14,10 +18,15 @@ class FakeGui:
         self.plays, self.seeks, self.following = [], [], mode == "follow"
         self.real_pitch, self.speeds, self.browsed, self.chosen = False, [], 0.0, []
         self.stopped, self.dialling, self.letters = 0, [], []
+        self.live = None  # where the song is now (playing or followed; None: the info's position)
+        self.programs = []
         self.volumes, self.volume_changes = [100] * 8, []
         self.loop, self.loop_calls = {"a": None, "b": None, "on": False}, []
         self.keys, self.keys_played, self.keys_released = {"sound": True, "lights": True, "tone": 1, "volume": 100}, [], 0
         self.library = [{"id": f"s{i}", "song": f"Song {i}", "artist": "Band"} for i in range(300)]
+        self.listen, self.pedal_calls = False, []
+        self.game = {"answered": True, "hook": True, "riff": True}  # (following: the game's riffloop mod)
+        self.pedal = {"slot": 49, "previous": None, "error": None, "favourites": [51, 187]}
         self.song = {
             "id": "song", "title": "Amon Amarth - Twilight of the Thunder God", "played": "L" if mode == "follow" else None,
             "key": {"name": "C# minor", "tonic": 1, "mode": "minor", "scale": [1, 3, 4, 6, 8, 9, 11], "other": [2],
@@ -40,7 +49,21 @@ class FakeGui:
 
     def remote_info(self):
         return {**self.info, "sound": self.sound, "real_pitch": self.real_pitch, "keys": self.keys,
-                "volumes": list(self.volumes), "loop": dict(self.loop)}
+                "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal)}
+
+    def toggle_listen(self):
+        self.listen = not self.listen
+        return self.listen
+
+    def set_pedal(self, body, later=0.0):  # (the slot it's going to, at once, as the pedal keeps it)
+        self.pedal_calls.append((dict(body), later))
+        slot = self.pedal["previous"] if body.get("back") else body["slot"]
+        if slot != self.pedal["slot"]:
+            self.pedal = {**self.pedal, "slot": slot, "previous": self.pedal["slot"]}
+        return dict(self.pedal)
+
+    def pedal_name(self, slot):
+        return {49: "5050 CL", 50: "5050 DS", 1: "US Clean", 200: "My love"}.get(slot, f"P{slot}")
 
     def set_loop(self, body):  # (on beats every half second)
         self.loop_calls.append(dict(body))
@@ -57,7 +80,7 @@ class FakeGui:
         if "on" in body:
             self.loop["on"] = body["on"]
         self.loop["on"] = self.loop["on"] and None not in (self.loop["a"], self.loop["b"])
-        return dict(self.loop)
+        return {**self.loop, **({"game": dict(self.game)} if self.info["mode"] == "follow" else {})}
 
     def set_volumes(self, changes):
         self.volume_changes.append(dict(changes))
@@ -111,6 +134,15 @@ class FakeGui:
     def browse_at(self, song_id):
         self.browsed = float(next((i for i, s in enumerate(self.library) if s["id"] == song_id), 0))
         return {**self.library[round(self.browsed)], "place": round(self.browsed), "of": len(self.library)}
+
+    def song_position(self):
+        return self.live
+
+    def set_program(self, part, program):
+        self.programs.append((part, program))
+        for a in self.song["arrangements"]:
+            if a["kind"] == part and a.get("output"):
+                a["output"] = {**a["output"], "program": program}
 
     def browse_letter(self, steps):  # (25 songs a letter)
         self.letters.append(steps)
@@ -912,15 +944,29 @@ def test_playing_the_song_the_pads_on_top_and_knobs_4_and_5_set_its_loop():
     assert note(watch) == ("Loop: off", None) and pads(launchkey)[(0, 3)] == (39, False)
 
 
-def test_following_the_games_loops_and_sections_are_its_own():
+def test_following_the_loop_is_riff_repeaters_and_the_sections_the_games():
     watch, gui, launchkey, clock = watching()
-    gui.info["song"] = gui.song
+    gui.info["song"], gui.info["position"] = gui.song, 21.0
     watch.step()
-    launchkey.queued = [Button(52), Pad(0, 0)]
+    launchkey.queued = [Button(52), Pad(0, 0), Pad(0, 1)]  # ▼, then A and B where the game is
     clock.now = 0.5
     watch.step()
-    assert gui.loop_calls == [] and note(watch) == (None, ("Loop: the game's", "(Riff Repeater)"))
-    assert pads(launchkey)[(0, 0)] == (0, False) and pads(launchkey)[(1, 0)] == (0, 0, 0)  # (the pads dark)
+    assert gui.loop_calls == [{"a": "here"}, {"b": "here", "on": True}]  # (the gui sends it to the game)
+    assert note(watch) == (None, ("Loop 0:21.0-0:21.0: on", "Pick it in Riff Repeater"))
+    assert pads(launchkey)[(0, 2)][1] and pads(launchkey)[(1, 0)] == (0, 0, 0)  # on, pulsing; no section pads
+    gui.game = {"answered": False, "hook": False, "riff": False}  # (the game without the mod)
+    launchkey.queued = [Pad(0, 3)]  # the section it's in
+    clock.now = 1.0
+    watch.step()
+    assert note(watch) == (None, ("Loop: Verse 1", "Game: no riffloop mod"))
+    gui.game = {"answered": True, "hook": False, "riff": False}  # (an RS Re-ARMed without mods)
+    launchkey.queued = [Pad(0, 2)]  # off
+    clock.now = 1.5
+    watch.step()
+    launchkey.queued = [Pad(0, 2)]  # and on again
+    clock.now = 2.0
+    watch.step()
+    assert note(watch)[1][1] == "Game: needs RS Re-ARMed 1.2+"
 
 
 def test_playing_the_song_its_controls_take_the_screen_from_the_library():
@@ -989,3 +1035,320 @@ def test_in_the_mixer_the_pitch_strip_moves_the_slider_last_used():
     clock.now = 3.1
     watch.step()
     assert gui.volume_changes[-1][0] == 112 and gui.keys["volume"] == 111
+
+
+def test_the_song_screen_shows_the_chord_played_from_the_arrangement_lighting_the_most_keys():
+    watch, gui, launchkey, clock = watching("play")  # at 0:30; the lead lights 4 keys
+    lead, rhythm, bass = gui.song["arrangements"]
+    lead["chords"] = (Chord("E5", 29.0, 31.0), Chord("G5", 40.0, 41.0))
+    rhythm["chords"] = (Chord("Em7", 28.0, 32.0), Chord("C", 35.0, 38.0))
+    gui.info["song"] = gui.song
+
+    def shown(chord, tag, at="0:30"):
+        return song_picture(*TWILIGHT, done=float(at[2:]) / 260, sign="playing", beside=f"{at} / 4:20",
+                            corner=chord, tag=tag).data()
+
+    watch.step()
+    assert screens(launchkey)[-1] == shown("E5", "L")  # (in the corner, the scale making room; whose before it)
+    rhythm.update(play=True, lights=4)  # as many lit: the rhythm's first
+    clock.now = 1.0
+    watch.step()
+    assert screens(launchkey)[-1] == shown("Em7", "R")
+    gui.info["position"] = 36.0  # the lead has none there: the rhythm's
+    clock.now = 2.0
+    watch.step()
+    assert screens(launchkey)[-1] == shown("C", "R", "0:36")
+    gui.info["position"] = 39.0  # between chords: the last one
+    clock.now = 3.0
+    watch.step()
+    assert screens(launchkey)[-1] == shown("C", "R", "0:39")
+    gui.live = 39.9  # where it plays now, a little ahead: the lead's next
+    clock.now = 4.0
+    watch.step()
+    assert screens(launchkey)[-1] == shown("G5", "L", "0:39")
+    bass["kind"] = "lead"  # two leads: numbered
+    clock.now = 5.0
+    watch.step()
+    assert screens(launchkey)[-1] == shown("G5", "L1", "0:39")
+    gui.live, gui.info["position"] = None, 10.0  # before the first: none
+    clock.now = 6.0
+    watch.step()
+    assert screens(launchkey)[-1] == shown(None, None, "0:10")
+
+
+def test_following_the_chord_stays_while_the_game_pauses():
+    watch, gui, launchkey, clock = watching()
+    gui.song["arrangements"][0]["chords"] = (Chord("A5", 10.0, 12.0),)
+    gui.info["song"], gui.live = gui.song, 10.5
+    watch.step()
+    followed = song_picture(*TWILIGHT, done=10.5 / 260, beside="0:10 / 4:20", corner="A5", tag="L").data()
+    assert screens(launchkey)[-1] == followed  # (where the game is, and its time)
+    gui.live = None  # paused
+    clock.now = 1.0
+    watch.step()
+    assert screens(launchkey)[-1] == followed
+
+
+LYRICS = lyric_lines([Syllable("Hey", 20.0, 20.5), Syllable("lit-", 20.5, 21.0), Syllable("tle", 21.0, 21.5),
+                      Syllable("kid+", 21.5, 22.0), Syllable("Did", 28.0, 28.5), Syllable("you", 29.0, 29.5),
+                      Syllable("wake+", 30.0, 31.0), Syllable("Up+", 40.0, 41.0)])
+
+
+def test_pad_6_shows_the_lyrics_as_theyre_sung_and_knob_6_goes_through_them():
+    watch, gui, launchkey, clock = watching("play")  # at 0:30, in the first verse
+    gui.song["lyrics"] = LYRICS
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Pad(0, 5)]  # playing the song: pad 6, the lyrics
+    clock.now = 0.5
+    watch.step()
+    assert watch.lyrics_view and pads(launchkey)[(0, 5)] == (53, False)
+    assert screens(launchkey)[-1] == lyrics_picture("Hey little kid", "Did you wake", "Up", sung=(8, 12), done=30 / 260,
+                                                    sign="playing", time="0:30", said="Verse 1").data()
+    launchkey.queued = [Turn(5, 1)]  # knob 6: the next line, Record taking the song there
+    clock.now = 1.0
+    watch.step()
+    gone = lyrics_picture("Did you wake", "Up", "", done=30 / 260, sign="playing", time="0:30", said="● = go here")
+    assert screens(launchkey)[-1] == gone.data()
+    launchkey.queued = [Button(RECORD)]
+    clock.now = 1.5
+    watch.step()
+    clock.now = 1.5 + TURN_WAIT + 0.01
+    watch.step()
+    assert gui.seeks == [39.0] and gui.stopped == 0  # (a second before it)
+    launchkey.queued = [Turn(5, -1)]
+    clock.now = 2.0
+    watch.step()
+    clock.now = 2.0 + 4.0  # a while after: with the song again
+    watch.step()
+    assert screens(launchkey)[-1] == lyrics_picture("Did you wake", "Up", "", done=39 / 260, sign="playing",
+                                                    time="0:39", said="Verse 1").data()  # (the next line, waiting)
+    launchkey.queued = [pitch(48, 7.0), pitch(40, 7.01)]  # the pitch strip: through them too (8 steps down: 2 lines
+    # back)
+    clock.now = 7.1
+    watch.step()
+    assert watch._lyric_line == 0.0 and gui.browsed == 0.0  # (not the library)
+    gui.library[42]["id"] = "song"  # (the song, in the library)
+    launchkey.queued = [Button(106)]  # Track back: the lyrics as they're sung, and the library back to the song
+    clock.now = 7.5
+    watch.step()
+    live = lyrics_picture("Did you wake", "Up", "", done=39 / 260, sign="playing", time="0:39", said="Verse 1").data()
+    assert watch.lyrics_view and screens(launchkey)[-1] == live and gui.browsed == 42.0
+    launchkey.queued = [Turn(6, 1), Button(106)]  # (something else between: a first press again)
+    clock.now = 7.6
+    watch.step()
+    assert watch.lyrics_view
+    launchkey.queued = [Button(106)]  # pressed again: the song
+    clock.now = 7.7
+    watch.step()
+    assert not watch.lyrics_view and screens(launchkey)[-1] == song_picture(
+        *TWILIGHT, done=39 / 260, sign="playing", beside="0:39 / 4:20").data()
+    launchkey.queued = [Pad(0, 5), Pad(0, 5)]  # pad 6, twice: the lyrics, then the song
+    clock.now = 8.0
+    watch.step()
+    assert not watch.lyrics_view
+
+
+def test_a_song_without_lyrics_says_so_and_following_they_show_too():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Pad(0, 5)]
+    clock.now = 0.5
+    watch.step()
+    assert not watch.lyrics_view and note(watch) == ("No lyrics in this song", None)
+    assert pads(launchkey)[(0, 5)] == (0, False)  # (no pad for them)
+    watch, gui, launchkey, clock = watching()  # following: the game's place
+    gui.song["lyrics"], gui.live = LYRICS, 21.0
+    gui.info.update(song=gui.song, length=None)  # (as following has it: the game's)
+    watch.step()
+    launchkey.queued = [Button(52), Pad(0, 5)]
+    clock.now = 0.5
+    watch.step()
+    assert screens(launchkey)[-1] == lyrics_picture("", "Hey little kid", "Did you wake", sung=(7, 10), time="0:21",
+                                                    said="Verse 1").data()
+
+
+def test_in_the_lyrics_view_playing_the_songs_knobs_show_there_too():
+    watch, gui, launchkey, clock = watching("play")  # at 0:30
+    gui.song["lyrics"] = LYRICS
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Pad(0, 5), Turn(5, -1), Turn(SEEK_KNOB, -8)]  # the lyrics, a line back, then
+    # knob 1: 8 seconds back (the line gone back to forgotten)
+    clock.now = 0.5
+    watch.step()
+    assert watch.lyrics_view and screens(launchkey)[-1] == lyrics_picture(
+        "", "Hey little kid", "Did you wake", sung=(11, 14), done=22 / 260, sign="playing", time="0:22",
+        said="Verse 1", handle=True).data()  # (where it's going: its line, a handle on the progress line)
+    clock.now = 0.5 + TURN_WAIT + 0.01
+    watch.step()
+    assert gui.seeks == [22.0]
+    launchkey.queued = [Turn(SPEED_KNOB, -5)]  # knob 2: its speed, where the section was, the progress line turned
+    # into it
+    clock.now = 1.0
+    watch.step()
+    assert screens(launchkey)[-1] == lyrics_picture("", "Hey little kid", "Did you wake", sung=(11, 14), done=22 / 260,
+                                                    sign="playing", time="0:22", said="Speed 75%", speed=0.75).data()
+    launchkey.queued = [Pad(0, 0), Turn(LOOP_KNOBS[1], 4)]  # the loop's start here, its end 4 beats on: brackets
+    clock.now = 1.5
+    watch.step()
+    assert screens(launchkey)[-1] == lyrics_picture("", "Hey little kid", "Did you wake", sung=(11, 14), done=22 / 260,
+                                                    sign="playing", time="0:22", said="Loop B 0:24.0",
+                                                    loop=(22 / 260, 24 / 260, False)).data()
+
+
+def test_playing_the_song_knob_7_picks_whose_chords_show():
+    watch, gui, launchkey, clock = watching("play")  # at 0:30; the lead lights its keys
+    lead, rhythm, _bass = gui.song["arrangements"]
+    lead["chords"], rhythm["chords"] = (Chord("E5", 29.0, 31.0),), (Chord("Em7", 28.0, 32.0),)
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Turn(6, 2)]  # knob 7, two on: auto, the lead, the rhythm
+    clock.now = 0.5
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT[:3], "Chords: Rhythm", done=30 / 260, sign="playing",
+                                                  beside="0:30 / 4:20", corner="Em7", tag="R").data()
+    launchkey.queued = [Turn(6, 1)]  # the bass: none of its own
+    clock.now = 1.0
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT[:3], "Chords: Bass", done=30 / 260, sign="playing",
+                                                  beside="0:30 / 4:20").data()
+    launchkey.queued = [Turn(6, 1)]  # and round: picked as they go again
+    clock.now = 1.5
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT[:3], "Chords: auto", done=30 / 260, sign="playing",
+                                                  beside="0:30 / 4:20", corner="E5", tag="L").data()
+    launchkey.queued = [Turn(6, -2)]  # the rhythm's; another song: auto again
+    clock.now = 2.0
+    watch.step()
+    gui.info["song"] = {**gui.song, "id": "other"}
+    clock.now = 2.5
+    watch.step()
+    assert watch._chords_from is None
+
+
+def test_a_tone_change_the_song_passes_is_said():
+    watch, gui, launchkey, clock = watching("play")
+    gui.song["arrangements"][0]["tone_changes"] = ((-math.inf, "clean"), (40.0, "distortion"), (90.0, "its own tone"))
+    gui.info.update(song=gui.song, position=39.5)
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT, done=39.5 / 260, sign="playing", beside="0:39 / 4:20",
+                                                  badge="Clean").data()  # (the tone it's on: what it starts with)
+    gui.info["position"] = 40.2  # passed: the lead's (the arrangement whose chords show)
+    clock.now = 0.3
+    watch.step()
+    assert note(watch) == ("Lead: distortion", None)
+    clock.now = 4.0  # (what was said gone) the tone it's on now
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT, done=40.2 / 260, sign="playing", beside="0:40 / 4:20",
+                                                  badge="Dist").data()
+    gui.info["position"] = 95.0  # jumped past one: nothing said, but it's on its own tone again (the clean one)
+    clock.now = 5.0
+    watch.step()
+    assert note(watch) is None and screens(launchkey)[-1] == song_picture(
+        *TWILIGHT, done=95 / 260, sign="playing", beside="1:35 / 4:20", badge="Clean").data()
+
+
+def test_an_arrangement_on_another_device_its_knob_steps_its_programs():
+    watch, gui, launchkey, clock = watching("play")
+    bass = gui.song["arrangements"][2]
+    bass["output"] = {"port": "monologue SOUND", "program": None}
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Turn(2, 1)]  # knob 3, the bass's: from its own sound, the first program
+    clock.now = 0.5
+    watch.step()
+    assert gui.programs == [("bass", 0)] and screens(launchkey)[-1] == parts_picture(
+        "Bass program", 1, "Program", "monologue SOUND", 3, 0).data()
+    launchkey.queued = [Turn(CONTROLS, 2)]  # knob 8: ten at a time
+    clock.now = 1.0
+    watch.step()
+    assert gui.programs[-1] == ("bass", 20)
+
+
+def test_picked_with_no_chords_an_arrangements_notes_show():
+    from rs_keylights.sng import Note
+    watch, gui, launchkey, clock = watching("play")  # at 0:30
+    bass = gui.song["arrangements"][2]
+    bass["notes"] = (Note(29.0, 0, (31,)), Note(31.0, 0, (34,)))  # G1, then Bb1
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Turn(6, 3)]  # knob 7: auto, lead, rhythm, bass
+    clock.now = 0.5
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT[:3], "Chords: Bass", done=30 / 260, sign="playing",
+                                                  beside="0:30 / 4:20", corner="G1", tag="B").data()
+
+
+def test_column_6_is_the_guitar_knob_6_its_pedals_presets():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"] = gui.song
+    watch.step()
+    assert pads(launchkey)[(0, GUITAR_COLUMN)] == (10, 8, 0)  # on none of its favourites: yellow, dim
+    assert pads(launchkey)[(1, GUITAR_COLUMN)] == (19, 15, 0)  # not heard: dim
+    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]  # knob 6: the next preset, once the knob rests
+    clock.now = 0.5
+    watch.step()
+    assert gui.pedal_calls == [({"slot": 50}, PEDAL_WAIT)]
+    assert screens(launchkey)[-1] == pedal_picture(50, "5050 DS", "Pad: 051 / 187").data()
+    launchkey.queued = [Turn(CONTROLS, -1)]  # knob 8, while it shows: ten at a time, round from the first
+    clock.now = 1.0
+    watch.step()
+    assert gui.pedal_calls[-1] == ({"slot": 40}, PEDAL_WAIT)
+    launchkey.queued = [Turn(GUITAR_COLUMN, -40)]
+    clock.now = 1.5
+    watch.step()
+    assert gui.pedal_calls[-1] == ({"slot": 200}, PEDAL_WAIT)
+    assert screens(launchkey)[-1] == pedal_picture(200, "My love", "Pad: 051 / 187").data()
+
+
+def test_the_guitars_pads_go_through_its_favourites_and_hear_it():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Pad(0, GUITAR_COLUMN)]  # on none of them: the first
+    clock.now = 0.5
+    watch.step()
+    assert gui.pedal_calls == [({"slot": 51}, 0.0)]
+    assert screens(launchkey)[-1] == pedal_picture(51, "P51", "Pad: 051 / 187").data()
+    assert pads(launchkey)[(0, GUITAR_COLUMN)] == (13, False)  # on one of them: bright
+    launchkey.queued = [Pad(0, GUITAR_COLUMN)]  # the next
+    clock.now = 1.0
+    watch.step()
+    launchkey.queued = [Pad(0, GUITAR_COLUMN)]  # round to the first
+    clock.now = 1.5
+    watch.step()
+    assert [body["slot"] for body, _later in gui.pedal_calls] == [51, 187, 51]
+    launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # heard: its notes light the keys
+    clock.now = 2.0
+    watch.step()
+    assert gui.listen and note(watch) == ("Guitar heard: on", None)
+    assert pads(launchkey)[(1, GUITAR_COLUMN)] == (127, 100, 0)
+    gui.pedal = {**gui.pedal, "error": "The pedal didn't answer: unplug it and plug it in again"}
+    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]
+    clock.now = 3.0
+    watch.step()
+    assert screens(launchkey)[-1] == pedal_picture(52, "P52", "Pedal didn't answer").data()
+    gui.pedal = {**gui.pedal, "favourites": []}
+    clock.now = 3.5
+    watch.step()
+    launchkey.queued = [Pad(0, GUITAR_COLUMN)]
+    clock.now = 4.0
+    watch.step()
+    assert note(watch) == ("Pedal: no favourites", None) and len(gui.pedal_calls) == 4
+
+
+def test_the_guitar_column_is_dark_playing_the_song_and_in_the_mixer():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Turn(CONTROLS, 1)]  # knob 8: the mixer, for a while
+    clock.now = 0.5
+    watch.step()
+    assert watch.mix_knobs and pads(launchkey)[(0, GUITAR_COLUMN)] == (0, False)
+    assert pads(launchkey)[(1, GUITAR_COLUMN)] == (0, 0, 0)
+    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]  # knob 6 in the mixer: nothing
+    clock.now = 1.0
+    watch.step()
+    assert gui.pedal_calls == []

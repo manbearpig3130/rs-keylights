@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import threading
 import time
+from bisect import bisect_right
 from collections import deque
 from typing import Any, Callable, Protocol
 
 import math
 
-from .bitmap import (FASTEST, SLOWEST, WIDTH, Bitmap, arrangements_picture, keys_picture, mixer_picture, parts_picture,
-                     playback_picture, song_bar, song_picture, with_note, wrap)
+from .bitmap import (FASTEST, SLOWEST, WIDTH, Bitmap, arrangements_picture, keys_picture, lyrics_picture, mixer_picture,
+                     parts_picture, pedal_picture, playback_picture, song_bar, song_picture, with_note, wrap)
 from .launchkey import (ENCODER_BUTTONS, PLAY, RECORD, SIDE_BUTTONS, STATIONARY, TEMPORARY, TRACK_BUTTONS, Button,
                         Launchkey, Pad, ScaleMode, Strip, Turn, step_at)
+from .chords import NAMES, chord_name
+from .lyrics import Line
+from .pedal import SLOTS as PEDAL_SLOTS
+from .sng import Chord, note_name
 from .tones import TONES, tone
 
 # While the page runs: keeps a Launchkey MK4 as a remote, in step with the page, for the song followed, else
@@ -19,7 +24,8 @@ from .tones import TONES, tone
 # - The arrangements (the up arrow beside the knobs, lit): pads 1 to 6 on top, the song's arrangements (lit
 #   when they play, the one you play in the game pulsing; a tap mutes one or plays it again, muted: as dim as
 #   its colour goes); below them, their lit keys (a tap gives one more); knobs 1 to 6, each steps through its
-#   arrangement's tones (or palm-mute or low-note tones: Func goes through them). Column 7, its keys, a part of
+#   arrangement's tones (or palm-mute or low-note tones: Func goes through them; on another MIDI device, its
+#   programs). Column 7, its keys, a part of
 #   their own playing the keyboard: the top pad turns them on or off, the bottom one whether they light the
 #   keys, and knob 7 steps through their tone. While a tone shows on the screen, knob 8 steps through the groups
 #   of tones; else it's all the volumes. Palm-mute and low-note tones start with the same tone as the rest (and
@@ -28,8 +34,11 @@ from .tones import TONES, tone
 #   picked starts), knob 2 sets its speed, knob 3 goes a section at a time, and knobs 4 and 5 move the A-B loop's
 #   start and end a beat at a time; knob 8 all the volumes. The pads on top set the loop: its start and end
 #   where the song is, on or off, or the section it's in; below them, a pad for each kind of section (verse,
-#   chorus...; the one it's in bright): a tap goes to the next one. They take the screen from the library. The
-#   down arrow again shows what they do (again: away).
+#   chorus...; the one it's in bright): a tap goes to the next one. They take the screen from the library. Pad 6
+#   on top shows the lyrics instead of the song (again: the song), knob 6 and the pitch strip going through
+#   them (Record: the song from the line shown; Track back: as they're sung, again the song); what the knobs and
+#   pads do shows there too. Knob 7 picks whose chords show (auto, or an arrangement). The down arrow again shows
+#   what they do (again: away).
 # - The mixer (Track on, lit; or knob 8 for a while, however it's used): knobs 1 to 6 are the arrangements'
 #   volumes, knob 7 its keys', knob 8 all of them together, and the pads on top mute each (red) or play it
 #   again, as they do outside it; the pitch strip moves the slider last used (a knob's, or a pad's on top; knob
@@ -48,7 +57,11 @@ from .tones import TONES, tone
 #   already: stops it), but not while following (the game picks the song, its last staying shown until the
 #   next). Track back is home: the screen back on the song (or waiting for one), the library too. The
 #   modulation strip is its keys' modulation.
-# - The screen: the song, and for a while what was just done (its own display of the modulation strip aside);
+# - The screen: the song (with the chord being played in its corner: from the arrangement lighting the most keys,
+#   the rhythm's first if they light as many, else from the next that has one there; whose, lit up before it: L,
+#   R or B, numbered when a song has more than one; its tone changes said as they come, and the tone it's on lit
+#   up at the right of the artist's line), and for a while what was
+#   just done (its own display of the modulation strip aside);
 #   what a tap turned on or off is said for a while at the bottom left of whatever it shows.
 
 TICK = 0.03
@@ -64,12 +77,24 @@ SECONDS_PER_STEP = 1.0  # knob 8
 # 7), real pitch on or off, or where knob 8 moves it, or instead the tone the knobs are on (an arrangement's, or
 # its keys'); kept up to date, but sent at most this often
 PICTURE_SHOWN, PICTURE_GAP = 3.0, 0.05
-ARRANGEMENT_KNOBS = 6  # knobs (and pad columns) 1 to 6: the arrangements (one after the 6th has none)
+ARRANGEMENT_KNOBS = 5  # knobs (and pad columns) 1 to 5: the arrangements (one after the 5th has none: songs seldom
+# have 6)
+GUITAR_COLUMN = 5  # knob 6 and the pads under it: the guitar (its pedal's presets, whether it's heard)
 KEYS_COLUMN = 6  # knob 7 and the pads under it: its keys, a part of their own
+PEDAL_WAIT = 0.4  # seconds knob 6 rests on a preset before the pedal switches to it
+PEDAL_JUMP = 10  # presets a step of knob 8, while the pedal's on the screen
 SEEK_KNOB, SPEED_KNOB, SPEED_STEP = 0, 1, 0.05  # playing the song: knob 1 moves through it, knob 2 its speed,
 SECTION_KNOB, LOOP_KNOBS = 2, (3, 4)  # knob 3 a section at a time, knobs 4 and 5 the loop's start and end (beats)
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
 LOOP_PADS = ("a", "b", "on", "section")  # the pads on top: the loop's start and end here, on or off, the section
+LYRICS_PAD, LYRICS_KNOB = 5, 5  # pad 6 on top: the lyrics on the screen (or the song); knob 6 goes through them
+CHORDS_KNOB = 6  # knob 7: whose chords show (auto, or an arrangement's)
+LYRICS_ON, LYRICS_OFF = 53, 55  # its pad: magenta, bright while they show
+LYRICS_EARLY = 0.1  # seconds: a syllable lit this early
+LYRICS_HOLD = 1.5  # seconds a line stays after its last syllable (then the next shows, waiting)
+LYRICS_BACK = 4.0  # seconds after going through them, the lyrics are back with the song
+LYRICS_LEAD_IN = 1.0  # seconds of the song before a line Record goes to
+STRIP_LINE = 4  # the pitch strip's steps a line, going through the lyrics
 SECTION_PADS = 7  # the pads below: a kind of section each, the song's most common
 SECTION_COLOURS = {"intro": (100, 100, 100), "outro": (100, 100, 100), "verse": (0, 45, 127), "prechorus": (0, 90, 110),
                    "chorus": (127, 50, 0), "postchorus": (127, 90, 0), "hook": (127, 90, 0), "bridge": (80, 0, 127),
@@ -93,18 +118,28 @@ BROWSE_SHOWN = 5.0  # seconds the screen shows the song the pitch strip is on, a
 FOLLOWING_PICKS = ("Following Rocksmith:", "it picks the song")  # (no switching to another)
 FLICK_GAIN, FLICK_FADE = 1.5, 0.8  # a flick's songs a second for its steps a second, and how it slows (seconds)
 BUILT_IN = {"lead": 79, "rhythm": 79, "bass": 85}
+CHORD_EARLY = 0.15  # seconds: a chord's name shows this early, a little before it's played
+CHORDS_FIRST = {"rhythm": 0, "lead": 1, "bass": 2}  # whose chords, of arrangements lighting as many keys
+KIND_LETTERS = {"lead": "L", "rhythm": "R", "bass": "B"}  # whose chord it is, beside it
+TONE_BADGES = {"clean lead": "Clean ld", "distortion": "Dist", "acoustic": "Acoustic", "electric piano": "E.piano",
+               "driven bass": "Drv bass", "synth bass": "Syn bass", "its own tone": "Own"}  # the tone the song's on
+# (the rest: capitalised)
 COLOURS = {"lead": (9, (127, 45, 0)), "rhythm": (21, (0, 127, 20)), "bass": (45, (0, 45, 127))}
 TONIC, IN_SCALE, ALSO = 5, 3, 49  # palette colours: the scale view
 SOUND_ON, SOUND_OFF, FOLLOWING, NOT_FOLLOWING = 21, 5, 37, 39  # the right column's pads
 KEYS_ON, KEYS_RGB = 49, (60, 0, 127)  # its keys' pads: purple
+GUITAR_ON, GUITAR_RGB = 13, (127, 100, 0)  # the guitar's pads: yellow
 MUTED_PAD = 5  # an arrangement (or its keys) muted, in the mixer: red
 MUTED_LEVEL = 0.08  # and outside it: its colour, as dim as it goes
 LIT, DIM = (3, 127), (1, 20)  # a button's light: palette colour and brightness
 CONTROLS = 7  # the column of the right-hand pads and the last knob
 WHITE_KEYS = (0, 2, 4, 5, 7, 9, 11, 12)  # the scale view: an octave from C, white keys on the bottom pads
 BLACK_KEYS = (1, 3, None, 6, 8, 10, None, None)  # and the black keys above them
-TIMED = ("speed", "position", "section", "loop", "keys", "parts", "mixer", "playback", "arrangements")  # pictures
+TIMED = ("speed", "position", "section", "loop", "chords", "keys", "parts", "pedal", "mixer", "playback",
+         "arrangements")  # pictures
 # shown for a while
+ON_THE_SONG = (None, "speed", "position", "section", "loop", "chords")  # the song's screen (or the lyrics), what it
+# shows
 TONE_NUMBERS = [t.number for t in TONES]
 GROUPS = [t.number for i, t in enumerate(TONES) if i == 0 or TONES[i - 1].group != t.group]  # each one's first
 SAME, DEFAULT = 0, -1  # palm mutes and low notes: the tone the rest has (as the page keeps it: over a default), or
@@ -157,6 +192,12 @@ class GuiProtocol(Protocol):
     def browse_letter(self, steps: int) -> dict[str, Any] | None:
         ...
 
+    def song_position(self) -> float | None:
+        ...
+
+    def set_program(self, part: str, program: int) -> None:
+        ...
+
     def remote_stop(self) -> str:
         ...
 
@@ -179,6 +220,15 @@ class GuiProtocol(Protocol):
         ...
 
     def release_keys(self) -> None:
+        ...
+
+    def toggle_listen(self) -> bool:
+        ...
+
+    def set_pedal(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
+        ...
+
+    def pedal_name(self, slot: int | None) -> str:
         ...
 
 
@@ -223,6 +273,16 @@ class Watch:
         # _say has them
         self._note_until = 0.0  # until then
         self._loop_turned = "a"  # the loop's end last turned (knob 4 or 5)
+        self._followed_at: float | None = None  # where the game was last (following: its chord stays while it pauses)
+        self.lyrics_view = False  # the lyrics on the screen instead of the song (pad 6 on top, playing the song)
+        self._lyrics_home = False  # Track back was the last pressed, the lyrics showing: again, the song
+        self._chords_from: str | None = None  # whose chords show (an arrangement's ID; None: picked as they go)
+        self._chords_song: str | None = None  # (for the song they're picked in)
+        self._tone_at: float | None = None  # where the song was, last looked at (a tone change passed since: said)
+        self._lyric_line: float | None = None  # the line gone to (knob 6, or the pitch strip), until _lyrics_until
+        self._lyrics_until = 0.0
+        self._lyric_strip: tuple[int, int, float] | None = None  # the pitch strip going through them: where, its
+        # step, and when
         self._part_turned = 0  # the arrangement whose knob was last turned
         self._picture_of: str | None = None  # the picture on the screen for a while: "speed", "position",
         # "section", "loop", "keys", "parts", "mixer" or "playback"
@@ -334,7 +394,11 @@ class Watch:
         self._pending.clear()  # (what was sent is in it)
         song = info["song"]
         seen = (info["mode"] == "follow", song["id"], song["played"]) if song else None
+        sid = song["id"] if song else None
+        if sid != self._chords_song:  # (another song: its chords picked as they go)
+            self._chords_from, self._chords_song = None, sid
         if seen != self._song:
+            self._lyric_line = None  # (another song: its lyrics as it's sung)
             if seen and seen[0] and (self._song is None or not self._song[0] or self._song[1] != seen[1]):
                 self.gui.browse_at(song["id"])  # following, a song started: the library goes to it
             self._song = seen
@@ -343,7 +407,20 @@ class Watch:
             elif seen and seen[0] and song.get("key") and self.gui.follow_settings.get("show_key", True):
                 self.gui.show_key()  # on the keys as the song starts in the game
         self._info = info
+        self._tone_news(info, self._clock())
         self._draw()
+
+    def _tone_news(self, info: dict[str, Any], now: float) -> None:
+        """A tone change the song just passed (not jumped to), said: the arrangement whose chords show's."""
+        song = info.get("song")
+        at = None if self._moving_to is not None or song is None else self._song_at(info)
+        last, self._tone_at = self._tone_at, at
+        if song is None or at is None or last is None or not 0 < at - last < 1.0 or not song.get("arrangements"):
+            return
+        a = self._chords_order(song)[0]
+        passed = [said for when, said in a.get("tone_changes") or () if last < when <= at]
+        if passed:
+            self._say(now, line=f"{a['name']}: {passed[-1]}")
 
     # The Launchkey
 
@@ -410,6 +487,16 @@ class Watch:
                 picture[(0, KEYS_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in KEYS_RGB))
             lit = (1.0 if keys.get("lights") else 0.15) if parts else 0.0
             picture[(1, KEYS_COLUMN)] = ("rgb", *(round(c * lit) for c in KEYS_RGB))
+            guitar = parts and not self.mix_knobs  # (the guitar: its pedal on a favourite or not, and heard or not)
+            pedal = info.get("pedal") or {}
+            if not guitar:
+                picture[(0, GUITAR_COLUMN)] = ("palette", 0, False)
+            elif pedal.get("slot") in (pedal.get("favourites") or ()):
+                picture[(0, GUITAR_COLUMN)] = ("palette", GUITAR_ON, False)
+            else:
+                picture[(0, GUITAR_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in GUITAR_RGB))
+            heard = (1.0 if info.get("listen") else 0.15) if guitar else 0.0
+            picture[(1, GUITAR_COLUMN)] = ("rgb", *(round(c * heard) for c in GUITAR_RGB))
             if not parts:
                 self._playback_pads(picture, info)
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if info.get("sound") else SOUND_OFF, False)
@@ -427,11 +514,13 @@ class Watch:
         return picture
 
     def _playback_pads(self, picture: dict[Any, Any], info: dict[str, Any]) -> None:
-        """Playing the song (not following: the game's): the loop's pads on top (its start and end, lit when it has
-        them; on, pulsing; the section it's in looped), and below them a kind of section each, the one it's in
-        bright."""
+        """Playing the song: the loop's pads on top (its start and end, lit when it has them; on, pulsing; the
+        section it's in looped: following too, Riff Repeater looping it), and below them a kind of section each, the
+        one it's in bright (not following: the game goes where it goes)."""
         song = info.get("song")
-        if song is None or info.get("mode") == "follow":
+        if song is not None and song.get("lyrics"):  # (following too)
+            picture[(0, LYRICS_PAD)] = ("palette", LYRICS_ON if self.lyrics_view else LYRICS_OFF, False)
+        if song is None:
             return
         loop, sections = info.get("loop") or {}, song.get("sections") or []
         here = _section_at(sections, self._where(info))
@@ -442,6 +531,8 @@ class Watch:
         if sections:
             looped = on and here is not None and (a, b) == (here["start"], here["end"])
             picture[(0, 3)] = ("palette", LOOPED if looped else NOT_LOOPED, False)
+        if info.get("mode") == "follow":
+            return
         for column, kind in enumerate(_kinds(sections)):
             level = 1.0 if here is not None and here["kind"] == kind else SECTION_DIM
             picture[(1, column)] = ("rgb", *(round(c * level) for c in SECTION_COLOURS.get(kind, OTHER_SECTION)))
@@ -451,6 +542,8 @@ class Watch:
         song = info.get("song")
         if self.launchkey is None:
             return
+        if not (isinstance(event, Button) and event.number == TRACK_BUTTONS[0]):
+            self._lyrics_home = False  # (Track back, next: the lyrics as they're sung first)
         mixing = (isinstance(event, (Turn, Strip)) or isinstance(event, Pad) and event.row == 0 or
                   isinstance(event, Button) and event.number == TRACK_BUTTONS[1])
         said = isinstance(event, Pad) and event.row == 1 or isinstance(event, Button) and event.number == SIDE_BUTTONS[0]
@@ -468,8 +561,11 @@ class Watch:
                 elif song is not None and song.get("key"):
                     self.gui.show_scale({"song": song["id"]})
             return
-        if isinstance(event, Strip):  # (the pitch strip)
-            self._browse_pitch(event.value, event.at or now)
+        if isinstance(event, Strip):  # (the pitch strip: the lyrics while they show, else the library)
+            if self._lyrics_shown(info):
+                self._slide_lyrics(event.value, event.at or now, info, now)
+            else:
+                self._browse_pitch(event.value, event.at or now)
             return
         if isinstance(event, Pad) and self.scale_view and song is not None and song.get("key"):
             self._say(now, lines=("Pads: the song's scale", "Scale: back to parts"))
@@ -493,6 +589,8 @@ class Watch:
                 self._browse_until = now + BROWSE_SHOWN
             elif self.mode == "parts" and self._picture_of == "keys":
                 self._turn_keys(event.steps, True, info, now)
+            elif self.mode == "parts" and self._picture_of == "pedal":
+                self._turn_pedal(event.steps, True, info, now)
             elif self.mode == "parts" and self._picture_of == "parts":
                 self._turn_tone(self._part_turned, event.steps, True, info, now)
             else:
@@ -505,6 +603,9 @@ class Watch:
         column = event.encoder if isinstance(event, Turn) else event.column
         if column == KEYS_COLUMN:
             self._keys_column(event, info, now)
+            return
+        if column == GUITAR_COLUMN:
+            self._guitar_column(event, info, now)
             return
         arrangements = song["arrangements"][:ARRANGEMENT_KNOBS] if song else []
         if column >= len(arrangements):
@@ -531,10 +632,13 @@ class Watch:
         """Playing the song: knob 1 moves through it, 2 sets its speed, 3 goes a section at a time, and 4 and 5 move
         the loop's start and end; the pads on top set the loop, the ones below go to a kind of section. Anything
         else shows what they do."""
-        if isinstance(event, Turn) and event.encoder in (SEEK_KNOB, SPEED_KNOB, SECTION_KNOB, *LOOP_KNOBS) or \
-                isinstance(event, Pad) and (event.row == 0 and event.column < len(LOOP_PADS) or
-                                            event.row == 1 and event.column < SECTION_PADS):
+        if isinstance(event, Turn) and event.encoder in (SEEK_KNOB, SPEED_KNOB, SECTION_KNOB, *LOOP_KNOBS, LYRICS_KNOB,
+                                                         CHORDS_KNOB) or \
+                isinstance(event, Pad) and (event.row == 0 and (event.column < len(LOOP_PADS) or event.column == LYRICS_PAD)
+                                            or event.row == 1 and event.column < SECTION_PADS):
             self._stop_browsing()  # (the song's line before the library)
+            if not (isinstance(event, Turn) and event.encoder == LYRICS_KNOB):
+                self._lyric_line = None  # (the lyrics as they're sung, or where it's going)
         if isinstance(event, Turn) and event.encoder == SEEK_KNOB:
             self._move(event.steps, info, now)
         elif isinstance(event, Turn) and event.encoder == SPEED_KNOB:
@@ -543,6 +647,12 @@ class Watch:
             self._turn_section(event.steps, info, now)
         elif isinstance(event, Turn) and event.encoder in LOOP_KNOBS:
             self._turn_loop("ab"[LOOP_KNOBS.index(event.encoder)], event.steps, info, now)
+        elif isinstance(event, Turn) and event.encoder == LYRICS_KNOB:
+            self._scroll_lyrics(event.steps, info, now)
+        elif isinstance(event, Turn) and event.encoder == CHORDS_KNOB:
+            self._turn_chords(event.steps, info, now)
+        elif isinstance(event, Pad) and event.row == 0 and event.column == LYRICS_PAD:
+            self._toggle_lyrics(info, now)
         elif isinstance(event, Pad) and event.row == 0 and event.column < len(LOOP_PADS):
             self._loop_pad(LOOP_PADS[event.column], info, now)
         elif isinstance(event, Pad) and event.row == 1 and event.column < SECTION_PADS:
@@ -572,10 +682,44 @@ class Watch:
             self.gui.set_keys({"lights": not keys.get("lights")})
             self._said_by_pad(now, f"Keys light first: {'off' if keys.get('lights') else 'on'}")
 
+    def _guitar_column(self, event: Pad | Turn, info: dict[str, Any], now: float) -> None:
+        """Column 6, the guitar: knob 6 its pedal's presets, the top pad the next of its favourites (the first, on
+        none of them), the bottom one whether it's heard (its notes lighting the keys)."""
+        if isinstance(event, Turn):
+            self._turn_pedal(event.steps, False, info, now)
+        elif event.row == 0:
+            pedal = info.get("pedal") or {}
+            favourites = list(pedal.get("favourites") or ())
+            slot = self._pending.get(("pedal", "slot")) or pedal.get("slot")
+            if not favourites:
+                self._said_by_pad(now, "Pedal: no favourites")
+                return
+            slot = favourites[(favourites.index(slot) + 1) % len(favourites)] if slot in favourites else favourites[0]
+            if self._try(lambda: self.gui.set_pedal({"slot": slot})):
+                self._pending[("pedal", "slot")] = slot
+                self._show_for_a_while("pedal", now)
+        else:
+            heard: list[bool] = []
+            if self._try(lambda: heard.append(self.gui.toggle_listen())):
+                self._said_by_pad(now, f"Guitar heard: {'on' if heard[0] else 'off'}")
+
+    def _turn_pedal(self, steps: int, jump: bool, info: dict[str, Any], now: float) -> None:
+        """Knob 6: the pedal's presets, one at a time (jump: knob 8, PEDAL_JUMP at a time; round from the last to
+        the first), the screen showing the one it's on; the pedal switches to it once the knob rests."""
+        slot = self._pending.get(("pedal", "slot")) or (info.get("pedal") or {}).get("slot")
+        steps *= PEDAL_JUMP if jump else 1
+        base = slot if slot is not None else 0 if steps > 0 else 1
+        slot = (base - 1 + steps) % PEDAL_SLOTS + 1
+        self._pending[("pedal", "slot")] = slot
+        self._try(lambda: self.gui.set_pedal({"slot": slot}, later=PEDAL_WAIT))
+        self._show_for_a_while("pedal", now)
+
     def _button(self, number: int, song: dict[str, Any] | None, now: float) -> None:
         if number == PLAY:  # the song's picture shows it playing or paused
             self.gui.remote_play()
             self._back_to_the_song()
+        elif number == RECORD and self._lyric_line is not None and now < self._lyrics_until:  # the line gone to
+            self._lyrics_go(now)
         elif number == RECORD and (self._info or {}).get("mode") == "follow":
             self._say(now, lines=FOLLOWING_PICKS)  # (the game picks the song)
         elif number == RECORD:  # the song the pitch strip is on switched to; on the song already, it stops
@@ -587,10 +731,17 @@ class Watch:
                 self._say(now, line="Switched to this song")
             self._browsed, self._browsed_text, self._flick = None, None, 0.0
             self._moves.clear()  # (no flick)
-        elif number == TRACK_BUTTONS[0]:  # home: the screen on the song (or waiting for one), the library too
+        elif number == TRACK_BUTTONS[0]:  # home: the screen on the song (or waiting for one), the library too; the
+            # lyrics showing, on them as they're sung, then (pressed again) the song
             self._browsed, self._browsed_text, self._flick = None, None, 0.0
             self._moves.clear()
             self.gui.browse_at(song["id"] if song else None)
+            lyrics = self.lyrics_view and bool((song or {}).get("lyrics"))
+            if lyrics and self._lyrics_home:
+                self.lyrics_view, self._lyrics_home = False, False
+            else:
+                self._lyrics_home = lyrics
+            self._lyric_line = None
             self._back_to_the_song()
         elif number == SIDE_BUTTONS[0]:
             on = self.gui.toggle_real_pitch()
@@ -753,10 +904,7 @@ class Watch:
 
     def _loop_pad(self, which: str, info: dict[str, Any], now: float) -> None:
         """The loop's pads: its start where the song is ("a"), its end ("b", looping), on or off, or the section
-        it's in (looping it already: off). What it is now is said."""
-        if info.get("mode") == "follow":
-            self._say(now, lines=("Loop: the game's", "(Riff Repeater)"))
-            return
+        it's in (looping it already: off). What it is now is said (following, and the game can't loop it, why)."""
         loop = info.get("loop") or {}
         body = {"a": {"a": "here"}, "b": {"b": "here", "on": True}, "on": {"on": not loop.get("on")},
                 "section": {"section": True}}[which]
@@ -771,16 +919,97 @@ class Watch:
             said = f"Loop: {found['name'] if found and on else 'off'}"
         else:
             said = f"Loop {_exact(a)}-{_exact(b)}: {'on' if on else 'off'}"
-        self._say(now, line=said)
+        game = now_set.get("game") if on else None  # (following: the game's)
+        if game is not None:
+            self._say(now, lines=(said, _riff_trouble(game) or "Pick it in Riff Repeater"))
+        else:
+            self._say(now, line=said)
 
     def _turn_loop(self, end: str, steps: int, info: dict[str, Any], now: float) -> None:
         """Knobs 4 and 5: the loop's start or end, a beat at a time (from where the song is, without it)."""
-        if info.get("mode") == "follow":
-            self._say(now, lines=("Loop: the game's", "(Riff Repeater)"))
-            return
         if self._try(lambda: self.gui.set_loop({f"move_{end}": steps})):
             self._loop_turned = end
             self._show_for_a_while("loop", now)
+
+    def _turn_chords(self, steps: int, info: dict[str, Any], now: float) -> None:
+        """Knob 7: whose chords show, auto (picked as they go) then each arrangement in turn; the screen says."""
+        song = info.get("song")
+        if song is None:
+            self._say(now, line="Chords: no song")
+            return
+        choices = [None, *(a["id"] for a in song.get("arrangements") or [])]
+        at = choices.index(self._chords_from) if self._chords_from in choices else 0
+        self._chords_from = choices[(at + steps) % len(choices)]
+        self._show_for_a_while("chords", now)
+
+    def _chords_said(self, song: dict[str, Any]) -> str:
+        """Whose chords show, as said where the scale is."""
+        chosen = next((a for a in song.get("arrangements") or [] if a["id"] == self._chords_from), None)
+        return f"Chords: {chosen['name'] if chosen else 'auto'}"
+
+    def _toggle_lyrics(self, info: dict[str, Any], now: float) -> None:
+        """Pad 6 on top: the lyrics on the screen instead of the song, or the song again."""
+        if not ((info.get("song") or {}).get("lyrics")):
+            self._say(now, line="No lyrics in this song" if info.get("song") else "Lyrics: no song")
+            return
+        self.lyrics_view, self._lyric_line, self._picture_of = not self.lyrics_view, None, None
+
+    def _scroll_lyrics(self, lines: float, info: dict[str, Any], now: float) -> None:
+        """Knob 6 (a line a step) or the pitch strip: through the lyrics, from the line they're on (shown, if they
+        weren't); back with the song LYRICS_BACK after."""
+        lyrics = (info.get("song") or {}).get("lyrics") or ()
+        if not lyrics:
+            self._say(now, line="No lyrics in this song" if info.get("song") else "Lyrics: no song")
+            return
+        if self._lyric_line is None or now >= self._lyrics_until:
+            self._lyric_line = float(self._lyric_now(lyrics, self._song_at(info))[0])
+        self._lyric_line = min(max(self._lyric_line + lines, 0.0), len(lyrics) - 1.0)
+        self.lyrics_view, self._lyrics_until, self._picture_of = True, now + LYRICS_BACK, None
+
+    def _slide_lyrics(self, value: int, at: float, info: dict[str, Any], now: float) -> None:
+        """The pitch strip while the lyrics show: through them, STRIP_LINE steps a line, as it slides; let go
+        (springing back) or put down again, they stay."""
+        last = self._lyric_strip
+        if value == STRIP_MIDDLE and last is not None and abs(last[0] - STRIP_MIDDLE) > 64:  # let go
+            self._lyric_strip = None
+            return
+        step = step_at(value, None if last is None else last[1])
+        self._lyric_strip = (value, step, at)
+        if last is None or (at - last[2] > NEW_TOUCH and abs(step - last[1]) > NEW_TOUCH_STEPS) or step == last[1]:
+            return
+        self._scroll_lyrics((step - last[1]) / STRIP_LINE, info, now)
+
+    def _lyrics_go(self, now: float) -> None:
+        """Record, on a line gone to: the song from a little before it (following: the game's)."""
+        info = self._info or {}
+        lyrics = (info.get("song") or {}).get("lyrics") or ()
+        line, self._lyric_line = self._lyric_line, None
+        if info.get("mode") == "follow" or line is None or not lyrics:
+            self._say(now, line="Position: the game's")
+            return
+        self._moving_to = max(lyrics[round(line)].start - LYRICS_LEAD_IN, 0.0)
+        self._turned_at, self._wait = now, TURN_WAIT
+
+    def _lyrics_shown(self, info: dict[str, Any]) -> bool:
+        """The lyrics view is up (and the song has lyrics): nothing over it for a while, or what's moving through the
+        song, its speed or its loop, shown on it."""
+        return (self.lyrics_view and self._picture_of in ON_THE_SONG and not self.mix_knobs and
+                bool((info.get("song") or {}).get("lyrics")))
+
+    def _lyric_now(self, lyrics: tuple[Line, ...], at: float | None) -> tuple[int, tuple[int, int] | None]:
+        """The line being sung where the song is (LYRICS_EARLY ahead), and the syllable (where it is in the line;
+        None: not yet, or it's over): before the first line, it; LYRICS_HOLD after one, the next."""
+        if at is None:
+            return 0, None
+        at += LYRICS_EARLY
+        i = bisect_right(lyrics, at, key=lambda line: line.start) - 1
+        if i < 0:
+            return 0, None
+        if at > lyrics[i].end + LYRICS_HOLD:
+            return min(i + 1, len(lyrics) - 1), None
+        syllables = lyrics[i].syllables
+        j = bisect_right(syllables, at, key=lambda syllable: syllable[0]) - 1
+        return i, syllables[j][1:]
 
     def _where(self, info: dict[str, Any]) -> float:
         """Where the song is, or where it's being taken."""
@@ -858,6 +1087,13 @@ class Watch:
             return ("playback", muted), lambda: playback_picture(muted)
         if self._picture_of == "arrangements":
             return ("arrangements", muted), lambda: arrangements_picture(muted)
+        if self._picture_of == "pedal":
+            pedal = info.get("pedal") or {}
+            slot = self._pending.get(("pedal", "slot")) or pedal.get("slot")
+            name, favourites, error = self.gui.pedal_name(slot), pedal.get("favourites") or (), pedal.get("error")
+            said = (_pedal_trouble(error) if error else
+                    "Pad: " + " / ".join(f"{favourite:03d}" for favourite in favourites) if favourites else "")
+            return ("pedal", slot, name, said, muted), lambda: pedal_picture(slot, name, said, muted)
         if self._picture_of == "keys":
             found = tone(self._keys_tone(info))
             group = found.group.title().replace("Gm ", "GM ")
@@ -865,6 +1101,12 @@ class Watch:
         if self._picture_of == "parts" and arrangements_now:
             a = arrangements_now[min(self._part_turned, len(arrangements_now) - 1)]
             (field, said), which = FIELDS[self.field], self.field
+            if a.get("output"):  # (on another MIDI device: its program)
+                program, device = self._program_of(a), a["output"]["port"]
+                shown = ((None, "Its own sound", device) if program is None else (program + 1, "Program", device))
+                title, knobs = f"{a['name']} program", len(arrangements_now)
+                return (("parts", title, *shown, knobs, which, muted),
+                        lambda: parts_picture(title, *shown, knobs, which, muted))
             number, title, knobs = self._knob_tone(a, field), f"{a['name']} {said}", len(arrangements_now)
             default = self._default_of(a, field)
             if number == SAME:  # (the tone the rest plays with)
@@ -878,7 +1120,11 @@ class Watch:
                     lambda: parts_picture(title, *shown, knobs, which, muted))
         if self._browsed_text is not None and now < self._browse_until:
             return self._browsed_screen()
-        position = self._moving_to if self._moving_to is not None else info.get("position")
+        if self._lyrics_shown(info):
+            return self._lyrics_screen(info, now)
+        position = (self._moving_to if self._moving_to is not None else
+                    self._song_at(info) if info.get("mode") == "follow" else info.get("position"))  # (following: the
+        # game's, as it plays)
         length = info.get("length")
         song = info.get("song")
         key = song.get("key") if song else None
@@ -896,10 +1142,7 @@ class Watch:
         mode = info.get("mode")
         sign = (None if song is None or mode == "follow" else "stopped" if mode != "play" else
                 "paused" if info.get("paused") else "playing")
-        loop = info.get("loop") or {}
-        marks = (None if loop.get("a") is None or not length else loop["a"] / length,
-                 None if loop.get("b") is None or not length else loop["b"] / length, bool(loop.get("on")))
-        marks = None if song is None or marks[:2] == (None, None) else marks
+        loop, marks = info.get("loop") or {}, self._loop_marks(info)
         # For a while, after a control: what it changed, said in the scale's place (the corner left for muted)
         shows, handle, speed = "song", False, None
         if self._picture_of == "speed":  # (the line the speed)
@@ -912,13 +1155,130 @@ class Watch:
                 found = _section_at((song or {}).get("sections") or [], position or 0.0)
                 lines = (*lines[:3], found["name"] if found else "")
         elif self._picture_of == "loop":
-            value = loop.get(self._loop_turned)
-            shows, lines = "loop", (*lines[:3], f"Loop {self._loop_turned.upper()} {_exact(value)}" if value is not None
-                                    else "Loop: none")
+            shows, lines = "loop", (*lines[:3], self._loop_said(loop))
+        elif self._picture_of == "chords" and song is not None:
+            shows, lines = "chords", (*lines[:3], self._chords_said(song))
         time = f"{_time(position)} / {_time(length)}" if done is not None and position is not None and length else None
-        return ((shows, *lines, sign, None if done is None else song_bar(done, sign), speed, time, marks, muted),
+        at = self._song_at(info) if song is not None else None
+        chord, tag = self._chord(song, at) if song is not None else (None, None)
+        badge = self._tone_badge(song, at) if song is not None else None
+        return ((shows, *lines, sign, None if done is None else song_bar(done, sign), speed, time, marks, chord, tag,
+                 badge, muted),
                 lambda: song_picture(*lines, done=done, sign=sign, handle=handle, speed=speed, beside=time,
-                                     muted=muted, loop=marks))
+                                     muted=muted, loop=marks, corner=chord, tag=tag, badge=badge))
+
+    def _tone_badge(self, song: dict[str, Any], at: float | None) -> str | None:
+        """The tone the song's on where it is, as the arrangement whose chords show switches tone (shortened, for
+        its badge); None without changes (or while they're not followed)."""
+        changes = (self._chords_order(song)[:1] or [{}])[0].get("tone_changes") or ()
+        if not changes:
+            return None
+        i = bisect_right(changes, at if at is not None else 0.0, key=lambda change: change[0]) - 1
+        said = changes[max(i, 0)][1]
+        if said == "its own tone" and changes[0][1] != "its own tone":
+            said = changes[0][1]  # (back to the one it starts with: its kind)
+        return TONE_BADGES.get(said, said.capitalize())
+
+    def _lyrics_screen(self, info: dict[str, Any], now: float) -> tuple[tuple[Any, ...], Callable[[], Bitmap] | None]:
+        """The lyrics view: the lines before, being sung and after (or the one gone to, Record taking the song
+        there), with the song's progress line and time above, the section (or what Record does) and chord below."""
+        song = info["song"]
+        lyrics, at, shown = song["lyrics"], self._song_at(info), self._picture_of
+        if self._lyric_line is not None and now < self._lyrics_until:
+            i, sung, said = round(self._lyric_line), None, "● = go here"
+        else:
+            (i, sung), found = self._lyric_now(lyrics, at), _section_at(song.get("sections") or [], at or 0.0)
+            said = found["name"] if found and at is not None else ""
+        speed = None
+        if shown == "speed":  # (knob 2: its speed where the section was, the progress line turned into it)
+            speed = self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
+            said = f"Speed {round(speed * 100)}%"
+        elif shown == "loop":  # (knobs 4 and 5)
+            said = self._loop_said(info.get("loop") or {})
+        elif shown == "chords":  # (knob 7)
+            said = self._chords_said(song)
+        handle, marks = shown in ("position", "section"), self._loop_marks(info)
+        before, line = lyrics[i - 1].text if i > 0 else "", lyrics[i].text
+        after = lyrics[i + 1].text if i + 1 < len(lyrics) else ""
+        mode, length = info.get("mode"), info.get("length")
+        sign = None if mode == "follow" else "stopped" if mode != "play" else "paused" if info.get("paused") else "playing"
+        done = min(at / length, 1.0) if at is not None and length else None
+        time = _time(at) if at is not None else None
+        (chord, tag), muted = self._chord(song, at), not info.get("sound", True)
+        badge = self._tone_badge(song, at)
+        return (("lyrics", before, line, after, sung, sign, None if done is None else round(done * WIDTH), time, said,
+                 chord, tag, handle, marks, speed, badge, muted),
+                lambda: lyrics_picture(before, line, after, sung=sung, done=done, sign=sign, time=time, said=said,
+                                       chord=chord, muted=muted, tag=tag, handle=handle, loop=marks, speed=speed,
+                                       badge=badge))
+
+    def _loop_marks(self, info: dict[str, Any]) -> tuple[float | None, float | None, bool] | None:
+        """The loop's brackets on the song's progress line: its start and end (0 to 1, each if it has one), and
+        whether it's on; None without either, or a song (or its length)."""
+        loop, length = info.get("loop") or {}, info.get("length")
+        if info.get("song") is None or not length or (loop.get("a") is None and loop.get("b") is None):
+            return None
+        return (None if loop.get("a") is None else loop["a"] / length,
+                None if loop.get("b") is None else loop["b"] / length, bool(loop.get("on")))
+
+    def _loop_said(self, loop: dict[str, Any]) -> str:
+        """The loop's end last turned (knob 4 or 5), as said where the scale is."""
+        value = loop.get(self._loop_turned)
+        return f"Loop {self._loop_turned.upper()} {_exact(value)}" if value is not None else "Loop: none"
+
+    def _song_at(self, info: dict[str, Any]) -> float | None:
+        """Where the song is now (or where knob 1, a section or a line takes it): playing, the song's place; following,
+        the game's (where it was, while it's paused); else where it starts."""
+        if self._moving_to is not None:
+            return self._moving_to
+        if info.get("mode") == "follow":
+            live = self.gui.song_position()
+            self._followed_at = live if live is not None else self._followed_at
+            return self._followed_at
+        live = self.gui.song_position() if info.get("mode") == "play" else None
+        return live if live is not None else info.get("position")
+
+    def _chord(self, song: dict[str, Any], at: float | None) -> tuple[str | None, str | None]:
+        """The chord being played at a time (its name, CHORD_EARLY ahead), and whose (_tag): the arrangement's
+        knob 7 picked, else the one of the arrangement lighting the most keys (rhythm, lead, then bass, lighting as
+        many), else of the next with one there; between them, the last one. (None, None) before the first."""
+        if at is None:
+            return None, None
+        at += CHORD_EARLY
+        everyone = song.get("arrangements") or []
+        arrangements = self._chords_order(song)
+        if len(arrangements) == 1 and self._chords_from is not None and not arrangements[0].get("chords"):
+            return self._note_at(arrangements[0], at), _tag(arrangements[0], everyone)  # (picked, with no chords: its
+            # notes, a bass's)
+        last: tuple[Chord, dict[str, Any]] | None = None
+        for a in arrangements:
+            chords = a.get("chords") or ()
+            i = bisect_right(chords, at, key=lambda c: c.start) - 1
+            if i >= 0 and at < chords[i].end:
+                return chords[i].name, _tag(a, everyone)
+            if i >= 0 and (last is None or chords[i].start > last[0].start):
+                last = chords[i], a
+        return (None, None) if last is None else (last[0].name, _tag(last[1], everyone))
+
+    @staticmethod
+    def _note_at(arrangement: dict[str, Any], at: float) -> str | None:
+        """An arrangement's note being played at a time (held until the next): its name and octave ("G1"), or a
+        chord's name made from its notes; None before the first."""
+        notes = arrangement.get("notes") or ()
+        i = bisect_right(notes, at, key=lambda note: note.time) - 1
+        if i < 0:
+            return None
+        pitches = notes[i].pitches
+        return note_name(pitches[0]) if len(pitches) == 1 else chord_name(pitches) or "+".join(
+            NAMES[p % 12] for p in pitches)
+
+    def _chords_order(self, song: dict[str, Any]) -> list[dict[str, Any]]:
+        """Whose chords show, first to last: the arrangement knob 7 picked alone, else the arrangements lighting
+        the most keys first (rhythm, lead, then bass, lighting as many)."""
+        everyone = song.get("arrangements") or []
+        chosen = [a for a in everyone if a["id"] == self._chords_from]
+        return chosen or sorted(everyone, key=lambda a: (
+            -(self._lights_of(a) if a["play"] else 0), CHORDS_FIRST.get(a["kind"], len(CHORDS_FIRST))))
 
     def _browsed_screen(self) -> tuple[tuple[Any, ...], Callable[[], Bitmap] | None]:
         """The song the pitch strip is on: its name, the line its place in the library (and the number, in the
@@ -1045,6 +1405,14 @@ class Watch:
             return
         column = min(column, len(arrangements) - 1)
         a, field = arrangements[column], FIELDS[self.field][0]
+        if a.get("output"):  # (on another MIDI device: its programs, ten a step with knob 8)
+            program = self._program_of(a)
+            program = min(max((-1 if program is None else program) + steps * (10 if by_group else 1), 0), 127)
+            self._pending[(a["id"], "program")] = program
+            self._try(lambda: self.gui.set_program(a["kind"], program))
+            self._part_turned = column
+            self._show_for_a_while("parts", now)
+            return
         number = self._stepped(self._knob_tone(a, field), steps, by_group, self._choices(a, field))
         self._pending[(a["id"], field)] = number
         self.gui.change_part(a["id"], {field: None if number == DEFAULT else number}, later=TURN_WAIT)
@@ -1063,6 +1431,11 @@ class Watch:
             return numbers[(at + steps) % len(numbers)]
         group = max(i for i, start in enumerate(starts) if start <= at)
         return numbers[starts[(group + steps) % len(starts)]]
+
+    def _program_of(self, arrangement: dict[str, Any]) -> int | None:
+        """The program of the MIDI device an arrangement sounds on (turns not in the page's state yet too)."""
+        pending = self._pending.get((arrangement["id"], "program"))
+        return pending if pending is not None else (arrangement.get("output") or {}).get("program")
 
     def _choices(self, arrangement: dict[str, Any], field: str) -> list[int]:
         """What a knob has before the tones: palm mutes and low notes, the same tone as the rest, and their kind's
@@ -1114,9 +1487,39 @@ def _exact(seconds: float) -> str:
     return f"{tenths // 600}:{tenths % 600 // 10:02d}.{tenths % 10}"
 
 
+def _tag(arrangement: dict[str, Any], arrangements: list[dict[str, Any]]) -> str:
+    """An arrangement's letter beside its chord (L, R or B), numbered when the song has more than one of its kind."""
+    kind = str(arrangement["kind"])
+    same = [a["id"] for a in arrangements if a["kind"] == kind]
+    letter = KIND_LETTERS.get(kind) or kind[:1].upper()
+    return letter if len(same) < 2 else f"{letter}{same.index(arrangement['id']) + 1}"
+
+
 def _section_at(sections: list[dict[str, Any]], at: float) -> dict[str, Any] | None:
     """The section a song is in at a time (None: before its first)."""
     return next((x for x in reversed(sections) if x["start"] <= at + 0.001), None)
+
+
+def _riff_trouble(game: dict[str, Any] | None) -> str | None:
+    """Following, why the game can't loop the range (None: it can, or not following)."""
+    if game is None:
+        return None
+    if not game.get("answered"):
+        return "Game: no riffloop mod"
+    if not game.get("hook"):
+        return "Game: needs RS Re-ARMed 1.2+"
+    return None
+
+
+def _pedal_trouble(error: str) -> str:
+    """Why the pedal couldn't be switched, short enough for the screen."""
+    if "dnafx-preset" in error:
+        return "Needs dnafx-preset"
+    if "not found" in error or "could not be opened" in error:
+        return "Pedal not connected"
+    if "didn't answer" in error:
+        return "Pedal didn't answer"
+    return wrap(error, WIDTH - 2, 1)[0]
 
 
 def _kinds(sections: list[dict[str, Any]]) -> list[str]:

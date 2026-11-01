@@ -8,13 +8,13 @@
   :root {
     --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e2e2e0;
     --accent: #c4202b; --accent-text: #ffffff; --soft: #fbeaea; --warn: #9a5b00; --warn-bg: #fff4e0;
-    --ok: #1f7a3a; --input: #ffffff;
+    --ok: #1f7a3a; --input: #ffffff; --live: #1a6fd8; --live-text: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161617; --panel: #1f1f21; --text: #ececee; --muted: #9a9aa0; --line: #333336;
       --accent: #ff4d57; --accent-text: #160304; --soft: #3a1a1c; --warn: #ffb547; --warn-bg: #3a2a10;
-      --ok: #5fd27f; --input: #2a2a2d;
+      --ok: #5fd27f; --input: #2a2a2d; --live: #5aa7ff; --live-text: #0b1a2e;
     }
   }
   * { box-sizing: border-box; }
@@ -104,6 +104,16 @@
   .part-volume output { min-width: 3em; font-variant-numeric: tabular-nums; }
   .part-mute { padding: 1px 6px; }
   .part-mute.on { background: var(--accent); border-color: var(--accent); }
+  #toneKinds { margin-top: 8px; }
+  .outputs { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; margin-top: 8px; }
+  .outputs .output { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; }
+  .outputs select { max-width: 100%; }
+  .outputs .missing { color: var(--warn, #c0392b); font-size: 12px; }
+  .song-tones { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .tone-chip { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .tone-chip.unknown { color: var(--muted); border-style: dashed; }
+  .tone-chip.now { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  #toneKinds.off { opacity: .5; }
   .loopline { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
   .loopline button { padding: 1px 8px; }
   #loopOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
@@ -150,6 +160,45 @@
   #messages li { padding: 2px 0; border-bottom: 1px dashed var(--line); }
   #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--accent); color: var(--accent-text); padding: 9px 14px; border-radius: 8px; max-width: 90vw; z-index: 5; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
   .on-air { color: var(--ok); font-weight: 600; }
+  #middle { min-width: 0; }
+  /* The song's scale on its guitar: the frets evenly spaced, the highest string on top (as in tab) */
+  .fretboard { overflow-x: auto; margin: 4px -4px 0; padding: 0 4px; }
+  .fretboard svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  .fretboard .string { stroke: var(--muted); }
+  .fretboard .fret { stroke: var(--line); stroke-width: 2; }
+  .fretboard .nut { stroke: var(--text); stroke-width: 5; }
+  .fretboard .inlay { fill: var(--line); }
+  .fretboard .label { fill: var(--muted); font-size: 11px; text-anchor: middle; dominant-baseline: central; }
+  .fretboard .note text { font-size: 11px; font-weight: 600; text-anchor: middle; dominant-baseline: central; }
+  .fretboard .scale circle { fill: var(--muted); }
+  .fretboard .scale text { fill: var(--panel); }
+  .fretboard .root circle { fill: var(--accent); }
+  .fretboard .root text { fill: var(--accent-text); }
+  .fretboard .other circle { fill: var(--panel); stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 2; }
+  .fretboard .other text { fill: var(--muted); font-weight: 400; }
+  .fretboard .behind { opacity: .25; }  /* (behind a capo) */
+  .fretboard .capo { fill: var(--text); opacity: .7; }
+  .fretboard svg.live-on .note { opacity: .28; }  /* (the song playing: its notes over the scale) */
+  .fretboard [class^="live-"] text { font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+  .fretboard .live-now circle, .fretboard .live-hit circle { fill: var(--live); }
+  .fretboard .live-now text, .fretboard .live-hit text { fill: var(--live-text); }
+  .fretboard .live-shape circle { fill: var(--panel); stroke: var(--live); stroke-width: 2.5; }
+  .fretboard .live-shape text { fill: var(--live); }
+  .fretboard .live-shape.live-root circle { stroke: var(--accent); }
+  .fretboard .live-shape.live-root text { fill: var(--accent); }
+  .fretboard .live-shape.live-hit circle { fill: var(--live); }
+  .fretboard .live-shape.live-hit text { fill: var(--live-text); }
+  .fretboard .live-shape.live-root.live-hit circle { fill: var(--accent); stroke: var(--accent); }
+  .fretboard .live-shape.live-root.live-hit text { fill: var(--accent-text); }
+  .fretboard .live-next { fill: none; stroke: var(--live); stroke-width: 2; opacity: .55; }
+  .fret-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .fret-head h3 { margin: 0; flex: 1; min-width: 0; }
+  .fret-chord { font-weight: 700; font-size: 16px; color: var(--live); }
+  .swatch.now { background: var(--live); }
+  .fret-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--muted); }
+  .swatch.root { background: var(--accent); }
+  .swatch.other { background: none; border: 1.5px dashed var(--muted); }
 </style>
 </head>
 <body>
@@ -170,6 +219,7 @@
     <div id="details"></div>
   </section>
 
+  <div id="middle">
   <section id="songCard" class="card">
     <div id="noSong" class="empty">Pick a song from the library.</div>
     <div id="songView" hidden>
@@ -208,6 +258,19 @@
     </div>
   </section>
 
+  <section id="fretCard" class="card" hidden>
+    <div class="fret-head">
+      <h3 id="fretTitle">Fretboard</h3>
+      <span id="fretChord" class="fret-chord" title="The chord being played"></span>
+      <label class="small" title="The thick string on top, as you see the neck looking down at the guitar (else the thin one, as tab has it)">
+        <input type="checkbox" id="fretFlip"> Thick string on top</label>
+      <select id="fretPart" aria-label="Whose notes light up" title="Whose notes light up as the song plays (following the game: the arrangement it plays)"></select>
+    </div>
+    <div id="fretboard" class="fretboard"></div>
+    <div id="fretLegend" class="fret-legend"></div>
+  </section>
+  </div>
+
   <section id="side">
     <div class="card" id="followCard">
       <h3>Follow Rocksmith</h3>
@@ -234,6 +297,48 @@
       <div id="followKinds"></div>
     </div>
 
+    <div class="card" id="guitarCard">
+      <h3>Guitar</h3>
+      <label title="The guitar's notes, heard on its input (the Rocksmith cable, shared with the game), light their keys first; while a song plays or is followed, its chords are heard note by note">
+        <input type="checkbox" id="listen"> Light the keys I play on the guitar</label>
+      <div class="row"><label>Input <select id="listenDevice"></select></label></div>
+      <div id="listenStatus" class="muted small"></div>
+    </div>
+
+    <div class="card" id="pedalCard">
+      <h3>Guitar pedal</h3>
+      <div class="muted small">A Harley Benton DNAfx GiT's presets, switched over its USB cable (with dnafx-preset). On
+        the Launchkey, knob 6 steps through them (knob 8 ten at a time while one shows), and the pad under it goes
+        through your favourites.</div>
+      <div class="row stepper">
+        <button type="button" id="pedalDown" title="The preset before">‹</button>
+        <select id="pedalSlot"></select>
+        <button type="button" id="pedalUp" title="The next preset">›</button>
+        <button type="button" id="pedalBack" title="Back to the preset it was on before">Back</button>
+      </div>
+      <div class="row"><label title="The presets the Launchkey's pad above the guitar's goes through, in turn (the first, on none of them)">Favourites
+        <input id="pedalFavourites" placeholder="51, 187"></label></div>
+      <div class="row"><label title="A backup the DNAfx editor saved, for the presets' names (empty: the newest in Music, Documents, Desktop or Downloads)">Names from
+        <input id="pedalBackup" placeholder="the newest backup (.bhb)"></label></div>
+      <div id="pedalStatus" class="muted small"></div>
+    </div>
+
+    <div class="card" id="outputsCard">
+      <h3>Other MIDI devices</h3>
+      <div class="muted small">A kind of part can sound on another MIDI device (a synth, with its own speakers) instead
+        of the keyboard, which still lights its keys. It keeps its own sound: no tones are sent to it.</div>
+      <div id="outputRows" class="outputs"></div>
+    </div>
+
+    <div class="card" id="toneChangesCard">
+      <h3>Tone changes</h3>
+      <label><input type="checkbox" id="toneChanges"> Follow the songs' tone changes</label>
+      <div class="muted small">When a song switches tone (clean, distortion, acoustic&hellip;, from the tone's name or its
+        pedals), the part's tone switches to the one for that kind here; back to the song's first tone, to the part's
+        own. Palm-mute and low-note tones stay as they are.</div>
+      <div id="toneKinds" class="grid2"></div>
+    </div>
+
     <div class="card" id="keysCard">
       <h3>Launchkey keys</h3>
       <div class="muted small">Its keys play the Casio (on channel 1, a part of their own) and light the keys they
@@ -258,6 +363,13 @@
         <span><input id="lightsEarly" type="number" min="0" max="200" step="5" style="width:70px"> ms</span>
         <label for="fastestFlash" title="A key's repeats closer than this flash on every other note: the LK-170 can't show faster ones apart">Fastest flash</label>
         <span><input id="fastestFlash" type="number" min="0" max="300" step="5" style="width:70px"> ms</span>
+        <label>Sound</label>
+        <span><label title="Each note rings on until its string is played again, or (a chord's) until its hand shape ends, 4 seconds at most; palm mutes stay short. Off: each note sounds as long as its key is lit">
+          <input type="checkbox" id="ring"> Let notes ring, as a guitar's strings do</label>
+          <label title="Ringing, each note sounds on this long after the next starts (but the same note played again), so they run into each other a little. 0: each stops as the next starts">
+          overlapping the next by <input id="overlap" type="number" min="0" max="500" step="10" style="width:64px"> ms</label><br>
+          <label title="Bends (pitch bend), slides (a semitone at a time), vibrato, tremolo picking, hammer-ons and pull-offs (softer), slaps and pops (harder), harmonics' own pitches, and dead notes (a click, with a palm-mute tone). Off: accents alone">
+          <input type="checkbox" id="techniques"> Play techniques: bends, slides, vibrato&hellip;</label></span>
         <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
         <label>Phone</label><span id="phone" class="small"></span>
         <label>Launchkey</label>
@@ -404,6 +516,250 @@ function keyLine(key, song) {
   line.appendChild(show);
   return line;
 }
+
+// The song's scale on the guitar it's played on (its tuning, and a capo): the open strings and every fret to the
+// 24th, the tonic's notes lit up, the notes it uses a lot outside the scale ringed. While the song plays (or the
+// game plays it), an arrangement's notes light up where they're played, the next ones ringed, and the chord held
+// shows its shape, each string's note named by its place in the chord (R, b3, 5...)
+const FRETS = 24, INLAYS = [3, 5, 7, 9, 15, 17, 19, 21], DOUBLE_INLAYS = [12, 24];
+const SHARPS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const INTERVALS = ["R", "b2", "2", "b3", "3", "4", "b5", "5", "#5", "6", "b7", "7"];
+const LETTERS = {C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11};
+const BOARD = {W: 34, OPEN: 32, LEFT: 22, TOP: 16, GAP: 26, R: 11};
+const LIT = 0.25;  // seconds a note's lit at least (picked, with no sustain)
+const AHEAD = 0.6, AHEAD_MOST = 6;  // seconds ahead the next notes are ringed, and how many places at most
+const COASTING = 0.6;  // seconds the song's taken to go on after the last word of where it is
+let fretData = null;  // GET /api/fretboard: the arrangement shown, its notes and chords
+let fretWanted = "";  // (the song and part asked for)
+let fretClock = null;  // where the song shown is, as last heard, and how fast it goes on from there
+let fretLiveShown = "";
+let fretPicked = null;  // the part picked to show (kept from song to song, when there's one)
+let fretThickOnTop = !!store.get("rsk.fretThickOnTop", false);  // as you see it, looking down at the guitar (else as tab)
+
+function geometry(n) {
+  const {W, OPEN, LEFT, TOP, GAP} = BOARD;
+  const nut = LEFT + OPEN, bottom = TOP + (n - 1) * GAP;
+  return {nut, right: nut + FRETS * W, bottom, middle: (TOP + bottom) / 2,
+    y: (string) => TOP + (fretThickOnTop ? string : n - 1 - string) * GAP,  // (the highest on top, as tab)
+    x: (fret) => fret === 0 ? LEFT + OPEN / 2 : nut + (fret - 0.5) * W};
+}
+
+function noteNames(key) {
+  const names = {};
+  key.scale.forEach((pc, i) => { names[pc] = key.notes[i]; });
+  key.other.forEach((pc, i) => { names[pc] = key.other_notes[i]; });
+  return names;
+}
+
+function fretboardSvg(key, guitar) {
+  const {W, LEFT, TOP, GAP, R} = BOARD;
+  const strings = guitar.strings, n = strings.length, capo = guitar.capo || 0;
+  const {nut, right, bottom, middle, x, y} = geometry(n);
+  const names = noteNames(key);
+  const out = [];
+  for (const fret of INLAYS) out.push(`<circle class="inlay" cx="${x(fret)}" cy="${middle}" r="5"/>`);
+  for (const fret of DOUBLE_INLAYS) {
+    for (const at of [middle - GAP, middle + GAP]) out.push(`<circle class="inlay" cx="${x(fret)}" cy="${at}" r="5"/>`);
+  }
+  for (let fret = 1; fret <= FRETS; fret++) {
+    out.push(`<line class="fret" x1="${nut + fret * W}" y1="${TOP}" x2="${nut + fret * W}" y2="${bottom}"/>`);
+  }
+  strings.forEach((open, string) => {
+    out.push(`<line class="string" x1="${nut}" y1="${y(string)}" x2="${right}" y2="${y(string)}" ` +
+      `stroke-width="${1 + (n - 1 - string) * 0.35}"/>`);
+    out.push(`<text class="label" x="${LEFT / 2 - 2}" y="${y(string)}">${esc(names[open % 12] || SHARPS[open % 12])}</text>`);
+  });
+  out.push(`<line class="nut" x1="${nut}" y1="${TOP - 3}" x2="${nut}" y2="${bottom + 3}"/>`);
+  for (const fret of [...INLAYS, ...DOUBLE_INLAYS].sort((a, b) => a - b)) {
+    out.push(`<text class="label" x="${x(fret)}" y="${bottom + 19}">${fret}</text>`);
+  }
+  if (capo > 0) out.push(`<rect class="capo" x="${nut + capo * W - 8}" y="${TOP - 9}" width="6" height="${bottom - TOP + 18}" rx="3"/>`);
+  strings.forEach((open, string) => {
+    for (let fret = 0; fret <= FRETS; fret++) {
+      const pc = (open + fret) % 12;
+      const kind = pc === key.tonic ? "root" : key.scale.includes(pc) ? "scale" : key.other.includes(pc) ? "other" : null;
+      if (!kind) continue;
+      const behind = capo > 0 && fret < capo ? " behind" : "";
+      out.push(`<g class="note ${kind}${behind}"><circle cx="${x(fret)}" cy="${y(string)}" r="${R}"/>` +
+        `<text x="${x(fret)}" y="${y(string)}">${esc(names[pc])}</text></g>`);
+    }
+  });
+  const label = `${key.name} on a ${guitar.bass ? "bass" : "guitar"} in ${guitar.tuning}`;
+  return `<svg viewBox="0 0 ${right + 8} ${bottom + 30}" role="img" aria-label="${esc(label)}">${out.join("")}` +
+    `<g id="fretLive"></g></svg>`;
+}
+
+// The arrangement the fretboard shows: the one the game plays (following this song), else the one picked, else
+// the first guitar part that plays (else the first guitar part)
+function fretPartOf(s) {
+  if (state.mode === "following" && state.follow && state.follow.song_id === s.id) {
+    const played = s.parts.find((p) => p.arrangement === state.follow.arrangement);
+    if (played) return played.part;
+  }
+  if (s.parts.some((p) => p.part === fretPicked)) return fretPicked;
+  const guitar = s.parts.filter((p) => p.kind !== "bass");
+  return (guitar.find((p) => p.play) || guitar[0] || s.parts[0]).part;
+}
+
+function renderFretboard(s) {
+  const card = $("fretCard");
+  card.hidden = !s.key || !s.guitar;
+  if (card.hidden) return;
+  const select = $("fretPart");
+  const options = s.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)}</option>`).join("");
+  if (select.dataset.options !== options) {
+    select.innerHTML = options;
+    select.dataset.options = options;
+  }
+  const part = fretPartOf(s);
+  select.value = part;
+  const wanted = `${s.id}|${part}`;
+  if (fretWanted !== wanted) {
+    fretWanted = wanted;
+    fretData = null;
+    api(`/api/fretboard?id=${encodeURIComponent(s.id)}&part=${encodeURIComponent(part)}`).then((d) => {
+      if (fretWanted === wanted) {
+        fretData = d;
+        drawFretboard(s.key, d);
+      }
+    }).catch(() => {});
+  }
+  drawFretboard(s.key, fretData || s.guitar);
+}
+
+function drawFretboard(key, guitar) {
+  const card = $("fretCard");
+  const shown = `${key.tonic}|${key.scale}|${key.other}|${guitar.strings}|${guitar.capo}|${guitar.name || ""}`;
+  if (card.dataset.shown === shown) return;  // (drawn already: the song's renders often)
+  card.dataset.shown = shown;
+  fretLiveShown = "";
+  const scale = key.mode === "minor" ? `${key.name} (natural)` : key.name;
+  const whose = guitar.name || (guitar.bass ? "bass" : "guitar");
+  $("fretTitle").textContent = `${scale} · ${whose} in ${guitar.tuning}`;
+  $("fretboard").innerHTML = fretboardSvg(key, guitar);
+  const legend = [`<span><span class="swatch root"></span>${esc(key.notes[0])}, the root</span>`,
+    `<span><span class="swatch"></span>the rest of the scale</span>`];
+  if (key.other.length) legend.push(`<span><span class="swatch other"></span>also used: ${esc(key.other_notes.join(" "))}</span>`);
+  if (guitar.capo > 0) legend.push(`<span>capo on fret ${guitar.capo}</span>`);
+  if (guitar.notes) legend.push(`<span><span class="swatch now"></span>playing (the next ringed), the chord's shape R b3 5…</span>`);
+  $("fretLegend").innerHTML = legend.join("");
+}
+
+// Where the song shown is: following it, the game's place; playing it, the song's (none: no notes lit)
+function noteFretClock(st) {
+  const now = performance.now();
+  if (!selected) {
+    fretClock = null;
+  } else if (st.mode === "following" && st.follow && st.follow.song_id === selected.id && st.follow.position != null) {
+    fretClock = {song: selected.id, position: st.follow.position, at: now, speed: 1, moving: true};
+  } else if ((st.mode === "playing" || st.mode === "paused") && st.song && st.song.id === selected.id) {
+    fretClock = {song: selected.id, position: st.position, at: now, speed: st.speed || 1, moving: st.mode === "playing"};
+  } else {
+    fretClock = null;
+  }
+}
+
+// What the arrangement plays at a moment: the places sounding (the last struck on each string, while it rings),
+// the next ones, and the chord held (its shape, and its root)
+function liveAt(d, at) {
+  const notes = d.notes;
+  let lo = 0, hi = notes.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (notes[mid][0] <= at) lo = mid + 1; else hi = mid; }
+  const now = [], struck = new Set();
+  for (let i = lo - 1; i >= 0 && notes[i][0] > at - 10; i--) {
+    const [t, end, places] = notes[i];
+    for (const [string, fret] of places) {
+      if (struck.has(string)) continue;  // (struck again since: this one's stopped)
+      struck.add(string);
+      if (at < Math.max(end, t + LIT)) now.push([string, fret]);
+    }
+  }
+  const next = [], seen = new Set(now.map(([s, f]) => `${s}:${f}`));
+  for (let i = lo; i < notes.length && notes[i][0] <= at + AHEAD && next.length < AHEAD_MOST; i++) {
+    for (const [string, fret] of notes[i][2]) {
+      if (!seen.has(`${string}:${fret}`)) { seen.add(`${string}:${fret}`); next.push([string, fret]); }
+    }
+  }
+  let chord = null;
+  for (const c of d.chords) {
+    if (c[0] > at) break;
+    if (at < c[1]) chord = c;
+  }
+  return {now, next: next.slice(0, AHEAD_MOST), chord: chord && {name: chord[2], frets: chord[3]}};
+}
+
+function chordRoot(name, strings, frets) {
+  const found = /^([A-G])([#b]?)/.exec(name || "");
+  if (found) return (LETTERS[found[1]] + (found[2] === "#" ? 1 : found[2] === "b" ? 11 : 0)) % 12;
+  const lowest = frets.findIndex((f) => f >= 0);  // (no name: its lowest note)
+  return lowest < 0 ? null : (strings[lowest] + frets[lowest]) % 12;
+}
+
+function liveSvg(live, d, key) {
+  const {R} = BOARD;
+  const {x, y} = geometry(d.strings.length);
+  const names = noteNames(key);
+  const out = [], sounding = new Set(live.now.map(([s, f]) => `${s}:${f}`)), drawn = new Set();
+  for (const [string, fret] of live.next) {
+    out.push(`<circle class="live-next" cx="${x(fret)}" cy="${y(string)}" r="${R + 3}"/>`);
+  }
+  if (live.chord) {
+    const root = chordRoot(live.chord.name, d.strings, live.chord.frets);
+    live.chord.frets.forEach((fret, string) => {
+      if (fret < 0 || string >= d.strings.length) return;
+      const interval = root == null ? "" : INTERVALS[(d.strings[string] + fret - root + 12) % 12];
+      const place = `${string}:${fret}`;
+      drawn.add(place);
+      const kind = `live-shape${interval === "R" ? " live-root" : ""}${sounding.has(place) ? " live-hit" : ""}`;
+      out.push(`<g class="${kind}"><circle cx="${x(fret)}" cy="${y(string)}" r="${R + 1}"/>` +
+        `<text x="${x(fret)}" y="${y(string)}">${interval}</text></g>`);
+    });
+  }
+  for (const [string, fret] of live.now) {
+    if (drawn.has(`${string}:${fret}`)) continue;
+    const pc = (d.strings[string] + fret) % 12;
+    out.push(`<g class="live-now"><circle cx="${x(fret)}" cy="${y(string)}" r="${R + 1}"/>` +
+      `<text x="${x(fret)}" y="${y(string)}">${esc(names[pc] || SHARPS[pc])}</text></g>`);
+  }
+  return out.join("");
+}
+
+function fretFrame() {
+  requestAnimationFrame(fretFrame);
+  const layer = document.getElementById("fretLive");
+  if (!layer) return;
+  const d = fretData, clock = fretClock, s = selected;
+  const live = d && d.notes && clock && s && clock.song === s.id && s.key && !$("fretCard").hidden;
+  if (!live) {
+    if (fretLiveShown) {
+      layer.innerHTML = "";
+      layer.ownerSVGElement.classList.remove("live-on");
+      $("fretChord").textContent = "";
+      fretLiveShown = "";
+    }
+    return;
+  }
+  const since = clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+  const now = liveAt(d, clock.position + since);
+  const shown = JSON.stringify(now);
+  if (shown === fretLiveShown) return;
+  fretLiveShown = shown;
+  layer.ownerSVGElement.classList.add("live-on");
+  layer.innerHTML = liveSvg(now, d, s.key);
+  $("fretChord").textContent = now.chord ? now.chord.name : "";
+}
+requestAnimationFrame(fretFrame);
+$("fretFlip").checked = fretThickOnTop;
+$("fretFlip").addEventListener("change", () => {
+  fretThickOnTop = $("fretFlip").checked;
+  store.set("rsk.fretThickOnTop", fretThickOnTop);
+  $("fretCard").dataset.shown = "";  // (drawn again, the other way up)
+  if (selected) renderFretboard(selected);
+});
+$("fretPart").addEventListener("change", () => {
+  fretPicked = $("fretPart").value;
+  if (selected) renderFretboard(selected);
+});
 
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
 function litControl(value, others, onChange) {
@@ -734,6 +1090,7 @@ function renderSong() {
   $("artist").textContent = s.artist;
   $("file").textContent = `${s.file} · ${fmt(s.length)}`;
   $("songKey").replaceChildren(keyLine(s.key, s.id));
+  renderFretboard(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
     $("songArt").classList.add("none");
@@ -746,6 +1103,7 @@ function renderSong() {
       const info = s.parts.find((p) => p.name === a.name);
       rows.appendChild(partBlock({
         slot, name: a.name, detail: info ? `${info.notes} notes · ${info.tuning}` : "", playing: a.playing, play: a.play,
+        songTones: info ? info.song_tones : [],
         lights: a.lights, others: f.arrangements.reduce((n, x) => n + (x.play && x.id !== a.id ? x.lights : 0), 0),
         kind: a.kind, tones: a.tones || {},
         change: (field, value) => changeFollow(field === "play" || field === "lights" ?
@@ -756,6 +1114,7 @@ function renderSong() {
     for (const [slot, p] of s.parts.entries()) {
       rows.appendChild(partBlock({
         slot, name: p.name, detail: `${p.notes} notes · ${p.tuning}`, playing: false, play: p.play, lights: p.lights,
+        songTones: p.song_tones,
         others: s.parts.reduce((n, q) => n + (q.play && q.part !== p.part ? q.lights : 0), 0),
         kind: p.kind, tones: p.tones, change: (field, value) => partChange(p.part, field, value),
       }));
@@ -839,7 +1198,37 @@ function partBlock(o) {
   tones.append(field("Tone", tone("tone")), field("Palm mutes", tone("mute_tone")), field("Low notes", tone("low_tone")),
                field("Below", split));
   block.append(head, tones);
+  if (o.songTones && o.songTones.length) block.append(songTonesRow(o.songTones));
   return block;
+}
+
+// The tones a song switches between in a part (from its start, its first): each change's time and kind, the one
+// it's on lit up while it plays or is followed (showSongTones)
+function songTonesRow(changes) {
+  const row = document.createElement("div");
+  row.className = "song-tones";
+  row.title = "The song's tone changes: in the Tone changes card, the keyboard tone for each kind";
+  row.append("Song's tones:");
+  for (const change of changes) {
+    const chip = document.createElement("span");
+    chip.className = "tone-chip" + (change.known ? "" : " unknown");
+    chip.dataset.at = String(change.at);
+    chip.textContent = change.at ? `${fmt(change.at)} ${change.said}` : change.said;
+    if (!change.known) chip.title = "Not a kind of tone it knows: the part's tone stays as it is";
+    row.append(chip);
+  }
+  return row;
+}
+
+function showSongTones(st) {
+  const at = st.mode === "following" ? (followedSong() && st.follow ? st.follow.position : null) :
+    playingThis() ? st.position : null;
+  for (const row of document.querySelectorAll("#parts .song-tones")) {
+    const chips = [...row.querySelectorAll(".tone-chip")];
+    let now = -1;
+    if (at != null) chips.forEach((chip, i) => { if (Number(chip.dataset.at) <= at) now = i; });
+    chips.forEach((chip, i) => chip.classList.toggle("now", i === now));
+  }
 }
 
 // Following, the speed and where it starts are the game's, and real pitch and sound following's own
@@ -988,6 +1377,10 @@ function showState(st) {
   }
   showRemote(st);
   showLoop(st);
+  showListening(st.listening);
+  showPedal(st.pedal);
+  noteFretClock(st);
+  showSongTones(st);
   showKeys(st.keys);
   for (const slider of document.querySelectorAll("#parts .part-volume input")) {  // (the Launchkey's mixer too)
     const volume = String((st.volumes || [])[slider.dataset.slot] ?? 100);
@@ -1278,6 +1671,22 @@ async function loadSettings() {
   $("lightsEarly").value = s.lights_early_ms;
   $("fastestFlash").value = s.fastest_flash_ms;
   $("launchkey").checked = s.launchkey;
+  $("ring").checked = s.ring;
+  $("overlap").value = s.overlap_ms;
+  $("techniques").checked = s.techniques;
+  $("toneChanges").checked = s.tone_changes;
+  $("listen").checked = s.listen;
+  const inputs = s.inputs.includes(s.listen_device) ? s.inputs : [s.listen_device, ...s.inputs];
+  $("listenDevice").innerHTML = inputs.map((name) => `<option>${esc(name)}</option>`).join("");
+  $("listenDevice").value = s.listen_device;
+  $("pedalSlot").innerHTML = '<option value="">Not known</option>' + s.pedal_names.map((name, i) =>
+    `<option value="${i + 1}">${String(i + 1).padStart(3, "0")} ${esc(name)}</option>`).join("");
+  $("pedalBackup").value = s.pedal_backup;
+  $("pedalFavourites").value = s.pedal_favourites.join(", ");
+  $("pedalBackup").placeholder = s.pedal_backup_used || "the newest backup (.bhb)";
+  showPedal(state && state.pedal);
+  showToneKinds(s.tone_map);
+  showOutputs(s);
   $("gameDir").textContent = s.game_dir;
   const phone = $("phone");
   if (s.phone.length) {
@@ -1295,6 +1704,99 @@ async function loadSettings() {
   }
 }
 
+// The keyboard's tone for each kind of tone a song switches to ("No change": it stays as it is)
+function showToneKinds(table) {
+  const rows = document.createDocumentFragment();
+  for (const [kind, number] of Object.entries(table)) {
+    const label = document.createElement("label");
+    label.textContent = kind[0].toUpperCase() + kind.slice(1);
+    const select = toneSelect("No change", number, () => act(() => api("/api/settings",
+      {tone_map: {[kind]: select.value === "" ? null : Number(select.value)}})));
+    rows.append(label, toneBox(select));
+  }
+  $("toneKinds").replaceChildren(rows);
+  $("toneKinds").classList.toggle("off", !$("toneChanges").checked);
+}
+
+// Each kind of part's MIDI device: the keyboard, or another output (its channel, and a note at a time)
+function showOutputs(s) {
+  const rows = document.createDocumentFragment();
+  const others = s.ports.filter((port) => port !== s.midi_port);
+  for (const part of ["lead", "rhythm", "bass"]) {
+    const chosen = (s.outputs || {})[part];
+    const label = document.createElement("label");
+    label.textContent = part[0].toUpperCase() + part.slice(1);
+    const box = document.createElement("span");
+    box.className = "output";
+    const port = document.createElement("select");
+    const ports = chosen && !others.includes(chosen.port) ? [...others, chosen.port] : others;
+    port.innerHTML = '<option value="">The keyboard</option>' +
+      ports.map((name) => `<option>${esc(name)}</option>`).join("");
+    port.value = chosen ? chosen.port : "";
+    const channel = document.createElement("input");
+    channel.type = "number";
+    channel.min = "1";
+    channel.max = "16";
+    channel.style.width = "56px";
+    channel.title = "Its MIDI channel (the device's own: a Korg monologue's is 1 unless set otherwise)";
+    channel.value = String(chosen ? chosen.channel : 1);
+    const mono = document.createElement("label");
+    mono.title = "Each note stops as the next sounds, as a monophonic synth plays them";
+    const monoBox = document.createElement("input");
+    monoBox.type = "checkbox";
+    monoBox.checked = chosen ? chosen.mono : true;
+    mono.append(monoBox, " a note at a time");
+    const program = document.createElement("input");
+    program.type = "number";
+    program.min = "1";
+    program.max = "128";
+    program.placeholder = "its own";
+    program.style.width = "72px";
+    program.title = "Its program (1 the first; empty: the one it's on). The Launchkey's knob for the arrangement " +
+      "steps through them too. (A Korg monologue takes them with its Global MIDI program change receive on)";
+    program.value = chosen && chosen.program != null ? String(chosen.program + 1) : "";
+    const octave = document.createElement("select");
+    octave.title = "Octaves its notes sound up or down (where they'd sound: as lit, or at the real pitch)";
+    octave.innerHTML = [-2, -1, 0, 1, 2].map((n) =>
+      `<option value="${n}">${n ? (n > 0 ? "+" : "−") + Math.abs(n) + " oct" : "as is"}</option>`).join("");
+    octave.value = String(chosen ? chosen.octave || 0 : 0);
+    const send = () => act(async () => {
+      await api("/api/settings", {outputs: {[part]: port.value ?
+        {port: port.value, channel: Number(channel.value) || 1, mono: monoBox.checked,
+         program: program.value ? Number(program.value) - 1 : null, octave: Number(octave.value)} : null}});
+      showOutputs(await api("/api/settings"));
+    });
+    for (const control of [port, channel, monoBox, program, octave]) control.addEventListener("change", send);
+    channel.hidden = mono.hidden = program.hidden = octave.hidden = !port.value;
+    box.append(port, channel, program, octave, mono);
+    if (chosen && (s.outputs_there || {})[part] === false) {
+      const missing = document.createElement("span");
+      missing.className = "missing";
+      missing.textContent = "not connected: the keyboard plays it";
+      box.append(missing);
+    }
+    rows.append(label, box);
+  }
+  $("outputRows").replaceChildren(rows);
+}
+
+// The guitar heard: what it plays now, or how loud (or why it isn't heard)
+function showListening(l) {
+  if (!l) return;
+  const level = Math.min(Math.round(Math.sqrt(l.level || 0) * 40), 10);
+  $("listenStatus").textContent = !l.on ? "" : l.error ? `Not heard: ${l.error}` :
+    l.heard.length ? `Playing ${l.heard.join(" ")}` : `Listening ${"▮".repeat(level)}${"▯".repeat(10 - level)}`;
+}
+
+// The guitar's pedal: the preset it's on (as far as it's known), and the one Back goes to (or why it can't switch)
+function showPedal(p) {
+  if (!p) return;
+  const select = $("pedalSlot");
+  if (select !== document.activeElement) select.value = p.slot == null ? "" : String(p.slot);
+  $("pedalStatus").textContent = p.error ? `Can't switch it: ${p.error}` :
+    p.previous != null ? `Back goes to ${String(p.previous).padStart(3, "0")} ${p.previous_name}` : "";
+}
+
 function settingsRequest() {
   return {
     midi_port: $("midiPort").value,
@@ -1302,6 +1804,9 @@ function settingsRequest() {
     lights_early_ms: Number($("lightsEarly").value) || 0,
     fastest_flash_ms: Number($("fastestFlash").value) || 0,
     launchkey: $("launchkey").checked,
+    ring: $("ring").checked,
+    overlap_ms: Number($("overlap").value) || 0,
+    techniques: $("techniques").checked,
   };
 }
 
@@ -1324,6 +1829,32 @@ $("followRealPitch").addEventListener("change", () => changeFollow({real_pitch: 
 $("followOffset").addEventListener("change", () => changeFollow({offset_ms: Number($("followOffset").value) || 0}));
 $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("followShowKey").checked}));
 $("launchkey").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+$("ring").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+$("techniques").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+$("pedalSlot").addEventListener("change", () => {
+  if ($("pedalSlot").value) act(() => api("/api/pedal", {slot: Number($("pedalSlot").value)}));
+});
+$("pedalDown").addEventListener("click", () => act(() => api("/api/pedal", {step: -1})));
+$("pedalUp").addEventListener("click", () => act(() => api("/api/pedal", {step: 1})));
+$("pedalBack").addEventListener("click", () => act(() => api("/api/pedal", {back: true})));
+$("pedalFavourites").addEventListener("change", () => act(async () => {
+  const favourites = $("pedalFavourites").value.split(/[\s,]+/).filter((t) => t).map(Number);
+  const s = await api("/api/settings", {pedal_favourites: favourites});
+  $("pedalFavourites").value = s.pedal_favourites.join(", ");
+}));
+$("pedalBackup").addEventListener("change", () => act(async () => {
+  await api("/api/settings", {pedal_backup: $("pedalBackup").value.trim()});
+  await loadSettings();  // (the names from it)
+}));
+for (const id of ["listen", "listenDevice"]) {
+  $(id).addEventListener("change", () => act(() => api("/api/settings",
+    {listen: $("listen").checked, listen_device: $("listenDevice").value})));
+}
+$("overlap").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+$("toneChanges").addEventListener("change", () => act(async () => {
+  await api("/api/settings", {tone_changes: $("toneChanges").checked});
+  $("toneKinds").classList.toggle("off", !$("toneChanges").checked);
+}));
 $("saveSettings").addEventListener("click", () => act(saveSettings));
 $("keysSound").addEventListener("change", () => changeKeys({sound: $("keysSound").checked}));
 $("keysLights").addEventListener("change", () => changeKeys({lights: $("keysLights").checked}));

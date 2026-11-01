@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from typing import Mapping
+from typing import Any, Mapping
 
 from .library import ArrangementRef
 from .lights import KeyRange, Light
-from .sng import ACCENT, NAMES, PALM_MUTE, note_name
+from .sng import (ACCENT, FRET_HAND_MUTE, HAMMER_ON, NAMES, PALM_MUTE, POP, PULL_OFF, SLAP, Arrangement,
+                  note_name)
+from .songtones import kind_changes
 from .tones import Tone, tone
 
 # The notes' sound, apart from the lights: the lights stay on the keyboard's navigate channel, silent,
@@ -17,6 +19,7 @@ from .tones import Tone, tone
 # own part (1) and the drums (10)
 CHANNEL_SETS = ((11, 12, 13), (14, 15, 16), (5, 6, 7), (8, 9, 2))
 VELOCITY, ACCENT_VELOCITY = 100, 127
+LEGATO_VELOCITY, DEAD_VELOCITY = 75, 50  # hammer-ons, pull-offs and a slide's steps; dead notes (techniques)
 DEFAULT_SPLIT = 40  # E2, a guitar's lowest note in standard tuning
 GUITAR_TONE = 79  # DISTORTION GT
 BASS_TONE = 85  # FINGERED BASS
@@ -38,6 +41,16 @@ class Voices:
     key_range: KeyRange = KeyRange()
     shift: int = 0  # the arrangement's octave shift, for the lit keys' pitches
     volume: int = 100  # its channels' volume (Control Change 7; 100: as they start)
+    ring: bool = True  # notes ring on after their light, as a guitar's strings do (lights.rings); else just as lit
+    overlap: float = 0.0  # seconds a note rings on after the next (of another pitch) sounds, ringing
+    tone_map: tuple[tuple[str, Tone], ...] = ()  # the main tone for each kind the song's tone switches to (none: as
+    # it is), songtones' kinds
+    techniques: bool = True  # bends, slides, vibrato, tremolo, legato, slaps and dead notes played (lights.techniques,
+    # and the player's controls); else accents alone
+    output: Any = None  # another MIDI device sounding the part (keyboard.Synth; None: the keyboard)
+    mono: bool = False  # a note at a time (each stopping as the next sounds: a monophonic synth)
+    program: int | None = None  # the device's own program for it (None: as it is)
+    transpose: int = 0  # semitones its notes sound up (an output's octaves)
 
     def for_arrangement(self, shift: int) -> Voices:
         return replace(self, shift=shift)
@@ -54,11 +67,40 @@ class Voices:
             voice = self.low
         else:
             voice = self.main
+        return voice.channel, tuple(sorted(set(self.notes_for(light)))), self.velocity(light.mask)
+
+    def velocity(self, mask: int) -> int:
+        """How hard a note's played: accented (slapped or popped too) hardest, hammered-on or pulled-off softer, a
+        dead note softest (the techniques: else accents alone)."""
+        if not self.techniques:
+            return ACCENT_VELOCITY if mask & ACCENT else VELOCITY
+        if mask & FRET_HAND_MUTE:
+            return DEAD_VELOCITY
+        if mask & (ACCENT | SLAP | POP):
+            return ACCENT_VELOCITY
+        return LEGATO_VELOCITY if mask & (HAMMER_ON | PULL_OFF) else VELOCITY
+
+    def changes_for(self, arrangement: Arrangement, bass: bool = False) -> tuple[tuple[float, Tone], ...]:
+        """When the main tone changes as the chart switches tone: back to its own, the main tone; to a kind of tone,
+        the one for it (tone_map); to another, none."""
+        table = dict(self.tone_map)
+        if not table:
+            return ()
+        out: list[tuple[float, Tone]] = []
+        current = self.main.tone
+        for at, kind in kind_changes(arrangement, bass):
+            switched = self.main.tone if kind is None else table.get(kind)
+            if switched is not None and switched != current:
+                out.append((at, switched))
+                current = switched
+        return tuple(out)
+
+    def notes_for(self, light: Light) -> tuple[int, ...]:
+        """Each of a light's pitches' note, as they are (pick's, in order)."""
+        pitches = light.pitches or light.keys
         if self.real_pitch:
-            notes = {min(max(p, 0), 127) for p in pitches}
-        else:
-            notes = {self.key_range.fit(p + self.shift) for p in pitches}
-        return voice.channel, tuple(sorted(notes)), ACCENT_VELOCITY if light.mask & ACCENT else VELOCITY
+            return tuple(min(max(p + self.transpose, 0), 127) for p in pitches)
+        return tuple(min(max(self.key_range.fit(p + self.shift) + self.transpose, 0), 127) for p in pitches)
 
     def describe(self) -> str:
         parts = [f"tone {self.main.tone.number:03d} {self.main.tone.name}"]
@@ -92,8 +134,12 @@ class SoundChoice:
     value; a part's own None means none for it (or the default tone, for the main one)."""
 
     def __init__(self, main: Mapping[str | None, Tone | None], low: Mapping[str | None, Tone | None],
-                 mute: Mapping[str | None, Tone | None], split: Mapping[str | None, int | None], real_pitch: bool):
+                 mute: Mapping[str | None, Tone | None], split: Mapping[str | None, int | None], real_pitch: bool,
+                 ring: bool = True, tone_map: Mapping[str, Tone] | None = None, techniques: bool = True,
+                 overlap: float = 0.0):
         self.main, self.low, self.mute, self.split, self.real_pitch = main, low, mute, split, real_pitch
+        self.ring, self.tone_map, self.techniques = ring, tuple((tone_map or {}).items()), techniques
+        self.overlap = overlap
 
     @property
     def parts(self) -> set[str]:
@@ -110,4 +156,8 @@ class SoundChoice:
             mute=Voice(channels[2], mute) if mute else None,
             split=DEFAULT_SPLIT if split is None else split,
             real_pitch=self.real_pitch,
+            ring=self.ring,
+            tone_map=self.tone_map,
+            techniques=self.techniques,
+            overlap=self.overlap,
         )

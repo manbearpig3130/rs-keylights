@@ -2,7 +2,7 @@ import threading
 
 import pytest
 
-from rs_keylights.keyboard import Keyboard, KeyboardError, PolledMidiIn
+from rs_keylights.keyboard import Keyboard, KeyboardError, PolledMidiIn, Synth
 
 
 class FakeMidiOut:
@@ -211,3 +211,51 @@ def test_a_midi_input_is_read_from_a_thread_of_ours():
     assert done.wait(1) and heard == [([0x90, 60, 90], 0.0)]
     midi_in.close_port()
     assert port.opened is None
+
+
+def test_a_song_channels_bend_and_vibrato_go_back_as_everything_stops():
+    out = FakeMidiOut()
+    keyboard = Keyboard(midi_out_factory=lambda: out)
+    keyboard.open()
+    keyboard.bend(11, 1.0)  # a semitone up: half the range
+    keyboard.modulate(11, 64)
+    assert out.sent[-2:] == [[0xEA, 0, 96], [0xBA, 1, 64]]
+    keyboard.all_off()
+    assert [0xEA, 0, 64] in out.sent and out.sent.index([0xBA, 1, 0]) > out.sent.index([0xEA, 0, 64])
+
+
+def test_another_midi_device_sounds_notes_on_its_channel_with_its_own_sound():
+    class Out(FakeMidiOut):
+        def get_ports(self):
+            return ["IAC Driver Bus 1", "monologue SOUND"]
+
+    out = Out()
+    synth = Synth("monologue", midi_out_factory=lambda: out)  # (found by part of its name)
+    synth.open()
+    assert out.opened == 1
+    synth.set_voice(1, 30, 0, volume=90)  # (its own sound: just the volume)
+    synth.program(1, 11)  # its program 12
+    synth.play(1, (40, 47), 100)
+    synth.bend(1, 2.0)
+    synth.all_off()
+    assert out.sent == [[0xB0, 7, 90], [0xC0, 11], [0x90, 40, 100], [0x90, 47, 100], [0xE0, 127, 127], [0x80, 40, 0],
+                        [0x80, 47, 0], [0xB0, 123, 0], [0xE0, 0, 64], [0xB0, 1, 0]]
+
+    def gone(message):
+        raise OSError("unplugged")
+
+    out.send_message = gone
+    synth.play(1, (40,), 100)  # (unplugged: nothing, the rest goes on)
+    with pytest.raises(KeyboardError):
+        Synth("Korg minilogue", midi_out_factory=lambda: out).open()
+
+
+def test_a_guitars_keys_heard_light_first():
+    out = FakeMidiOut()
+    keyboard = Keyboard(midi_out_factory=lambda: out)
+    keyboard.open()
+    keyboard.light((60, 64, 67, 72))  # the song's: all four
+    keyboard.hear((40, 47))  # a guitar's: first, the song's lowest in the room left
+    assert keyboard._on == {40, 47, 60, 64}  # (what's lit)
+    keyboard.hear(())
+    assert keyboard._on == {60, 64, 67, 72}
