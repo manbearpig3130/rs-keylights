@@ -315,6 +315,8 @@ class Gui:
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
         self._game_time: tuple[float, float | None] = (-math.inf, None)  # (when asked, the game's time then)
+        self._game_said: GameLoop | None = None  # (and all the mod said then)
+        self._riff_settings: dict[str, Any] = {"speed": 100, "accelerator": False, "passes": 1}  # (as set here)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -1149,9 +1151,12 @@ class Gui:
                     length = max(a.length for _r, a in self._load(followed["id"]))
                 except (GuiError, OSError, ValueError):
                     length = None
+            state = self.game_state()  # (its song playing or paused: None, neither, or not known)
             return {"mode": "follow", "sound": not self.play_options["silent"], "real_pitch": info["real_pitch"], **defaults,
-                    "song": followed, "position": None, "length": length, "paused": False, "connected": connected,
+                    "song": followed, "position": None, "length": length, "paused": state == "paused",
+                    "state": state, "connected": connected,
                     "loop": self.loop_info(followed["id"] if followed else None),
+                    "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "volumes": list(self.settings["volumes"]),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info()}
         sid, song = playing or self.play_options.get("song"), None
@@ -1254,7 +1259,7 @@ class Gui:
         if now - asked >= GAME_TIME_EVERY:
             said = self._riff_loop.status()
             at = said.time if said is not None else None
-            self._game_time = (now, at)
+            self._game_time, self._game_said = (now, at), said
             sent_for = self._riff_song
             if said is not None and said.loop is None and sent_for is not None:  # (the game started again since:
                 # the mod's lost it)
@@ -1262,6 +1267,13 @@ class Gui:
                 if on:
                     self._riff_said = self._riff_loop.loop(*on)
         return at
+
+    def game_state(self) -> str | None:
+        """Following, whether the game's song is "playing" or "paused", as its riffloop mod sees the game's screen
+        (asked at most every GAME_TIME_EVERY); None on neither (a menu), or without the mod."""
+        self.game_time()
+        said = self._game_said
+        return "playing" if said is not None and said.playing else "paused" if said is not None and said.paused else None
 
     def remote_dialling(self, dialling: dict[str, Any]) -> None:
         """A remote was used: what it's setting and will apply when it stops (speed, position), for the page."""
@@ -1283,7 +1295,7 @@ class Gui:
     def set_loop(self, body: dict[str, Any]) -> dict[str, Any]:
         """The A-B loop of the song playing (else the active one), its ends on the song's beats: "a" and "b" each a
         time (seconds), "here" (where the song is) or None (none); "move_a" and "move_b" beats to move one by (from
-        where the song is, without it); "section" loops the section the song is in (or, looping it already, stops);
+        where the song is, without it), "move_a_bars" and "move_b_bars" bars (to the bar lines); "section" loops the section the song is in (or, looping it already, stops);
         and "on". The end without the start: the start is its section's. The start moved to or past the end, the
         end goes (moved by beats, it stops a beat before). Playing, the song goes back to a little before the
         start each time it reaches the end. Its ends, and whether it's on."""
@@ -1293,6 +1305,7 @@ class Gui:
         loaded = self._load(sid)
         length = max(a.length for _r, a in loaded)
         beats = sorted(next((a.beats for _r, a in loaded if a.beats), ()))
+        bars = sorted(next((a.bars for _r, a in loaded if a.bars), ()))
         sections = next((a.sections for _r, a in loaded if a.sections), ())
         here = self._here(sid)
 
@@ -1325,6 +1338,14 @@ class Gui:
                     moved = round(beats[min(max(nearest(loop[end] if loop[end] is not None else here) + steps, 0),
                                             len(beats) - 1)], 3)
                     if loop[other] is None or (moved < loop["b"] if end == "a" else moved > loop["a"]):
+                        loop[end] = moved
+                if f"move_{end}_bars" in body and bars:  # (to the next bar line on, or back, then a bar a step)
+                    steps = int(_number(body[f"move_{end}_bars"], "bars", -1000, 1000))
+                    from_ = loop[end] if loop[end] is not None else here
+                    i = (bisect_right(bars, from_ + 0.001) + steps - 1 if steps > 0 else
+                         bisect_left(bars, from_ - 0.001) + steps)
+                    moved = round(bars[min(max(i, 0), len(bars) - 1)], 3)
+                    if steps and (loop[other] is None or (moved < loop["b"] if end == "a" else moved > loop["a"])):
                         loop[end] = moved
             if loop["b"] is not None and loop["a"] is None:
                 starts = [x.start for x in sections if x.start < loop["b"]]
@@ -1359,6 +1380,28 @@ class Gui:
             if loop["song"] != (sid or self._loop_song()):
                 return {"a": None, "b": None, "on": False, **game}
             return {"a": loop["a"], "b": loop["b"], "on": loop["on"], **game}
+
+    def set_game_riff(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Following, Riff Repeater's settings, through the game's riffloop mod: "speed" (percent: its
+        Accelerator's start, and where it is), "accelerator" (on: a little faster each time through) and "passes"
+        (times through before each speed-up). The settings as set here, and whether the game answered."""
+        with self._lock:
+            session = self._session
+        if not (isinstance(session, Following) and session.running):
+            raise GuiError("Follow Rocksmith first: these are its Riff Repeater's")
+        said: GameLoop | None = None
+        settings = dict(self._riff_settings)
+        if "speed" in body:
+            settings["speed"] = int(_number(body["speed"], "speed", 10, 200))
+            said = self._riff_loop.speed(settings["speed"])
+        if "accelerator" in body:
+            settings["accelerator"] = bool(body["accelerator"])
+            said = self._riff_loop.accelerator(settings["accelerator"])
+        if "passes" in body:
+            settings["passes"] = int(_number(body["passes"], "passes", 1, 20))
+            said = self._riff_loop.passes(settings["passes"])
+        self._riff_settings = settings
+        return {**settings, "answered": said is not None}
 
     def _riff_sync(self, followed: str | None) -> None:
         """Rocksmith's Riff Repeater looping a range for a song not followed now (or not following): its own again."""
@@ -1399,11 +1442,24 @@ class Gui:
         return float(self.song_settings.get(sid, {}).get("start", 0))
 
     def remote_play(self) -> str:
-        """A remote's Play: pauses or goes on with the song playing, or plays the one picked; what it does now."""
+        """A remote's Play: pauses or goes on with the song playing (following, the game's, through its riffloop
+        mod), or plays the one picked; what it does now."""
         with self._lock:
             session = self._session
-            if isinstance(session, Following) and session.running:
-                raise GuiError("Following the game: Rocksmith plays the song")
+            following = isinstance(session, Following) and session.running
+        if following:
+            said = self._riff_loop.status()
+            if said is None:
+                raise GuiError("Rocksmith didn't answer: needs its riffloop mod")
+            if said.screen is None:
+                raise GuiError("Rocksmith's riffloop mod is too old: update it")
+            if not (said.playing or said.paused):
+                raise GuiError(f"Rocksmith isn't playing a song ({said.screen})")
+            (self._riff_loop.resume if said.paused else self._riff_loop.pause)()
+            self._game_time = (-math.inf, None)  # (its screen asked again)
+            return "playing" if said.paused else "paused"
+        with self._lock:
+            session = self._session
             if isinstance(session, Playback) and session.running:
                 if session.paused:
                     if session.ended:
@@ -1417,6 +1473,20 @@ class Gui:
             raise GuiError("Pick a song on the page first")
         self.play({"song": sid})
         return "playing"
+
+    def game_key(self, name: str) -> int:
+        """Following, a key typed in Rocksmith (its riffloop mod's: up, down, enter, escape...), as on the computer's
+        keyboard: its menus from a remote. How many keys it has still to type (this one too)."""
+        with self._lock:
+            session = self._session
+        if not (isinstance(session, Following) and session.running):
+            raise GuiError("Follow Rocksmith first")
+        said = self._riff_loop.key(name)
+        if said is None:
+            raise GuiError("Rocksmith didn't answer: needs its riffloop mod")
+        if said.screen is None:
+            raise GuiError("Rocksmith's riffloop mod is too old: update it")
+        return said.keys
 
     def remote_stop(self) -> str:
         """A remote's Stop: the song playing stops (following goes on: it has its own pad)."""
@@ -2287,6 +2357,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/volumes": lambda: gui.set_volumes(body.get("volumes") or {}),
             "/api/loop": lambda: gui.set_loop(body),
             "/api/pedal": lambda: gui.set_pedal(body),
+            "/api/riff": lambda: gui.set_game_riff(body),
             "/api/reindex": gui.reindex,
         }
         route = routes.get(url.path)

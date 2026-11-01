@@ -248,7 +248,7 @@ def parts_picture(title: str, number: int | None, group: str, name: str, knobs: 
                   muted: bool = False) -> Bitmap:
     """The knobs on the song's arrangements' tones: the one turned's (title: whose and which, e.g. "Lead tone"),
     what the knobs (as many as there are arrangements, and 8) do, and which of its tones they're on (field: the
-    tone, palm mutes or low notes, a square each at the top right, Func going through them)."""
+    tone, palm mutes or low notes, a square each at the top right, the up arrow again going through them)."""
     picture = _tone_picture(wrap(title, WIDTH - 24, 1)[0], number, group, name, muted)
     picture.knob(0, 37, "1")
     after = 11
@@ -283,7 +283,8 @@ def arrangements_picture(muted: bool = False) -> Bitmap:
     picture.text(14, 39, "Volume")
     picture.shape(67, 40, _GLYPHS["▼"])
     picture.text(78, 39, "Playback")
-    picture.text(1, 51, "Func: palm, low")
+    picture.shape(2, 53, _UP)
+    picture.text(13, 51, "again: palm, low")
     if muted:
         picture.shape(WIDTH - 11, 51, MUTED)
     return picture
@@ -293,8 +294,8 @@ def playback_picture(muted: bool = False) -> Bitmap:
     """The knobs on playing the song: what knobs 1 to 7 do, and the up arrow."""
     picture = Bitmap()
     picture.text(1, 1, "Playback")
-    for i, (said, x, y) in enumerate((("Position", 0, 11), ("Speed", 0, 24), ("Section", 0, 37), ("Loop A", 66, 11),
-                                       ("Loop B", 66, 24), ("Lyrics", 66, 37), ("Chords", 66, 50))):
+    for i, (said, x, y) in enumerate((("Loop A", 0, 11), ("Loop B", 0, 24), ("Position", 0, 37), ("Section", 66, 11),
+                                       ("Speed", 66, 24), ("Lyrics", 66, 37), ("Chords", 66, 50))):
         picture.knob(x, y, str(i + 1))
         picture.text(x + 14, y + 2, said)
     picture.shape(2, 53, _UP)

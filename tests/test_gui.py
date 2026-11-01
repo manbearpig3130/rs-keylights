@@ -11,7 +11,7 @@ import pytest
 from builders import N, Song, song_archive
 from test_pedal import backup
 
-from rs_keylights.gui import Gui, GuiServer, _guitar, default_lights
+from rs_keylights.gui import GAME_TIME_EVERY, Gui, GuiServer, _guitar, default_lights
 from rs_keylights.songtones import KINDS as TONE_KINDS
 from rs_keylights.keyboard import Keyboard
 from rs_keylights.tones import tone
@@ -459,7 +459,7 @@ def test_the_lights_timing_applies_to_what_is_playing(server):
     call(server, "/api/stop", {})
 
 
-def test_a_remote_plays_pauses_moves_and_follows(server):
+def test_a_remote_plays_pauses_moves_and_follows(server, no_real_game_loop):
     gui, sid = server.gui, first_song(server)
     with pytest.raises(ValueError, match="Pick a song"):
         gui.remote_play()
@@ -478,9 +478,33 @@ def test_a_remote_plays_pauses_moves_and_follows(server):
     assert call(server, "/api/state")[1]["remote"] == {"speed": 1.2, "position": None, "busy": True}
     assert gui.toggle_follow() is True and gui.remote_info()["mode"] == "follow"
     assert gui.remote_info()["connected"] is not True  # (no RS Companion here: not reached, or not tried yet)
-    with pytest.raises(ValueError, match="Rocksmith plays"):
+    game = no_real_game_loop[-1]  # (the game's riffloop mod: on a song's screen, playing it)
+    assert gui.remote_info()["state"] == "playing" and gui.remote_info()["paused"] is False
+    assert gui.remote_play() == "paused" and game.sent[-1] == ("pause",)  # following: the game's song paused
+    assert gui.remote_info()["state"] == "paused" and gui.remote_info()["paused"] is True  # (however it was)
+    assert gui.remote_play() == "playing" and game.sent[-1] == ("resume",)
+    assert gui.remote_info()["state"] == "playing"
+    game.screen = "RiffRepeater_Pause"  # (Riff Repeater's pause screen)
+    assert gui.remote_play() == "playing" and game.sent[-1] == ("resume",)
+    game.screen = "LearnASong_RiffRepeater"  # (its menu: no song playing)
+    with pytest.raises(ValueError, match=r"isn't playing a song \(LearnASong_RiffRepeater\)"):
+        gui.remote_play()
+    gui.game_key("down")  # Rocksmith's menus: its keys
+    assert game.sent[-1] == ("key", "down")
+    game.screen = "MainMenu"  # (no song)
+    time.sleep(GAME_TIME_EVERY)  # (asked again)
+    assert gui.remote_info()["state"] is None
+    with pytest.raises(ValueError, match=r"isn't playing a song \(MainMenu\)"):
+        gui.remote_play()
+    game.screen = None  # (a mod that doesn't say)
+    with pytest.raises(ValueError, match="too old"):
+        gui.remote_play()
+    game.status = lambda: None  # (no game)
+    with pytest.raises(ValueError, match="didn't answer"):
         gui.remote_play()
     assert gui.toggle_follow() is False and call(server, "/api/state")[1]["mode"] == "idle"
+    with pytest.raises(ValueError, match="Follow Rocksmith first"):
+        gui.game_key("down")
 
 
 def test_switching_songs_and_going_through_the_library(server, tmp_path):
@@ -614,6 +638,10 @@ def test_a_songs_sections_and_its_loop_on_its_beats(server):
     assert call(server, "/api/loop", {"a": "here"})[1] == {"a": 12.0, "b": None, "on": False}  # the nearest beat
     assert call(server, "/api/loop", {"move_b": 3})[1] == {"a": 12.0, "b": 13.5, "on": False}  # 3 beats on from here
     assert call(server, "/api/loop", {"move_b": -4})[1]["b"] == 13.5  # not to or before the start
+    assert call(server, "/api/loop", {"move_b_bars": 1})[1]["b"] == 14.0  # on to the next bar line (a beat a half second,
+    assert call(server, "/api/loop", {"move_b_bars": 2})[1]["b"] == 18.0  # 4 to a bar), then a bar a step
+    assert call(server, "/api/loop", {"move_b_bars": -3})[1]["b"] == 18.0  # not to or before the start
+    call(server, "/api/loop", {"b": 13.5})
     assert call(server, "/api/loop", {"on": True})[1]["on"]
     assert call(server, "/api/loop", {"a": 14.0})[1] == {"a": 14.0, "b": None, "on": False}  # past the end: it goes
     assert call(server, "/api/loop", {"b": 25.0})[1] == {"a": 14.0, "b": 25.0, "on": False}
@@ -887,6 +915,10 @@ def test_following_the_loop_goes_to_the_games_riff_repeater(server, no_real_game
     time.sleep(0.06)
     call(server, "/api/state")
     assert game.sent[-1] == ("loop", loop["a"], loop["b"]) and game.range == (loop["a"], loop["b"])  # so it's sent again
+    _, riff = call(server, "/api/riff", {"speed": 70, "accelerator": True, "passes": 2})  # its settings too
+    assert riff == {"speed": 70, "accelerator": True, "passes": 2, "answered": True}
+    assert game.sent[-3:] == [("speed", 70), ("accel", True), ("passes", 2)]
+    assert server.gui.remote_info()["speed"] == 0.7 and call(server, "/api/riff", {"speed": 500})[0] == 400
     call(server, "/api/stop", {})  # following stopped: Riff Repeater's own phrases again
     call(server, "/api/state")
     assert game.sent[-1] == ("off",)

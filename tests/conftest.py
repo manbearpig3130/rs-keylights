@@ -23,10 +23,11 @@ from rs_keylights.riffloop import GameLoop  # noqa: E402
 
 
 class FakeRiffLoop:
-    """The game's riffloop mod, as tests have it: what was sent to it, answered as it would."""
+    """The game's riffloop mod, as tests have it: what was sent to it, answered as it would (the game on a screen:
+    paused and resumed as the game would be)."""
 
     def __init__(self, *args, **kwargs):
-        self.sent, self.range = [], None
+        self.sent, self.range, self.screen = [], None, "LearnASong_Game"
 
     def loop(self, a, b):
         self.sent.append(("loop", a, b))
@@ -39,7 +40,35 @@ class FakeRiffLoop:
         return GameLoop(True, False, None)
 
     def status(self):
-        return GameLoop(True, False, self.range)
+        return GameLoop(True, False, self.range, None, self.screen)
+
+    def pause(self):
+        self.sent.append(("pause",))
+        if self.screen and self.screen.endswith("_Game"):
+            self.screen = self.screen.replace("_Game", "_Pause")
+        return self.status()
+
+    def key(self, name):
+        self.sent.append(("key", name))
+        return self.status()
+
+    def resume(self):
+        self.sent.append(("resume",))
+        if self.screen and self.screen.endswith("_Pause"):
+            self.screen = self.screen.replace("_Pause", "_Game")
+        return self.status()
+
+    def speed(self, percent):
+        self.sent.append(("speed", percent))
+        return self.status()
+
+    def accelerator(self, on):
+        self.sent.append(("accel", on))
+        return self.status()
+
+    def passes(self, count):
+        self.sent.append(("passes", count))
+        return self.status()
 
 
 @pytest.fixture(autouse=True)

@@ -213,20 +213,22 @@ song playing, else the active one:
   more. A tap gives one more (round to none), within the keyboard's 4. The page shows each at once; the
   song takes them once the taps stop (each change plays the parts again, stopping the notes sounding).
   **Knobs 1–5**: each steps through its arrangement's tones; the screen (that tone, and what the knobs do)
-  and the page show each, and the song plays with the one it stops on. **Func** (right of the pads) goes
+  and the page show each, and the song plays with the one it stops on. **▲ again** (beside the knobs) goes
   from tones to palm-mute tones to low-note tones and back, three squares at the top right of the tone's
   screen showing which. Palm-mute and low-note tones start with "Same tone" (the tone the rest plays with,
   even over a default) and, when their kind has a default, "Default", a group by themselves, so knob 8
   gets back to them in a step. The page's palm-mute and low-note choices have "Same tone" under the
-  default too, when there is one. ▲ again shows what the knobs do (again: away). While a tone shows, **knob 8** steps through the groups of tones (piano, organ, guitar…).
+  default too, when there is one. Switching to the arrangements (▲) shows what the knobs do for a few
+  seconds. While a tone shows, **knob 8** steps through the groups of tones (piano, organ, guitar…).
 - **The guitar** (column 6, yellow): **knob 6** steps through the guitar pedal's presets (a Harley Benton
   DNAfx GiT, see [Guitar pedal](#guitar-pedal)), the screen showing the one it's on, its name, and the
   favourites; the pedal switches once the knob rests on one (so turning past a few doesn't switch through them
   all). While it shows, **knob 8** goes ten at a time, round from the last to the first. The **top pad**
   goes through your favourite presets (51 and 187 to start with; change them on the page's **Guitar pedal**
   card), the next each tap, the first when it's on none of them, bright while it's on one: from there,
-  knob 6 reaches the ones near it. The **bottom pad** turns hearing the guitar on and off (its notes lighting
-  the keys, as the page's **Guitar** card; bright while it's heard), as the bottom pads light keys.
+  knob 6 reaches the ones near it. The **bottom pad** turns the guitar lighting the keys on and off (the notes
+  you play lighting them, as the page's **Guitar** card; bright while it's on; "Guitar lights keys" on the
+  screen), as the bottom pads light keys.
 - **Its keys** (column 7, purple): they play the Casio on a part of their own (channel 1: no song's part or
   light uses it, and the Casio's own keys keep their tone), playing or following, a song or not. The top
   pad turns them on or off (off: dim), the bottom one whether they light the keys they play first (the Casio lights 4
@@ -234,31 +236,40 @@ song playing, else the active one:
   you let go), and **knob 7** steps through their tone (knob 8 its group, while it shows; or choose it
   under **Launchkey keys** on the page). Mute mutes them too. The octave buttons, a sustain pedal, the
   modulation strip and its own Scale mode (snapping to the song's key) work as usual.
-- **Playing the song** (▼ beside the knobs, lit): **knob 1** moves through the song (or, while nothing
+- **Playing the song** (▼ beside the knobs, lit): **knobs 1 and 2** move the A-B loop's start and end
+  (above pads 1 and 2, which set them; see below), **knob 3** moves through the song (or, while nothing
   plays, where the active song starts: a handle moves along the song screen's progress line and its time
-  with it, keeping up with the song as it plays, until 3 seconds after), **knob 2** sets the speed, 5% a
+  with it, keeping up with the song as it plays, until 3 seconds after), **knob 5** sets the speed, 5% a
   step from 25% to 150% (the progress line turns into it, 100% in the middle, the speed said in the scale's
-  place; the song takes it once it stops), and **knob 3** goes a section at a time (its name in the
+  place; the song takes it once it stops), and **knob 4** goes a section at a time (above pad 4, which loops one; its name in the
   scale's place; back, to the start of the one it's in first). These knobs and the pads below take the
   screen back from the library (stopping a flick through it). ▼ again shows what the knobs do (again:
-  away). The sections are the chart's (intro,
+  away). Following, with Rocksmith paused (Play), **knob 3** steps through the game's song as its pause
+  screen's ← and → do (a key a step, 8 at most a turn; turned faster than the game takes them, the extra
+  steps are dropped so it doesn't fall behind) and **knob 4** a phrase at a time (its PageDown and
+  PageUp); the game's own timeline shows where (the Launchkey's doesn't follow it yet). The sections are the chart's (intro,
   verse, chorus…), so they're as good as its charter made them.
   - **The pads below** (1–7): a kind of section each (verse blue, chorus orange, solo red, bridge purple,
     riff green, intro and outro grey…), the one it's in bright; a tap goes to the next section of that kind
     (after the last, the first), so tapping the chorus again goes on to the chorus after. A song with more
     than 7 kinds keeps its most common.
   - **An A-B loop**, on the pads on top: **A** (pad 1) puts its start where the song is, **B** (pad 2) its
-    end, and loops; pad 3 turns it on and off (pulsing green while it's on), and pad 4 loops the section the
-    song is in (again: off). Each lands on the song's nearest beat, and **knobs 4 and 5** move the start and
+    end, and loops; pad 1 tapped twice clears it (A and B), pad 3 turns it on and off (pulsing green while it's on), and pad 4 loops the section the
+    song is in (again: off). Each lands on the song's nearest beat, and **knobs 1 and 2** move the start and
     end a beat at a time. Reaching the end, the song goes back to a second before the start. Brackets on
     the progress line show it (joined underneath while it's on); the page shows it under its slider, with
     Loop and Clear. Moving past the end leaves the loop until the song is back before it. With the speed
-    (knob 2), it's for practising a part slowly. Following, it's for Rocksmith's Riff Repeater: set A and B where the game is
+    (knob 5), it's for practising a part slowly. Following, it's for Rocksmith's Riff Repeater: set A and B where the game is
     (the song screen shows its time, exactly), or the section, and with RS Re-ARMed's riffloop mod (in
     [rearmed-sidekicks](https://github.com/manbearpig3130/rearmed-sidekicks)) the range becomes a phrase of its
-    own in the song: pick it in Riff Repeater (it's between the usual ones), and it loops just that, count-in
-    and Accelerator as ever ("Pick it in Riff Repeater", the screen says). Moved, pick it again. Without the mod
-    the screen says so. Following another song, or stopping, the song's phrases are as they were.
+    own in the song, picked in Riff Repeater already (else pick it: it's between the usual ones), and it loops
+    just that, count-in and Accelerator as ever ("Pick it in Riff Repeater", the screen says; the page's loop
+    line too). Moved, pick it again. Without the mod the screen says so. Following another song, or stopping,
+    the song's phrases are as they were. Following, **knob 5** is Riff Repeater's speed (5% a step) and the
+    **pad below on the left** its Accelerator (green, bright while it's on): a little faster each time
+    through.
+  - **Bars:** while the loop shows (after knob 1 or 2), **knob 8** moves that end a bar at a time, to the
+    bar lines (the chart's first beat of each bar).
   - **Lyrics**: pad 6 on top (magenta, bright while they show; following too) puts the song's lyrics on
     the screen instead of the song: the line before, the line being sung (the syllable sung lit up), and the
     line after, with the progress line and time above and the section and chord below. **Knob 6** and the
@@ -266,11 +277,11 @@ song playing, else the active one:
     line shown ("● = go here"), and after 4 seconds they're back with the song. **Track** ◁ (home) takes
     them back to the line being sung at once (and the page's list to the song); pressed again, it's the
     song's screen. Pad 6 again: the song too. Playing the song's knobs and pads work as ever while they
-    show, and show there: knob 1, knob 3 and the section pads take the lyrics where the song's going (a
-    handle on their progress line), knob 2 says the speed, and the loop's brackets are on the line (knobs 4
-    and 5 saying where its ends are).
+    show, and show there: knob 3, knob 4 and the section pads take the lyrics where the song's going (a
+    handle on their progress line), knob 5 says the speed, and the loop's brackets are on the line (knobs 1
+    and 2 saying where its ends are).
     They come from the song's vocals part (not every song has one).
-- **The mixer**: **Track** ▷ (lit) opens it until ▷ again, and **knob 8** while no tone shows opens it for a
+- **The mixer**: **Func** (right of the pads, bottom; lit) opens it until Func again, and **knob 8** while no tone shows opens it for a
   few seconds (longer each time it's used, however it's used). Knobs 1–5 are the arrangements' volumes, knob 7 its keys', knob 8 all of them
   together, 1% a step, at once (the notes going on), the screen showing a slider for each with its volume
   over it; the pads on top mute each one or play it again, as outside the mixer (muted: red, its slider
@@ -278,15 +289,21 @@ song playing, else the active one:
   in every song. The **pitch strip** moves the slider last used (a knob's, or a pad's on top; after knob 8 or
   Mute, all of them), a step a step as you slide; letting go doesn't move it. The pads below give lit
   keys as outside it, shown as rails either side of each slider, as high as it's lit (its keys': lighting
-  first). Nothing's said for the pads (the sliders show them). Opened by ▷, it stays until ▷ again or
-  anything else is done (Mute leaves it open, the speaker in its corner; the pads below, Follow and real
-  pitch don't close it). Follow and real pitch say what they did over the names for a few seconds, or
+  first). Nothing's said for the pads (the sliders show them). Opened by Func, it stays until Func again or
+  anything else is done (Mute leaves it open, the speaker in its corner; the pads below, Follow and
+  Rocksmith's menu keys don't close it). Follow says what it did over the names for a few seconds, or
   until the mixer is used again. While it's open the pads are on the arrangements, even after ▼; they go back to playing the
   song as it closes.
 - **The right column**: the top pad is Mute, as on the page (green: sound on; red: muted, just the lights;
   every screen shows a crossed-out speaker in its corner), the bottom one following the game (on or off).
-- **The upper arrow** (right of the pads): real pitch, lit while it's on. **Play** plays and pauses the
-  song (the screen's ▶ or ❚❚ says which), or plays the active one.
+- **Rocksmith's menus**, following (lit; with RS Re-ARMed's riffloop mod, which types the game's keys):
+  **Track** ◁ and ▷ are its up and down arrows, the **upper arrow** right of the pads its Escape (back),
+  and **Record** its Enter. Not following, Track ◁ is home and the others say to follow first. (Real pitch
+  is on the page.)
+- **Play** plays and pauses the
+  song (the screen's ▶ or ❚❚ says which), or plays the active one. Following, it pauses and resumes
+  Rocksmith's song (through RS Re-ARMed's riffloop mod, which sees the game's screen): lit and ▶ while it
+  plays, ❚❚ while it's paused, however it was paused (the computer's keyboard too).
 - **The pitch strip** (left): goes through the library, the song it's on (until it's used, the active one)
   boxed in the middle of the page's list and its details (album art, key, tuning, length, tempo, parts)
   under it, as for a song the mouse points at. Slid slowly it moves a song at a time; flicked, it keeps

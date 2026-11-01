@@ -248,7 +248,7 @@
         <span id="len" class="time">0:00</span>
         <label>Start at <input id="startAt" value="0:00" aria-label="Start at (m:ss)"></label>
       </div>
-      <div id="loopLine" class="loopline" hidden title="Set on the Launchkey: ▼, then its pads on top (A, B, on or off, the section) and knobs 4 and 5 (a beat at a time)">
+      <div id="loopLine" class="loopline" hidden title="Set on the Launchkey: ▼, then its pads on top (A, B, on or off, the section), knobs 4 and 5 (a beat at a time) and knob 8 while it shows (a bar at a time)">
         <span id="loopText"></span>
         <button type="button" id="loopOn">Loop</button>
         <button type="button" id="loopClear">Clear</button>
@@ -1295,8 +1295,9 @@ let dragging = false;
 
 // The A-B loop of the song playing (or the active one), while it's the one shown: set on the Launchkey
 function showLoop(st) {
-  const loop = st.loop || {}, sid = st.song ? st.song.id : st.active;
-  const shown = !!selected && selected.id === sid && st.mode !== "following" && (loop.a != null || loop.b != null);
+  const following = st.mode === "following";
+  const loop = st.loop || {}, sid = following ? st.follow.song_id : st.song ? st.song.id : st.active;
+  const shown = !!selected && selected.id === sid && (loop.a != null || loop.b != null);
   $("loopLine").hidden = !shown;
   if (!shown) return;
   const end = (t) => {  // (to a tenth of a second)
@@ -1304,7 +1305,10 @@ function showLoop(st) {
     const tenths = Math.round(t * 10);
     return `${Math.floor(tenths / 600)}:${String(Math.floor(tenths % 600 / 10)).padStart(2, "0")}.${tenths % 10}`;
   };
-  $("loopText").textContent = `Loop ${end(loop.a)} – ${end(loop.b)}`;
+  const game = loop.game;  // (following: Rocksmith's Riff Repeater loops it, as a phrase of its own)
+  const hint = !following || !loop.on || !game ? "" : !game.answered ? " · the game's riffloop mod isn't answering" :
+    !game.hook ? " · the game needs RS Re-ARMed 1.2 or later" : " · pick it in Riff Repeater";
+  $("loopText").textContent = `Loop ${end(loop.a)} – ${end(loop.b)}${hint}`;
   $("loopOn").classList.toggle("on", !!loop.on);
   $("loopOn").textContent = loop.on ? "Looping" : "Loop";
   $("loopOn").disabled = loop.a == null || loop.b == null;

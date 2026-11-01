@@ -78,6 +78,7 @@ def test_beats_and_sections():
     song = Song(levels={0: [N(1.0)]}, beats=[0.5, 1.0, 1.5], sections=[("intro", 0.5, 10.0), ("chorus2", 10.0, 20.0)])
     a = parse(sng_plain(song))
     assert a.beats == (0.5, 1.0, 1.5)
+    assert a.bars == (0.5,)  # (each bar's first beat: 4 to a bar)
     assert a.sections == (Section("intro", 0.5, 10.0), Section("chorus2", 10.0, 20.0))
 
 

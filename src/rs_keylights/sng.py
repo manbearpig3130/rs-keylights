@@ -112,6 +112,7 @@ class Arrangement:
     base_tone: SongTone | None = None  # the tone it starts with (from its manifest: ArrangementRef.load)
     tones: tuple[SongTone | None, ...] = ()  # its tones A to D (None: none)
     muted: tuple[Note, ...] = ()  # its fret-hand mutes (dead notes: no keys, a click)
+    bars: tuple[float, ...] = ()  # when each bar starts (its first beat)
 
 
 def note_name(pitch: int) -> str:
@@ -162,7 +163,9 @@ class _Reader:
 
 def parse(data: bytes, bass: bool = False) -> Arrangement:
     r = _Reader(data)
-    beats = tuple(r.take("f2h2i")[0] for _ in range(r.count()))
+    beat_records = [r.take("f2h2i") for _ in range(r.count())]  # when, its bar, its beat in it (0: the bar's first)
+    beats = tuple(beat[0] for beat in beat_records)
+    bars = tuple(beat[0] for beat in beat_records if beat[2] == 0)
     phrase_levels = [r.take("4b2i32s")[4] for _ in range(r.count())]  # max difficulty per phrase
     templates = [r.take("I6b6b6i32s") for _ in range(r.count())]
     chord_frets = [template[1:7] for template in templates]
@@ -225,7 +228,8 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
     if r.pos != len(data):
         raise SngError(f"read {r.pos} of {len(data)} bytes")
     if not levels:
-        return Arrangement((), tuning, capo, length, beats, tuple(sections), lyrics=lyrics, tone_changes=tone_changes)
+        return Arrangement((), tuning, capo, length, beats, tuple(sections), lyrics=lyrics, tone_changes=tone_changes,
+                           bars=bars)
 
     open_strings = BASS if bass else GUITAR
     offsets = tuning + (0,) * (len(open_strings) - len(tuning))
@@ -296,7 +300,7 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
     muted.sort(key=lambda n: n.time)
     chords.sort(key=lambda c: c.start)
     return Arrangement(tuple(notes), tuning, capo, length, beats, tuple(sections), tuple(chords), lyrics,
-                       tuple(sorted(held)), tone_changes, muted=tuple(muted))
+                       tuple(sorted(held)), tone_changes, muted=tuple(muted), bars=bars)
 
 
 def _chart_name(raw: bytes) -> str:

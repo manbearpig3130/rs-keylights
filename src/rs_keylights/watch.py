@@ -24,38 +24,43 @@ from .tones import TONES, tone
 # - The arrangements (the up arrow beside the knobs, lit): pads 1 to 6 on top, the song's arrangements (lit
 #   when they play, the one you play in the game pulsing; a tap mutes one or plays it again, muted: as dim as
 #   its colour goes); below them, their lit keys (a tap gives one more); knobs 1 to 6, each steps through its
-#   arrangement's tones (or palm-mute or low-note tones: Func goes through them; on another MIDI device, its
+#   arrangement's tones (or palm-mute or low-note tones: the up arrow again goes through them; on another MIDI device, its
 #   programs). Column 7, its keys, a part of
 #   their own playing the keyboard: the top pad turns them on or off, the bottom one whether they light the
 #   keys, and knob 7 steps through their tone. While a tone shows on the screen, knob 8 steps through the groups
 #   of tones; else it's all the volumes. Palm-mute and low-note tones start with the same tone as the rest (and
-#   the default, when there is one), a group by itself. The up arrow again shows what they do.
-# - Playing the song (the down arrow, lit): knob 1 moves through it (or, while nothing plays, where the song
-#   picked starts), knob 2 sets its speed, knob 3 goes a section at a time, and knobs 4 and 5 move the A-B loop's
-#   start and end a beat at a time; knob 8 all the volumes. The pads on top set the loop: its start and end
+#   the default, when there is one), a group by itself. Turned to them, what they do shows for a while.
+# - Playing the song (the down arrow, lit): knobs 1 and 2 move the A-B loop's start and end a beat at a time
+#   (above the pads setting them; pad 1 tapped twice clears it), knob 3 moves through the song (or, while nothing
+#   plays, where the song picked starts), knob 4 goes a section at a time (above the pad looping it), knob 5 sets
+#   its speed; knob 8 all the volumes. Following, with Rocksmith paused, knob 3 steps through its song as its pause
+#   screen's left and right arrows do, knob 4 a phrase at a time (its PageDown and PageUp). The pads on top set the loop: its start and end
 #   where the song is, on or off, or the section it's in; below them, a pad for each kind of section (verse,
 #   chorus...; the one it's in bright): a tap goes to the next one. They take the screen from the library. Pad 6
 #   on top shows the lyrics instead of the song (again: the song), knob 6 and the pitch strip going through
 #   them (Record: the song from the line shown; Track back: as they're sung, again the song); what the knobs and
 #   pads do shows there too. Knob 7 picks whose chords show (auto, or an arrangement). The down arrow again shows
 #   what they do (again: away).
-# - The mixer (Track on, lit; or knob 8 for a while, however it's used): knobs 1 to 6 are the arrangements'
+# - The mixer (Func, lit; or knob 8 for a while, however it's used): knobs 1 to 6 are the arrangements'
 #   volumes, knob 7 its keys', knob 8 all of them together, and the pads on top mute each (red) or play it
 #   again, as they do outside it; the pitch strip moves the slider last used (a knob's, or a pad's on top; knob
 #   8 or Mute: all of them). The pads below give lit keys, rails beside the sliders showing them. On the screen
-#   until Track on again or anything else is done (but the pads below and real pitch). The pads are on the
+#   until Func again or anything else is done (but the pads below and Rocksmith's keys). The pads are on the
 #   arrangements while it's up, and back on playing the song after, if they were.
 # - The right column: Mute (top pad: green sound, red just the lights; muted, every screen shows a crossed-out
 #   speaker in its corner), and following the game (bottom pad).
 # - Its Scale button: while its own Scale mode (which takes the song's key) is on, the song's scale is on the
 #   pads as a piano octave (the tonic red), and climbs the keys as it goes on and as each song starts. Only
 #   the button turns it off (the Launchkey's light and screen don't follow a message), so the pads stay too.
-# - The upper arrow: real pitch; Play: plays and pauses (the screen shows which).
+# - Play: plays and pauses (the screen shows which); following, Rocksmith's song (its riffloop mod: lit while it
+#   plays, paused or playing on the screen, however it was paused).
+# - Following, Rocksmith's menus (its riffloop mod typing its keys; lit): Track back and on are its up and down
+#   arrows, the button right of the pads (top) its Escape (back), and Record its Enter. (Real pitch: on the page.)
 # - The pitch strip goes through the library, a song at a time when slid slowly; flicked, it keeps going until
 #   touched again; knob 8 goes a letter at a time (the artists'). The song it's on takes the screen while it's
 #   in use; Record switches to it (on the song
 #   already: stops it), but not while following (the game picks the song, its last staying shown until the
-#   next). Track back is home: the screen back on the song (or waiting for one), the library too. The
+#   next). Not following, Track back is home: the screen back on the song (or waiting for one), the library too. The
 #   modulation strip is its keys' modulation.
 # - The screen: the song (with the chord being played in its corner: from the arrangement lighting the most keys,
 #   the rhythm's first if they light as many, else from the next that has one there; whose, lit up before it: L,
@@ -83,13 +88,22 @@ GUITAR_COLUMN = 5  # knob 6 and the pads under it: the guitar (its pedal's prese
 KEYS_COLUMN = 6  # knob 7 and the pads under it: its keys, a part of their own
 PEDAL_WAIT = 0.4  # seconds knob 6 rests on a preset before the pedal switches to it
 PEDAL_JUMP = 10  # presets a step of knob 8, while the pedal's on the screen
-SEEK_KNOB, SPEED_KNOB, SPEED_STEP = 0, 1, 0.05  # playing the song: knob 1 moves through it, knob 2 its speed,
-SECTION_KNOB, LOOP_KNOBS = 2, (3, 4)  # knob 3 a section at a time, knobs 4 and 5 the loop's start and end (beats)
+LOOP_KNOBS, SEEK_KNOB = (0, 1), 2  # playing the song: knobs 1 and 2 the loop's start and end (beats: above their
+# pads), knob 3 moves through it,
+SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.05  # knob 4 a section at a time (above the pad looping one), 5 its speed
+# Following, paused, knobs 3 and 4 step through Rocksmith's song as its pause screen's keys do: a small step back
+# or on, a phrase back or on (its PageDown and PageUp); at most GAME_STEPS a turn, and none while GAME_BEHIND keys
+# are still to be typed (turned fast, the game doesn't fall behind)
+GAME_SMALL_STEPS, GAME_PHRASES, GAME_STEPS, GAME_BEHIND = ("left", "right"), ("pagedown", "pageup"), 8, 4
+GAME_KEY_TIME = 2 / 60  # seconds the game takes to type a key (pressed a frame, let go the next)
+DOUBLE_TAP = 0.4  # seconds: pad 1 (the loop's start) tapped twice in this, the loop's cleared
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
 LOOP_PADS = ("a", "b", "on", "section")  # the pads on top: the loop's start and end here, on or off, the section
 LYRICS_PAD, LYRICS_KNOB = 5, 5  # pad 6 on top: the lyrics on the screen (or the song); knob 6 goes through them
 CHORDS_KNOB = 6  # knob 7: whose chords show (auto, or an arrangement's)
 LYRICS_ON, LYRICS_OFF = 53, 55  # its pad: magenta, bright while they show
+ACCELERATOR_PAD, ACCELERATOR_ON, ACCELERATOR_OFF = 0, 21, 23  # following, the pad below on the left: Riff Repeater's
+# Accelerator (green, bright while it's on)
 LYRICS_EARLY = 0.1  # seconds: a syllable lit this early
 LYRICS_HOLD = 1.5  # seconds a line stays after its last syllable (then the next shows, waiting)
 LYRICS_BACK = 4.0  # seconds after going through them, the lyrics are back with the song
@@ -103,7 +117,7 @@ OTHER_SECTION, SECTION_DIM = (70, 70, 110), 0.12  # (the others: grey-blue), and
 LOOP_SET, LOOP_UNSET, LOOP_ON, LOOP_OFF, LOOPED, NOT_LOOPED = 9, 11, 21, 23, 37, 39  # the loop's pads: palette colours
 VOLUME_STEP = 1  # the mixer's knobs: a step, of a volume (0 to 127, 100 as it starts)
 FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("low_tone", "low notes"))  # the tones knobs 1 to 6
-# step through, Func going from one to the next
+# step through, the up arrow (again) going from one to the next
 STRIP_MIDDLE = 8192  # the pitch strip springs back here when let go (and a slide can pass through it)
 SONGS_PER_STEP = 0.25  # slid slowly (a step: a 128th of the strip)
 # A finger put down again (maybe somewhere else) rather than sliding: a jump of more than NEW_TOUCH_STEPS after
@@ -115,7 +129,10 @@ FLICK_WINDOW = 0.1  # seconds of steps before letting go that make its speed
 SETTLE = 0.1  # let go slowly: the steps this long before are undone (a finger coming off moves it a step or two)
 LIFTED = 0.08  # seconds without a step: lifted off (or held still), when letting go isn't seen
 BROWSE_SHOWN = 5.0  # seconds the screen shows the song the pitch strip is on, after it's last used
-FOLLOWING_PICKS = ("Following Rocksmith:", "it picks the song")  # (no switching to another)
+# Following, buttons that are Rocksmith's keys (its menus): Track back and on its up and down arrows, the button
+# right of the pads (top) its Escape, Record its Enter
+GAME_KEYS = {TRACK_BUTTONS[0]: "up", TRACK_BUTTONS[1]: "down", SIDE_BUTTONS[0]: "escape", RECORD: "enter"}
+NOT_FOLLOWING_KEYS = ("Rocksmith's menus:", "follow it first")
 FLICK_GAIN, FLICK_FADE = 1.5, 0.8  # a flick's songs a second for its steps a second, and how it slows (seconds)
 BUILT_IN = {"lead": 79, "rhythm": 79, "bass": 85}
 CHORD_EARLY = 0.15  # seconds: a chord's name shows this early, a little before it's played
@@ -231,6 +248,9 @@ class GuiProtocol(Protocol):
     def pedal_name(self, slot: int | None) -> str:
         ...
 
+    def set_game_riff(self, body: dict[str, Any]) -> dict[str, Any]:
+        ...
+
 
 class Watch:
     def __init__(self, gui: GuiProtocol, launchkey_factory: Callable[[], Launchkey] = Launchkey,
@@ -272,7 +292,9 @@ class Watch:
         self._note: tuple[str | None, tuple[str, str] | None] = (None, None)  # said for a while: (line, lines), as
         # _say has them
         self._note_until = 0.0  # until then
-        self._loop_turned = "a"  # the loop's end last turned (knob 4 or 5)
+        self._loop_turned = "a"  # the loop's end last turned (knob 1 or 2)
+        self._tapped_a = -math.inf  # when pad 1 (the loop's start) was last tapped
+        self._game_busy_until = -math.inf  # following: until when the game's typing the keys sent it
         self._followed_at: float | None = None  # where the game was last (following: its chord stays while it pauses)
         self.lyrics_view = False  # the lyrics on the screen instead of the song (pad 6 on top, playing the song)
         self._lyrics_home = False  # Track back was the last pressed, the lyrics showing: again, the song
@@ -387,7 +409,10 @@ class Watch:
             self._try(lambda: self.gui.remote_seek(position))
         if self._speed_to is not None:
             speed, self._speed_to = self._speed_to, None
-            self._try(lambda: self.gui.set_play_options({"speed": speed}))
+            if (self._info or {}).get("mode") == "follow":  # (Riff Repeater's)
+                self._try(lambda: self.gui.set_game_riff({"speed": round(speed * 100)}))
+            else:
+                self._try(lambda: self.gui.set_play_options({"speed": speed}))
 
     def _refresh(self) -> None:
         info = self.gui.remote_info()
@@ -502,12 +527,13 @@ class Watch:
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if info.get("sound") else SOUND_OFF, False)
             following = info.get("mode") == "follow"
             picture[(1, CONTROLS)] = ("palette", FOLLOWING if following else NOT_FOLLOWING, following)
-        picture[SIDE_BUTTONS[0]] = LIT if info.get("real_pitch") else DIM
-        picture[SIDE_BUTTONS[1]] = LIT if self.field else DIM  # Func: on palm-mute or low-note tones
+        following = info.get("mode") == "follow"
+        for number in (SIDE_BUTTONS[0], *TRACK_BUTTONS):  # (following: Rocksmith's keys)
+            picture[number] = LIT if following else DIM
+        picture[SIDE_BUTTONS[1]] = LIT if self.mix_knobs else DIM  # Func: the mixer
         picture[ENCODER_BUTTONS[0]] = LIT if self.mode == "parts" else DIM  # which the knobs are for: the parts
         picture[ENCODER_BUTTONS[1]] = LIT if self.mode == "playback" else DIM  # or playing the song
-        picture[TRACK_BUTTONS[1]] = LIT if self.mix_knobs else DIM  # or the volumes
-        picture[PLAY] = LIT if info.get("mode") == "play" and not info.get("paused") else DIM
+        picture[PLAY] = LIT if _sign(info) == "playing" else DIM
         other = self._browsed is not None and (song is None or self._browsed != song["id"])
         switches = info.get("mode") != "follow" and (other or info.get("mode") == "play")  # to another, or stopping
         picture[RECORD] = LIT if switches else DIM
@@ -531,7 +557,9 @@ class Watch:
         if sections:
             looped = on and here is not None and (a, b) == (here["start"], here["end"])
             picture[(0, 3)] = ("palette", LOOPED if looped else NOT_LOOPED, False)
-        if info.get("mode") == "follow":
+        if info.get("mode") == "follow":  # (below, Riff Repeater's Accelerator)
+            on = bool((info.get("riff") or {}).get("accelerator"))
+            picture[(1, ACCELERATOR_PAD)] = ("palette", ACCELERATOR_ON if on else ACCELERATOR_OFF, False)
             return
         for column, kind in enumerate(_kinds(sections)):
             level = 1.0 if here is not None and here["kind"] == kind else SECTION_DIM
@@ -545,10 +573,13 @@ class Watch:
         if not (isinstance(event, Button) and event.number == TRACK_BUTTONS[0]):
             self._lyrics_home = False  # (Track back, next: the lyrics as they're sung first)
         mixing = (isinstance(event, (Turn, Strip)) or isinstance(event, Pad) and event.row == 0 or
-                  isinstance(event, Button) and event.number == TRACK_BUTTONS[1])
-        said = isinstance(event, Pad) and event.row == 1 or isinstance(event, Button) and event.number == SIDE_BUTTONS[0]
+                  isinstance(event, Button) and event.number == SIDE_BUTTONS[1])
+        game_key = isinstance(event, Button) and (event.number in (SIDE_BUTTONS[0], TRACK_BUTTONS[1]) or
+                                                  event.number == TRACK_BUTTONS[0] and info.get("mode") == "follow")
+        # (Rocksmith's keys, or said to be: the mixer stays up; Record, as ever, closes it)
+        said = isinstance(event, Pad) and event.row == 1 or game_key
         if self.mix_knobs and not mixing and not said:  # something else done: the knobs back on the tones (lit
-            # keys, keys lighting first, following and real pitch are said over it)
+            # keys, keys lighting first and following are said over it; Rocksmith's keys go to the game)
             self._close_mixer()
         if self.mix_knobs and mixing:
             self._mix(event, info, now)
@@ -591,6 +622,8 @@ class Watch:
                 self._turn_keys(event.steps, True, info, now)
             elif self.mode == "parts" and self._picture_of == "pedal":
                 self._turn_pedal(event.steps, True, info, now)
+            elif self._picture_of == "loop":
+                self._turn_loop_bars(event.steps, now)
             elif self.mode == "parts" and self._picture_of == "parts":
                 self._turn_tone(self._part_turned, event.steps, True, info, now)
             else:
@@ -629,8 +662,8 @@ class Watch:
             self._said_by_pad(now, f"{a['name']}: {lights or 'no'} lit key{'' if lights == 1 else 's'}")
 
     def _playback(self, event: Pad | Turn, info: dict[str, Any], now: float) -> None:
-        """Playing the song: knob 1 moves through it, 2 sets its speed, 3 goes a section at a time, and 4 and 5 move
-        the loop's start and end; the pads on top set the loop, the ones below go to a kind of section. Anything
+        """Playing the song: knobs 1 and 2 move the loop's start and end, 3 moves through it, 4 goes a section at
+        a time, and 5 sets its speed; the pads on top set the loop, the ones below go to a kind of section. Anything
         else shows what they do."""
         if isinstance(event, Turn) and event.encoder in (SEEK_KNOB, SPEED_KNOB, SECTION_KNOB, *LOOP_KNOBS, LYRICS_KNOB,
                                                          CHORDS_KNOB) or \
@@ -655,6 +688,9 @@ class Watch:
             self._toggle_lyrics(info, now)
         elif isinstance(event, Pad) and event.row == 0 and event.column < len(LOOP_PADS):
             self._loop_pad(LOOP_PADS[event.column], info, now)
+        elif isinstance(event, Pad) and event.row == 1 and info.get("mode") == "follow":
+            if event.column == ACCELERATOR_PAD:
+                self._toggle_accelerator(info, now)
         elif isinstance(event, Pad) and event.row == 1 and event.column < SECTION_PADS:
             self._section_pad(event.column, info, now)
 
@@ -701,7 +737,7 @@ class Watch:
         else:
             heard: list[bool] = []
             if self._try(lambda: heard.append(self.gui.toggle_listen())):
-                self._said_by_pad(now, f"Guitar heard: {'on' if heard[0] else 'off'}")
+                self._said_by_pad(now, f"Guitar lights keys: {'on' if heard[0] else 'off'}")
 
     def _turn_pedal(self, steps: int, jump: bool, info: dict[str, Any], now: float) -> None:
         """Knob 6: the pedal's presets, one at a time (jump: knob 8, PEDAL_JUMP at a time; round from the last to
@@ -715,13 +751,16 @@ class Watch:
         self._show_for_a_while("pedal", now)
 
     def _button(self, number: int, song: dict[str, Any] | None, now: float) -> None:
+        following = (self._info or {}).get("mode") == "follow"
         if number == PLAY:  # the song's picture shows it playing or paused
             self.gui.remote_play()
             self._back_to_the_song()
+        elif number in GAME_KEYS and following:  # Rocksmith's menus: up, down, Escape, Enter
+            self.gui.game_key(GAME_KEYS[number])
+        elif number == SIDE_BUTTONS[0]:  # (Rocksmith's Escape, following)
+            self._say(now, lines=NOT_FOLLOWING_KEYS)
         elif number == RECORD and self._lyric_line is not None and now < self._lyrics_until:  # the line gone to
             self._lyrics_go(now)
-        elif number == RECORD and (self._info or {}).get("mode") == "follow":
-            self._say(now, lines=FOLLOWING_PICKS)  # (the game picks the song)
         elif number == RECORD:  # the song the pitch strip is on switched to; on the song already, it stops
             if self._browsed is None or (song is not None and self._browsed == song["id"]):
                 self.gui.remote_stop()
@@ -743,23 +782,26 @@ class Watch:
                 self._lyrics_home = lyrics
             self._lyric_line = None
             self._back_to_the_song()
-        elif number == SIDE_BUTTONS[0]:
-            on = self.gui.toggle_real_pitch()
-            self._say(now, line=f"Real pitch: {'on' if on else 'off'}")
-        elif number == SIDE_BUTTONS[1]:  # Func: the next of an arrangement's tones (the screen shows which)
-            self.field, self.mode = (self.field + 1) % len(FIELDS), "parts"
+        elif number == TRACK_BUTTONS[1]:  # (Rocksmith's down arrow, following)
+            self._say(now, lines=NOT_FOLLOWING_KEYS)
+        elif number == SIDE_BUTTONS[1]:  # Func: the mixer
+            self._open_mixer(now, kept=True)
+        elif number == ENCODER_BUTTONS[0] and self.mode == "parts":  # again: the next of the arrangements' tones
+            # (palm-mute, low-note; the screen shows which)
+            self.field = (self.field + 1) % len(FIELDS)
             if ((self._info or {}).get("song") or {}).get("arrangements"):
                 self._show_for_a_while("parts", now)
             else:
-                self._say(now, line=f"Knobs 1-6: {FIELDS[self.field][1]}")
-        elif number == TRACK_BUTTONS[1]:  # the mixer
-            self._open_mixer(now, kept=True)
-        elif number in ENCODER_BUTTONS:  # the knobs on the arrangements or playing the song; again, what they do
+                self._say(now, line=f"Knobs 1-5: {FIELDS[self.field][1]}")
+        elif number in ENCODER_BUTTONS:  # the knobs on the arrangements (what they do, for a while) or playing the
+            # song; again, what they do
             mode, hint = ("parts", "arrangements") if number == ENCODER_BUTTONS[0] else ("playback", "playback")
             if self.mode != mode:
                 self.mode = mode
                 if self._picture_of in ("arrangements", "playback"):
                     self._picture_of = None
+                if mode == "parts":
+                    self._show_for_a_while(hint, now)
             elif self._picture_of == hint:
                 self._picture_of = None
             else:
@@ -851,19 +893,20 @@ class Watch:
             self._browsed_place = (song.get("place", 0), song.get("of", 1))
 
     def _turn_speed(self, steps: int, info: dict[str, Any], now: float) -> None:
-        """Knob 7: the speed, SPEED_STEP a step from 25% to 150%, applied when it stops turning."""
-        if info.get("mode") == "follow":
-            self._say(now, lines=("Speed: the game's", "(Riff Repeater)"))
-            return
+        """Knob 5: the speed, SPEED_STEP a step from 25% to 150%, applied when it stops turning (following,
+        Riff Repeater's)."""
         start = self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
         self._speed_to = min(max(round((start + steps * SPEED_STEP) * 20) / 20, SLOWEST), FASTEST)
         self._turned_at, self._wait = now, TURN_WAIT
         self._show_for_a_while("speed", now)
 
     def _move(self, steps: int, info: dict[str, Any], now: float) -> None:
-        """Knob 8: the song's position, applied when it stops turning."""
-        if info.get("mode") == "follow" or info.get("position") is None:
-            self._say(now, line="Position: the game's" if info.get("mode") == "follow" else "Position: no song")
+        """Knob 3: the song's position, applied when it stops turning (following, the game's, a step at a time)."""
+        if info.get("mode") == "follow":
+            self._game_steps(steps, GAME_SMALL_STEPS, "Step", info, now)
+            return
+        if info.get("position") is None:
+            self._say(now, line="Position: no song")
             return
         start = self._moving_to if self._moving_to is not None else info["position"]
         self._moving_to = min(max(start + steps * SECONDS_PER_STEP, 0.0), info["length"])
@@ -871,17 +914,34 @@ class Watch:
         self._show_for_a_while("position", now)
 
     def _turn_section(self, steps: int, info: dict[str, Any], now: float) -> None:
-        """Knob 3: a section at a time (back, to the start of the one it's in first), as knob 1 goes."""
+        """Knob 4: a section at a time (back, to the start of the one it's in first), as knob 3 goes."""
         sections = (info.get("song") or {}).get("sections") or []
-        if info.get("mode") == "follow" or info.get("position") is None or not sections:
-            said = "the game's" if info.get("mode") == "follow" else "no song" if not info.get("song") else "no sections"
-            self._say(now, line=f"Sections: {said}")
+        if info.get("mode") == "follow":  # (the game's phrases)
+            self._game_steps(steps, GAME_PHRASES, "Phrase", info, now)
+            return
+        if info.get("position") is None or not sections:
+            self._say(now, line=f"Sections: {'no song' if not info.get('song') else 'no sections'}")
             return
         at = self._where(info)
         here = next((i for i in range(len(sections) - 1, -1, -1) if sections[i]["start"] <= at + 0.001), -1)
         if steps < 0 and here >= 0 and at - sections[here]["start"] > SECTION_BACK:
             here += 1
         self._go_to(sections[min(max(here + steps, 0), len(sections) - 1)]["start"], now)
+
+    def _game_steps(self, steps: int, keys: tuple[str, str], said: str, info: dict[str, Any], now: float) -> None:
+        """Following: Rocksmith's song stepped through as its pause screen's keys do (keys: back, on), a key a step
+        (GAME_STEPS at most a turn, none while it has GAME_BEHIND still to type); not paused, said so."""
+        if info.get("state") != "paused":
+            self._say(now, lines=("Rocksmith: pause first", "(Play), then step"))
+            return
+        count = 0
+        while count < min(abs(steps), GAME_STEPS) and now >= self._game_busy_until:
+            waiting = self.gui.game_key(keys[steps > 0])
+            self._game_busy_until = now + max(waiting - GAME_BEHIND + 1, 0) * GAME_KEY_TIME
+            count += 1
+        if not count:
+            return  # (it's catching up)
+        self._say(now, line=f"{said} {'on' if steps > 0 else 'back'}{f' x{count}' if count > 1 else ''}")
 
     def _section_pad(self, column: int, info: dict[str, Any], now: float) -> None:
         """A pad below, playing the song: the next section of its kind (after the last, the first)."""
@@ -908,11 +968,17 @@ class Watch:
         loop = info.get("loop") or {}
         body = {"a": {"a": "here"}, "b": {"b": "here", "on": True}, "on": {"on": not loop.get("on")},
                 "section": {"section": True}}[which]
+        cleared = which == "a" and now - self._tapped_a < DOUBLE_TAP  # (tapped twice: none)
+        self._tapped_a = -math.inf if cleared else now if which == "a" else self._tapped_a
+        if cleared:
+            body = {"a": None, "b": None, "on": False}
         now_set: dict[str, Any] = {}
         if not self._try(lambda: now_set.update(self.gui.set_loop(body))):
             return
         a, b, on = now_set.get("a"), now_set.get("b"), bool(now_set.get("on"))
-        if a is None or b is None:
+        if cleared:
+            said = "Loop cleared"
+        elif a is None or b is None:
             said = f"Loop from {_exact(a)}" if a is not None else "Loop: A and B first"
         elif which == "section":
             found = _section_at((info.get("song") or {}).get("sections") or [], a)
@@ -926,9 +992,23 @@ class Watch:
             self._say(now, line=said)
 
     def _turn_loop(self, end: str, steps: int, info: dict[str, Any], now: float) -> None:
-        """Knobs 4 and 5: the loop's start or end, a beat at a time (from where the song is, without it)."""
+        """Knobs 1 and 2: the loop's start or end, a beat at a time (from where the song is, without it)."""
         if self._try(lambda: self.gui.set_loop({f"move_{end}": steps})):
             self._loop_turned = end
+            self._show_for_a_while("loop", now)
+
+    def _toggle_accelerator(self, info: dict[str, Any], now: float) -> None:
+        """Following, the pad below on the left: Riff Repeater's Accelerator on or off."""
+        on = not (info.get("riff") or {}).get("accelerator")
+        said: dict[str, Any] = {}
+        if self._try(lambda: said.update(self.gui.set_game_riff({"accelerator": on}))):
+            self._say(now, lines=(f"Accelerator: {'on' if on else 'off'}",
+                                  "In Riff Repeater" if said.get("answered") else "Game: no riffloop mod"))
+
+    def _turn_loop_bars(self, steps: int, now: float) -> None:
+        """Knob 8 while the loop shows: its end last turned (knob 1 or 2) a bar at a time, to the bar lines."""
+        end = self._loop_turned
+        if self._try(lambda: self.gui.set_loop({f"move_{end}_bars": steps})):
             self._show_for_a_while("loop", now)
 
     def _turn_chords(self, steps: int, info: dict[str, Any], now: float) -> None:
@@ -1139,9 +1219,7 @@ class Watch:
             artist, _, title = song["title"].partition(" - ") if " - " in song["title"] else ("", "", song["title"])
             lines = (title, artist, key["name"] if key else "", " ".join(key["notes"]) if key else "")
         done = min(position / length, 1.0) if song is not None and position is not None and length else None
-        mode = info.get("mode")
-        sign = (None if song is None or mode == "follow" else "stopped" if mode != "play" else
-                "paused" if info.get("paused") else "playing")
+        sign = _sign(info) if song is not None else None
         loop, marks = info.get("loop") or {}, self._loop_marks(info)
         # For a while, after a control: what it changed, said in the scale's place (the corner left for muted)
         shows, handle, speed = "song", False, None
@@ -1190,18 +1268,17 @@ class Watch:
             (i, sung), found = self._lyric_now(lyrics, at), _section_at(song.get("sections") or [], at or 0.0)
             said = found["name"] if found and at is not None else ""
         speed = None
-        if shown == "speed":  # (knob 2: its speed where the section was, the progress line turned into it)
+        if shown == "speed":  # (knob 5: its speed where the section was, the progress line turned into it)
             speed = self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
             said = f"Speed {round(speed * 100)}%"
-        elif shown == "loop":  # (knobs 4 and 5)
+        elif shown == "loop":  # (knobs 1 and 2)
             said = self._loop_said(info.get("loop") or {})
         elif shown == "chords":  # (knob 7)
             said = self._chords_said(song)
         handle, marks = shown in ("position", "section"), self._loop_marks(info)
         before, line = lyrics[i - 1].text if i > 0 else "", lyrics[i].text
         after = lyrics[i + 1].text if i + 1 < len(lyrics) else ""
-        mode, length = info.get("mode"), info.get("length")
-        sign = None if mode == "follow" else "stopped" if mode != "play" else "paused" if info.get("paused") else "playing"
+        length, sign = info.get("length"), _sign(info)
         done = min(at / length, 1.0) if at is not None and length else None
         time = _time(at) if at is not None else None
         (chord, tag), muted = self._chord(song, at), not info.get("sound", True)
@@ -1222,12 +1299,12 @@ class Watch:
                 None if loop.get("b") is None else loop["b"] / length, bool(loop.get("on")))
 
     def _loop_said(self, loop: dict[str, Any]) -> str:
-        """The loop's end last turned (knob 4 or 5), as said where the scale is."""
+        """The loop's end last turned (knob 1 or 2), as said where the scale is."""
         value = loop.get(self._loop_turned)
         return f"Loop {self._loop_turned.upper()} {_exact(value)}" if value is not None else "Loop: none"
 
     def _song_at(self, info: dict[str, Any]) -> float | None:
-        """Where the song is now (or where knob 1, a section or a line takes it): playing, the song's place; following,
+        """Where the song is now (or where knob 4, a section or a line takes it): playing, the song's place; following,
         the game's (where it was, while it's paused); else where it starts."""
         if self._moving_to is not None:
             return self._moving_to
@@ -1312,11 +1389,11 @@ class Watch:
 
     def _mix(self, event: Pad | Turn | Button | ScaleMode | Strip, info: dict[str, Any], now: float) -> None:
         """The mixer: knobs 1 to 7 the volumes, 8 all of them; the pads on top mute each or play it again (the
-        right one: all of them), and Track on keeps it up (opened by knob 8: up a while longer each time it's
+        right one: all of them), and Func keeps it up (opened by knob 8: up a while longer each time it's
         used), or closes it. What's said over it goes as it's used."""
         arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
         self._note_until = 0.0
-        if isinstance(event, Button):  # (Track on)
+        if isinstance(event, Button):  # (Func)
             if self._mixer_kept:
                 self._close_mixer()
             else:
@@ -1398,7 +1475,7 @@ class Watch:
         self._show_for_a_while("keys", now)
 
     def _turn_tone(self, column: int, steps: int, by_group: bool, info: dict[str, Any], now: float) -> None:
-        """Knobs 1 to 6: an arrangement's tone (or palm-mute or low-note tone, as Func has it), a tone at a time
+        """Knobs 1 to 6: an arrangement's tone (or palm-mute or low-note tone, as the up arrow has it), a tone at a time
         (by_group: knob 8, a group at a time); kept at once, the song taking it once turns stop."""
         arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
         if not arrangements:
@@ -1498,6 +1575,14 @@ def _tag(arrangement: dict[str, Any], arrangements: list[dict[str, Any]]) -> str
 def _section_at(sections: list[dict[str, Any]], at: float) -> dict[str, Any] | None:
     """The section a song is in at a time (None: before its first)."""
     return next((x for x in reversed(sections) if x["start"] <= at + 0.001), None)
+
+
+def _sign(info: dict[str, Any]) -> str | None:
+    """The song's sign: playing, paused or stopped; following, the game's song playing or paused (None: neither, a
+    menu, or not known)."""
+    if info.get("mode") == "follow":
+        return info.get("state")
+    return "stopped" if info.get("mode") != "play" else "paused" if info.get("paused") else "playing"
 
 
 def _riff_trouble(game: dict[str, Any] | None) -> str | None:

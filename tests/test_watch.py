@@ -6,8 +6,8 @@ from rs_keylights.launchkey import PLAY, RECORD, Button, Pad, ScaleMode, Strip, 
 from rs_keylights.lyrics import lyric_lines
 from rs_keylights.sng import Chord, Syllable
 from rs_keylights.tones import tone
-from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, PAD_WAIT, PEDAL_WAIT,
-                                PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
+from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, NOT_FOLLOWING_KEYS, PAD_WAIT,
+                                PEDAL_WAIT, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
 
 
 class FakeGui:
@@ -17,6 +17,7 @@ class FakeGui:
         self.changes, self.shows, self.scales, self.stops, self.sound = [], 0, [], 0, True
         self.plays, self.seeks, self.following = [], [], mode == "follow"
         self.real_pitch, self.speeds, self.browsed, self.chosen = False, [], 0.0, []
+        self.game_keys, self.game_waiting = [], 1  # (Rocksmith's, following)
         self.stopped, self.dialling, self.letters = 0, [], []
         self.live = None  # where the song is now (playing or followed; None: the info's position)
         self.programs = []
@@ -26,6 +27,7 @@ class FakeGui:
         self.library = [{"id": f"s{i}", "song": f"Song {i}", "artist": "Band"} for i in range(300)]
         self.listen, self.pedal_calls = False, []
         self.game = {"answered": True, "hook": True, "riff": True}  # (following: the game's riffloop mod)
+        self.riff, self.riff_calls = {"speed": 100, "accelerator": False, "passes": 1}, []
         self.pedal = {"slot": 49, "previous": None, "error": None, "favourites": [51, 187]}
         self.song = {
             "id": "song", "title": "Amon Amarth - Twilight of the Thunder God", "played": "L" if mode == "follow" else None,
@@ -49,7 +51,8 @@ class FakeGui:
 
     def remote_info(self):
         return {**self.info, "sound": self.sound, "real_pitch": self.real_pitch, "keys": self.keys,
-                "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal)}
+                "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal),
+                "riff": dict(self.riff)}
 
     def toggle_listen(self):
         self.listen = not self.listen
@@ -61,6 +64,11 @@ class FakeGui:
         if slot != self.pedal["slot"]:
             self.pedal = {**self.pedal, "slot": slot, "previous": self.pedal["slot"]}
         return dict(self.pedal)
+
+    def set_game_riff(self, body):  # (following: Riff Repeater's settings)
+        self.riff_calls.append(dict(body))
+        self.riff = {**self.riff, **body}
+        return {**self.riff, "answered": True}
 
     def pedal_name(self, slot):
         return {49: "5050 CL", 50: "5050 DS", 1: "US Clean", 200: "My love"}.get(slot, f"P{slot}")
@@ -77,6 +85,8 @@ class FakeGui:
                 self.loop[end] = here if body[end] == "here" else body[end]
             if f"move_{end}" in body:
                 self.loop[end] = (here if self.loop[end] is None else self.loop[end]) + 0.5 * body[f"move_{end}"]
+            if f"move_{end}_bars" in body:  # (a bar: 4 beats)
+                self.loop[end] = (here if self.loop[end] is None else self.loop[end]) + 2.0 * body[f"move_{end}_bars"]
         if "on" in body:
             self.loop["on"] = body["on"]
         self.loop["on"] = self.loop["on"] and None not in (self.loop["a"], self.loop["b"])
@@ -107,11 +117,17 @@ class FakeGui:
     def remote_play(self):
         self.plays.append(True)
         self.info["paused"] = not self.info["paused"]
+        if self.info["mode"] == "follow":  # (the game's song, as its riffloop mod sees the game's screen)
+            self.info["state"] = "paused" if self.info["paused"] else "playing"
         return "paused" if self.info["paused"] else "playing"
 
     def remote_seek(self, position):
         self.seeks.append(position)
         self.info["position"] = position
+
+    def game_key(self, name):
+        self.game_keys.append(name)
+        return self.game_waiting  # (keys the game has still to type)
 
     def toggle_real_pitch(self):
         self.real_pitch = not self.real_pitch
@@ -353,11 +369,11 @@ def test_encoders_step_through_tones_and_send_where_they_stop():
     assert gui.changes == [("L", {"tone": 297}), ("L", {"tone": 298})]  # kept at once: the page shows each
     assert gui.later == TURN_WAIT  # (the song takes it once the turns stop)
     gui.song["arrangements"][0]["tones"] = {"tone": 298}
-    launchkey.queued = [Turn(2, -1), Button(105), Turn(0, 1)]  # the bass from its own 305; then Func: palm mutes,
-    # from none of its own (the default, 295) to the first tone
+    launchkey.queued = [Turn(2, -1), Button(51), Turn(0, 1)]  # the bass from its own 305; then the up arrow again:
+    # palm mutes, from none of its own (the default, 295) to the first tone
     clock.now = 0.6
     watch.step()
-    assert watch.field == 1 and ("button", 105, 3, 127) in launchkey.calls  # Func lit
+    assert watch.field == 1
     assert gui.changes[2:] == [("B", {"tone": 304}), ("L", {"mute_tone": 1})]
     assert screens(launchkey)[-1] == parts_picture("Lead palm mutes", 1, "Piano", "STEREO GRAND PIANO", 3, 1).data()
     launchkey.queued = [Turn(0, -1)]  # back: none of its own again, its kind's default
@@ -384,7 +400,7 @@ def test_encoders_step_through_tones_and_send_where_they_stop():
     watch.step()
     assert watch._picture_of == "parts" and pictures(launchkey)[-1][52 * 19 + 120 // 7] & 0x20  # (the speaker's top)
     gui.sound = True
-    launchkey.queued = [Button(105), Button(105), Turn(1, 1)]  # Func twice more: low notes, then tones again
+    launchkey.queued = [Button(51), Button(51), Turn(1, 1)]  # twice more: low notes, then tones again
     clock.now = 0.95
     watch.step()
     assert watch.field == 0 and gui.changes[-1][0] == "R" and "tone" in gui.changes[-1][1]
@@ -394,7 +410,7 @@ def test_encoders_step_through_tones_and_send_where_they_stop():
     assert not [c for c in launchkey.calls if c[0] in ("show", "picture")]  # once they stop: as it was
 
 
-def test_its_scale_button_shows_the_scale_and_the_upper_arrow_is_real_pitch():
+def test_its_scale_button_shows_the_scale_and_following_the_buttons_left_and_right_of_the_pads_are_rocksmiths():
     watch, gui, launchkey, clock = watching()
     gui.info["song"] = gui.song
     watch.step()
@@ -416,11 +432,18 @@ def test_its_scale_button_shows_the_scale_and_the_upper_arrow_is_real_pitch():
     launchkey.queued = [ScaleMode(False)]  # off: the arrangements, and the keys stop
     watch.step()
     assert gui.stops == 1 and not watch.scale_view and pads(launchkey)[(0, 0)] == (9, True)
-    launchkey.queued = [Button(104)]
+    launchkey.queued = [Button(104), Button(106), Button(107), Button(RECORD)]  # Escape, up, down, Enter
     clock.now = 1.5
     watch.step()
-    assert gui.real_pitch and ("button", 104, 3, 127) in launchkey.calls  # lit while it's on
-    assert screens(launchkey)[-1] == song_picture(*TWILIGHT[:3], "Real pitch: on").data()  # (following)
+    assert gui.game_keys == ["escape", "up", "down", "enter"] and not gui.real_pitch  # (real pitch: the page's)
+    gui.info["mode"] = "play"  # not following: said so (Track back is home)
+    clock.now = 2.0
+    watch.step()
+    launchkey.queued = [Button(104)]
+    clock.now = 2.5
+    watch.step()
+    assert gui.game_keys == ["escape", "up", "down", "enter"] and note(watch) == (None, NOT_FOLLOWING_KEYS)
+    assert ("button", 104, 1, 20) in launchkey.calls
 
 
 def test_its_scale_mode_on_before_a_song_shows_the_songs_scale_when_it_comes():
@@ -435,7 +458,7 @@ def test_its_scale_mode_on_before_a_song_shows_the_songs_scale_when_it_comes():
     assert gui.scales == [{"song": "song"}] and pads(launchkey)[(0, 0)] == (5, False)
 
 
-def test_the_down_arrow_puts_the_knobs_on_playing_the_song_knob_2_its_speed():
+def test_the_down_arrow_puts_the_knobs_on_playing_the_song_knob_5_its_speed():
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song
     watch.step()
@@ -480,14 +503,19 @@ def test_the_down_arrow_puts_the_knobs_on_playing_the_song_knob_2_its_speed():
     launchkey.queued = [Button(52)]
     watch.step()
     assert screens(launchkey)[-1] == PLAYING
-    launchkey.queued = [Button(51)]  # the up arrow: the arrangements again (no hint)
+    launchkey.queued = [Button(51)]  # the up arrow: the arrangements again, what their knobs do for a while
     clock.now = 15.0
     watch.step()
-    assert watch.mode == "parts" and pads(launchkey)[(0, 0)] == (9, False) and screens(launchkey)[-1] == PLAYING
-    launchkey.queued = [Button(51)]  # again: what their knobs do
-    clock.now = 15.5
-    watch.step()
+    assert watch.mode == "parts" and pads(launchkey)[(0, 0)] == (9, False)
     assert screens(launchkey)[-1] == arrangements_picture().data()
+    clock.now = 15.0 + PICTURE_SHOWN
+    watch.step()
+    assert screens(launchkey)[-1] == PLAYING
+    launchkey.queued = [Button(51)]  # again: their palm-mute tones (the lead's shown)
+    clock.now = 20.0
+    watch.step()
+    assert watch.field == 1
+    assert screens(launchkey)[-1] == parts_picture("Lead palm mutes", 295, "Default", "GM MUTE GUITAR", 3, 1).data()
 
 
 def pitch(step, at):
@@ -555,10 +583,10 @@ def test_following_the_library_can_be_gone_through_but_the_game_picks_the_song()
     launchkey.queued = [pitch(40, 1.0), pitch(44, 1.02), pitch(48, 1.04)]  # slid: a song for each 4 steps
     clock.now = 1.1
     watch.step()
-    assert gui.browsed == 2.0 and ("button", RECORD, 1, 20) in launchkey.calls  # (Record: nothing to do)
-    launchkey.queued = [Button(RECORD)]
+    assert gui.browsed == 2.0 and ("button", RECORD, 1, 20) in launchkey.calls  # (Record: no song to switch to)
+    launchkey.queued = [Button(RECORD)]  # (following: Rocksmith's Enter)
     watch.step()
-    assert gui.chosen == [] and gui.stopped == 0 and note(watch) == (None, ("Following Rocksmith:", "it picks the song"))
+    assert gui.chosen == [] and gui.stopped == 0 and gui.game_keys == ["enter"]
 
 
 def test_a_flick_keeps_going_until_the_strip_is_touched():
@@ -640,10 +668,10 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song
     watch.step()
-    launchkey.queued = [Button(107)]
+    launchkey.queued = [Button(105)]  # Func
     clock.now = 0.5
     watch.step()
-    assert watch.mix_knobs and ("button", 107, 3, 127) in launchkey.calls  # lit while it's open
+    assert watch.mix_knobs and ("button", 105, 3, 127) in launchkey.calls  # lit while it's open
     names, quiet = ["Lead", "Rhythm", "Bass", "Keys"], [False, True, True, False]  # the arrangements', then its
     # keys' (the rhythm and bass muted: not played)
     lights = [1.0, 0.0, 0.0, 1.0]  # their lit keys: the lead's 4, and its keys lighting first
@@ -688,10 +716,10 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     clock.now = 3.0 + PICTURE_SHOWN + 5
     watch.step()
     assert watch.mix_knobs  # it stays, until closed
-    launchkey.queued = [Button(107)]  # again: the song
+    launchkey.queued = [Button(105)]  # again: the song
     clock.now = 12.0
     watch.step()
-    assert not watch.mix_knobs and ("button", 107, 1, 20) in launchkey.calls
+    assert not watch.mix_knobs and ("button", 105, 1, 20) in launchkey.calls
     assert screens(launchkey)[-1] == song_picture(*TWILIGHT, done=30 / 260, sign="playing",
                                                   beside="0:30 / 4:20").data()  # (what was said gone with it)
     assert pads(launchkey)[(0, 1)] == (0, 10, 2)  # muted in it, and still: dim outside it
@@ -710,7 +738,7 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     clock.now = 20.0 + PICTURE_SHOWN
     watch.step()
     assert not watch.mix_knobs
-    launchkey.queued = [Button(107)]  # kept
+    launchkey.queued = [Button(105)]  # kept
     clock.now = 25.0
     watch.step()
     launchkey.queued = [Pad(1, 0)]  # a pad below: its lit keys, the rails beside its slider (nothing said), and
@@ -724,12 +752,12 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     clock.now = 30.5
     watch.step()
     assert screens(launchkey)[-1] == mixer([126, 123, 126, 126], 0, quiet=[False, False, True, True])
-    launchkey.queued = [Button(104)]  # real pitch: said over it too
+    launchkey.queued = [Button(104)]  # (Rocksmith's Escape: follow it first) said over it too
     clock.now = 31.0
     watch.step()
-    assert watch.mix_knobs and note(watch) == ("Real pitch: on", None)
-    launchkey.queued = [Button(105), Turn(0, 1)]  # Func: the mixer closed, the knobs on the palm-mute tones (from
-    # none of its own, the first)
+    assert watch.mix_knobs and note(watch) == (None, NOT_FOLLOWING_KEYS)
+    launchkey.queued = [Button(105), Button(51), Turn(0, 1)]  # Func: the mixer closed; the up arrow again, the
+    # knobs on the palm-mute tones (from none of its own, the first)
     clock.now = 31.5
     watch.step()
     assert not watch.mix_knobs and gui.changes[-1] == ("L", {"mute_tone": 1})
@@ -743,11 +771,11 @@ def test_the_mixer_has_the_pads_on_the_arrangements_and_gives_playing_the_song_b
     clock.now = 0.5
     watch.step()
     assert watch.mode == "playback" and pads(launchkey)[(0, 0)] == (11, False)
-    launchkey.queued = [Button(107)]  # the mixer: the arrangements on the pads (the up arrow lit)
+    launchkey.queued = [Button(105)]  # the mixer: the arrangements on the pads (the up arrow lit)
     clock.now = 1.0
     watch.step()
     assert watch.mode == "parts" and pads(launchkey)[(0, 0)] == (9, False) and ("button", 51, 3, 127) in launchkey.calls
-    launchkey.queued = [Button(107)]  # closed: playing the song again
+    launchkey.queued = [Button(105)]  # closed: playing the song again
     clock.now = 2.0
     watch.step()
     assert watch.mode == "playback" and pads(launchkey)[(0, 0)] == (11, False)
@@ -849,10 +877,10 @@ def test_a_toggle_is_said_at_the_bottom_left_of_whatever_the_screen_shows():
     clock.now = 0.5
     watch.step()
     tone_shown = parts_picture("Lead tone", 297, "GM Tones", tone(297).name, 3, 0)
-    launchkey.queued = [Button(104)]  # real pitch: said over it, the tone staying
+    launchkey.queued = [Pad(1, CONTROLS)]  # following: said over it, the tone staying
     clock.now = 1.0
     watch.step()
-    assert gui.real_pitch and screens(launchkey)[-1] == with_note(tone_shown, ("Real pitch: on",)).data()
+    assert gui.following and screens(launchkey)[-1] == with_note(tone_shown, ("Following: on",)).data()
     launchkey.queued = [Pad(1, 0)]  # the lead's lit keys: said over it too
     clock.now = 1.5
     watch.step()
@@ -953,7 +981,8 @@ def test_following_the_loop_is_riff_repeaters_and_the_sections_the_games():
     watch.step()
     assert gui.loop_calls == [{"a": "here"}, {"b": "here", "on": True}]  # (the gui sends it to the game)
     assert note(watch) == (None, ("Loop 0:21.0-0:21.0: on", "Pick it in Riff Repeater"))
-    assert pads(launchkey)[(0, 2)][1] and pads(launchkey)[(1, 0)] == (0, 0, 0)  # on, pulsing; no section pads
+    assert pads(launchkey)[(0, 2)][1] and pads(launchkey)[(1, 1)] == (0, 0, 0)  # on, pulsing; no section pads
+    assert pads(launchkey)[(1, 0)] == (23, False)  # (but the Accelerator's)
     gui.game = {"answered": False, "hook": False, "riff": False}  # (the game without the mod)
     launchkey.queued = [Pad(0, 3)]  # the section it's in
     clock.now = 1.0
@@ -1011,7 +1040,7 @@ def test_in_the_mixer_the_pitch_strip_moves_the_slider_last_used():
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song
     watch.step()
-    launchkey.queued = [Button(107), pitch(64, 1.0), pitch(70, 1.01), pitch(75, 1.02)]  # all of them: 11 up
+    launchkey.queued = [Button(105), pitch(64, 1.0), pitch(70, 1.01), pitch(75, 1.02)]  # all of them: 11 up
     clock.now = 1.1
     watch.step()
     assert gui.volume_changes[-1][0] == 111 and gui.keys["volume"] == 111 and gui.browsed == 0.0  # (not the library)
@@ -1087,6 +1116,98 @@ def test_following_the_chord_stays_while_the_game_pauses():
     clock.now = 1.0
     watch.step()
     assert screens(launchkey)[-1] == followed
+
+
+def test_following_play_pauses_the_games_song_and_shows_it_however_it_was_paused():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.live = gui.song, 10.5
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT, done=10.5 / 260, beside="0:10 / 4:20").data()
+    assert ("button", PLAY, 1, 20) in launchkey.calls  # (on a menu, or not known: no sign, Play dim)
+    assert all(("button", number, 3, 127) in launchkey.calls for number in (104, 106, 107))  # (Rocksmith's keys)
+    gui.info["state"] = "playing"  # the game's song playing
+    clock.now = 0.5
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT, done=10.5 / 260, sign="playing",
+                                                 beside="0:10 / 4:20").data()
+    assert [c for c in launchkey.calls if c[:2] == ("button", PLAY)][-1] == ("button", PLAY, 3, 127)  # lit
+    launchkey.queued = [Button(PLAY)]  # Play: paused
+    clock.now = 1.0
+    watch.step()
+    assert gui.plays == [True] and screens(launchkey)[-1] == song_picture(
+        *TWILIGHT, done=10.5 / 260, sign="paused", beside="0:10 / 4:20").data()
+    assert [c for c in launchkey.calls if c[:2] == ("button", PLAY)][-1] == ("button", PLAY, 1, 20)
+    gui.info["state"] = "playing"  # resumed in the game (its keyboard)
+    clock.now = 1.5
+    watch.step()
+    assert screens(launchkey)[-1] == song_picture(*TWILIGHT, done=10.5 / 260, sign="playing",
+                                                 beside="0:10 / 4:20").data()
+    assert [c for c in launchkey.calls if c[:2] == ("button", PLAY)][-1] == ("button", PLAY, 3, 127)
+
+
+def test_following_with_the_game_paused_knobs_3_and_4_step_through_its_song_as_its_keys_do():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.live, gui.info["state"] = gui.song, 10.5, "playing"
+    watch.step()
+    launchkey.queued = [Button(52), Turn(SEEK_KNOB, 1)]  # playing: not while it plays
+    clock.now = 0.5
+    watch.step()
+    assert gui.game_keys == [] and note(watch) == (None, ("Rocksmith: pause first", "(Play), then step"))
+    gui.info["state"] = "paused"  # (paused, however)
+    clock.now = 1.0
+    watch.step()
+    launchkey.queued = [Turn(SEEK_KNOB, 3)]  # on: its right arrow, a step each
+    clock.now = 1.5
+    watch.step()
+    assert gui.game_keys == ["right"] * 3 and note(watch) == ("Step on x3", None)
+    launchkey.queued = [Turn(SEEK_KNOB, -20)]  # back, a fast turn: 8 at most
+    clock.now = 2.0
+    watch.step()
+    assert gui.game_keys[3:] == ["left"] * 8
+    launchkey.queued = [Turn(SECTION_KNOB, -1), Turn(SECTION_KNOB, 2)]  # knob 3: its phrases
+    clock.now = 2.5
+    watch.step()
+    assert gui.game_keys[11:] == ["pagedown", "pageup", "pageup"] and note(watch) == ("Phrase on x2", None)
+    gui.game_waiting = 6  # turned too fast: the game behind, none sent until it's caught up
+    launchkey.queued = [Turn(SEEK_KNOB, 5)]
+    clock.now = 3.0
+    watch.step()
+    assert gui.game_keys[14:] == ["right"]
+    launchkey.queued = [Turn(SEEK_KNOB, 5)]
+    clock.now = 3.05
+    watch.step()
+    assert gui.game_keys[14:] == ["right"]
+    gui.game_waiting = 1
+    launchkey.queued = [Turn(SEEK_KNOB, 2)]
+    clock.now = 3.0 + 3 * 2 / 60
+    watch.step()
+    assert gui.game_keys[14:] == ["right"] * 3
+
+
+def test_pad_1_tapped_twice_clears_the_loop():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Pad(0, 0)]  # playing the song: A here
+    clock.now = 0.5
+    watch.step()
+    gui.info["position"] = 40.0
+    launchkey.queued = [Pad(0, 1)]  # B: looping
+    clock.now = 1.0
+    watch.step()
+    assert gui.loop["on"] and gui.loop["a"] == 30.0 and gui.loop["b"] == 40.0
+    launchkey.queued = [Pad(0, 0)]  # A again, a while later: moved
+    clock.now = 2.0
+    watch.step()
+    assert gui.loop_calls[-1] == {"a": "here"}
+    launchkey.queued = [Pad(0, 0)]  # and again at once: cleared
+    clock.now = 2.2
+    watch.step()
+    assert gui.loop_calls[-1] == {"a": None, "b": None, "on": False} and note(watch) == ("Loop cleared", None)
+    launchkey.queued = [Pad(0, 0)]  # a third time: A again
+    clock.now = 2.4
+    watch.step()
+    assert gui.loop_calls[-1] == {"a": "here"}
 
 
 LYRICS = lyric_lines([Syllable("Hey", 20.0, 20.5), Syllable("lit-", 20.5, 21.0), Syllable("tle", 21.0, 21.5),
@@ -1323,7 +1444,7 @@ def test_the_guitars_pads_go_through_its_favourites_and_hear_it():
     launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # heard: its notes light the keys
     clock.now = 2.0
     watch.step()
-    assert gui.listen and note(watch) == ("Guitar heard: on", None)
+    assert gui.listen and note(watch) == ("Guitar lights keys: on", None)
     assert pads(launchkey)[(1, GUITAR_COLUMN)] == (127, 100, 0)
     gui.pedal = {**gui.pedal, "error": "The pedal didn't answer: unplug it and plug it in again"}
     launchkey.queued = [Turn(GUITAR_COLUMN, 1)]
@@ -1352,3 +1473,36 @@ def test_the_guitar_column_is_dark_playing_the_song_and_in_the_mixer():
     clock.now = 1.0
     watch.step()
     assert gui.pedal_calls == []
+
+
+def test_knob_8_while_the_loop_shows_moves_its_end_a_bar_at_a_time():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Turn(LOOP_KNOBS[1], 2)]  # ▼, knob 5: the end, two beats on
+    clock.now = 0.5
+    watch.step()
+    launchkey.queued = [Turn(CONTROLS, 2)]  # knob 8, while the loop shows: two bars on
+    clock.now = 1.0
+    watch.step()
+    assert gui.loop_calls[-1] == {"move_b_bars": 2} and gui.loop["b"] == 35.0 and not watch.mix_knobs
+
+
+def test_following_knob_2_and_the_pad_below_set_riff_repeaters_speed_and_accelerator():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(52), Turn(SPEED_KNOB, -6)]  # ▼, knob 2: six steps slower
+    clock.now = 0.5
+    watch.step()
+    clock.now = 0.5 + TURN_WAIT + 0.05  # (once it stops turning)
+    watch.step()
+    assert gui.riff_calls == [{"speed": 70}] and gui.speeds == []  # Riff Repeater's, not the page's playing
+    assert pads(launchkey)[(1, 0)] == (23, False)  # the Accelerator: off, dim green
+    launchkey.queued = [Pad(1, 0)]
+    clock.now = 1.5
+    watch.step()
+    assert gui.riff_calls[-1] == {"accelerator": True} and note(watch) == (None, ("Accelerator: on", "In Riff Repeater"))
+    clock.now = 2.0
+    watch.step()
+    assert pads(launchkey)[(1, 0)] == (21, False)

@@ -77,7 +77,7 @@ def chord_notes_record(c: dict) -> bytes:
 
 
 def sng_plain(song: Song) -> bytes:
-    out = array([struct.pack("<fhhii", beat, 0, 0, 0, 0) for beat in song.beats])
+    out = array([struct.pack("<fhhii", beat, i // 4, i % 4, 0, 0) for i, beat in enumerate(song.beats)])  # (4 to a bar)
     out += array([struct.pack("<4b2i32s", 0, 0, 0, 0, level, 1, b"p") for level in song.phrase_levels])
     names = [name.encode() for name in song.chord_names] + [b"c"] * len(song.chords)
     out += array([struct.pack("<I6b6b6i32s", 0, *frets, *([-1] * 6), *([-1] * 6), name)
