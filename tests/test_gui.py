@@ -939,6 +939,10 @@ def test_the_fretboard_gets_an_arrangements_notes_where_theyre_played(server):
     assert len(board["notes"]) == 40 and board["chords"] == []
     for start, end, places in board["notes"]:  # (each one's strings and frets: its pitches, on this guitar)
         assert start <= end and places and all(0 <= string < 6 and 0 <= fret <= 24 for string, fret in places)
+    assert len(board["techniques"]) == len(board["notes"])  # (for its tab: each note's mask, slide and bend)
+    assert all(len(t) == 3 for t in board["techniques"]) and board["muted"] == []
+    bars = call(server, f"/api/fretboard?id={sid}&part=lead")[1]["bars"]  # (its beats charted: bars from them)
+    assert len(bars) > 10 and bars == sorted(bars) and board["length"] > 0
     assert call(server, f"/api/fretboard?id={sid}&part={lead['arrangement']}")[1]["part"] == "lead"  # (as the game has it)
     assert call(server, f"/api/fretboard?id={sid}")[1]["part"] == "lead"  # (its first guitar part)
 

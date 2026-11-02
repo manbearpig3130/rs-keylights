@@ -183,6 +183,18 @@
   #middle { min-width: 0; }
   /* The song's scale on its guitar: the frets evenly spaced, the highest string on top (as in tab) */
   .fretboard { overflow-x: auto; margin: 4px -4px 0; padding: 0 4px; }
+  /* The tab: two rows of bars (where the song is, and what comes next), the notes being played lit */
+  .tab svg { display: block; width: 100%; height: auto; }
+  .tab .string { stroke: var(--line); }
+  .tab .bar { stroke: var(--muted); }
+  .tab .head { stroke: var(--live); stroke-width: 2; }
+  .tab text { font: 11px ui-monospace, Menlo, monospace; fill: var(--text); text-anchor: middle; dominant-baseline: central;
+              paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
+  .tab text.past { fill: var(--muted); }
+  .tab text.now { fill: var(--live); font-weight: 700; }
+  .tab text.pm { font-style: italic; fill-opacity: .75; }
+  .tab text.label { fill: var(--muted); stroke: none; }
+  .tab text.chord { fill: var(--accent); text-anchor: start; font-weight: 600; stroke: none; }
   .fretboard svg { display: block; width: 100%; min-width: 620px; height: auto; }
   .fretboard .string { stroke: var(--muted); }
   .fretboard .fret { stroke: var(--line); stroke-width: 2; }
@@ -285,6 +297,16 @@
     </div>
     <div id="fretboard" class="fretboard"></div>
     <div id="fretLegend" class="fret-legend"></div>
+  </section>
+
+  <section id="tabCard" class="card" hidden>
+    <div class="fret-head">
+      <h3 id="tabTitle">Tab</h3>
+      <label class="small" title="Bars a row: two rows show, where the song is and what comes next">Bars
+        <select id="tabBars"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+      <select id="tabPart" aria-label="Whose tab" title="Whose tab (following the game: the arrangement it plays)"></select>
+    </div>
+    <div id="tab" class="tab"></div>
   </section>
   </div>
 
@@ -600,16 +622,30 @@ function fretboardSvg(key, guitar) {
     `<g id="fretLive"></g></svg>`;
 }
 
-// The arrangement the fretboard shows: the one the game plays (following this song), else the one picked, else
-// the first guitar part that plays (else the first guitar part)
-function fretPartOf(s) {
+// The arrangement the fretboard (or the tab) shows: the one the game plays (following this song), else the one
+// picked, else the first guitar part that plays (else the first guitar part)
+function fretPartOf(s, picked = fretPicked) {
   if (state.mode === "following" && state.follow && state.follow.song_id === s.id) {
     const played = s.parts.find((p) => p.arrangement === state.follow.arrangement);
     if (played) return played.part;
   }
-  if (s.parts.some((p) => p.part === fretPicked)) return fretPicked;
+  if (s.parts.some((p) => p.part === picked)) return picked;
   const guitar = s.parts.filter((p) => p.kind !== "bass");
   return (guitar.find((p) => p.play) || guitar[0] || s.parts[0]).part;
+}
+
+// An arrangement's notes, chords, techniques and bars (GET /api/fretboard), for the fretboard and the tab: the
+// last few asked for kept
+const arrangementCache = new Map();
+function arrangementData(id, part) {
+  const key = `${id}|${part}`;
+  if (!arrangementCache.has(key)) {
+    const asked = api(`/api/fretboard?id=${encodeURIComponent(id)}&part=${encodeURIComponent(part)}`);
+    asked.catch(() => arrangementCache.delete(key));
+    arrangementCache.set(key, asked);
+    while (arrangementCache.size > 6) arrangementCache.delete(arrangementCache.keys().next().value);
+  }
+  return arrangementCache.get(key);
 }
 
 function renderFretboard(s) {
@@ -628,7 +664,7 @@ function renderFretboard(s) {
   if (fretWanted !== wanted) {
     fretWanted = wanted;
     fretData = null;
-    api(`/api/fretboard?id=${encodeURIComponent(s.id)}&part=${encodeURIComponent(part)}`).then((d) => {
+    arrangementData(s.id, part).then((d) => {
       if (fretWanted === wanted) {
         fretData = d;
         drawFretboard(s.key, d);
@@ -765,11 +801,150 @@ $("fretFlip").addEventListener("change", () => {
   fretThickOnTop = $("fretFlip").checked;
   store.set("rsk.fretThickOnTop", fretThickOnTop);
   $("fretCard").dataset.shown = "";  // (drawn again, the other way up)
+  tabShown = "";
   if (selected) renderFretboard(selected);
 });
 $("fretPart").addEventListener("change", () => {
   fretPicked = $("fretPart").value;
   if (selected) renderFretboard(selected);
+});
+
+// The tab: an arrangement's notes as tab, its bars a few to a row (tabBars), two rows showing: the one the song's
+// in, a line where it is, and the next; reaching the second, it goes up (as a page turns). The notes being played
+// light up, the ones played are dimmed; the chords' names are over them; techniques as tab has them (h, p, t,
+// /, \, b, ~, <harmonics>, x for fret-hand mutes; palm mutes in italics). The strings are as the fretboard has
+// them (the thick one on top, or as tab); the arrangement is the fretboard's (following: the game's), or one picked
+const TAB = {LEFT: 22, RIGHT: 10, TOP: 22, GAP: 13, ROWS: 2, ROW_GAP: 22};
+const TECH = {HARMONIC: 0x20, PALM_MUTE: 0x40, HAMMER_ON: 0x200, PULL_OFF: 0x400, TAP: 0x4000, PINCH: 0x8000,
+  VIBRATO: 0x10000};
+let tabData = null, tabWanted = "", tabPicked = null, tabShown = "";
+let tabBars = Number(store.get("rsk.tabBars", 2)) || 2;
+
+function renderTab(s) {
+  const card = $("tabCard");
+  card.hidden = !s.guitar;
+  if (card.hidden) return;
+  const select = $("tabPart");
+  const options = s.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)}</option>`).join("");
+  if (select.dataset.options !== options) {
+    select.innerHTML = options;
+    select.dataset.options = options;
+  }
+  const part = fretPartOf(s, tabPicked);
+  select.value = part;
+  const wanted = `${s.id}|${part}`;
+  if (tabWanted !== wanted) {
+    tabWanted = wanted;
+    tabData = null;
+    tabShown = "";
+    $("tab").innerHTML = "";
+    arrangementData(s.id, part).then((d) => {
+      if (tabWanted === wanted) {
+        tabData = {...d, rows: tabRows(d)};
+        $("tabTitle").textContent = `Tab · ${d.name}`;
+      }
+    }).catch(() => {});
+  }
+}
+
+// Its rows: each one's start and end (seconds), tabBars bars a row
+function tabRows(d) {
+  const last = d.notes.reduce((end, n) => Math.max(end, n[1]), d.length || 0);
+  const bars = d.bars.length ? d.bars : [0];
+  const rows = [];
+  for (let i = 0; i < bars.length; i += tabBars) rows.push([bars[i], i + tabBars < bars.length ? bars[i + tabBars] : last]);
+  return rows.filter(([start, end]) => end > start);
+}
+
+// A note's text: its fret, as its techniques have it
+function fretText(fret, tech) {
+  const [mask, slide, bend] = tech || [0, 0, 0];
+  let text = mask & TECH.HARMONIC ? `<${fret}>` : mask & TECH.PINCH ? `${fret}*` : String(fret);
+  if (mask & TECH.TAP) text = "t" + text;
+  else if (mask & TECH.HAMMER_ON) text = "h" + text;
+  else if (mask & TECH.PULL_OFF) text = "p" + text;
+  if (bend > 0) text += "b" + (bend === 2 ? "" : bend === 1 ? "½" : String(bend / 2));
+  if (slide > 0) text += "/";
+  else if (slide < 0) text += "\\";
+  if (mask & TECH.VIBRATO) text += "~";
+  return text;
+}
+
+function tabSvg(d, first, at, width) {
+  const n = d.strings.length, height = (n - 1) * TAB.GAP, right = width - TAB.RIGHT;
+  const y = (row, string) => TAB.TOP + row * (height + TAB.ROW_GAP + TAB.TOP / 2) +
+    (fretThickOnTop ? string : n - 1 - string) * TAB.GAP;
+  const out = [];
+  for (let row = 0; row < TAB.ROWS && first + row < d.rows.length; row++) {
+    const [start, end] = d.rows[first + row];
+    const x = (t) => TAB.LEFT + (t - start) / (end - start) * (right - TAB.LEFT);
+    for (let string = 0; string < n; string++) {
+      out.push(`<line class="string" x1="${TAB.LEFT}" x2="${right}" y1="${y(row, string)}" y2="${y(row, string)}"/>`,
+               `<text class="label" x="8" y="${y(row, string)}">${SHARPS[d.strings[string] % 12]}</text>`);
+    }
+    const top = Math.min(y(row, 0), y(row, n - 1)), bottom = Math.max(y(row, 0), y(row, n - 1));
+    for (const bar of d.bars) {
+      if (bar >= start && bar < end) out.push(`<line class="bar" x1="${x(bar)}" x2="${x(bar)}" y1="${top}" y2="${bottom}"/>`);
+    }
+    out.push(`<line class="bar" x1="${right}" x2="${right}" y1="${top}" y2="${bottom}"/>`);
+    let named = -Infinity;
+    for (const [chordAt, , name] of d.chords) {
+      if (chordAt >= start && chordAt < end && name && x(chordAt) > named) {
+        out.push(`<text class="chord" x="${x(chordAt) - 4}" y="${top - 11}">${esc(name)}</text>`);
+        named = x(chordAt) + 7 * name.length + 6;
+      }
+    }
+    d.notes.forEach((note, i) => {
+      const [t, sounds, places] = note;
+      if (t < start || t >= end) return;
+      const tech = d.techniques ? d.techniques[i] : null;
+      const shown = t > at ? "" : Math.max(sounds, t + LIT) >= at ? "now" : "past";
+      const kind = `${shown}${tech && tech[0] & TECH.PALM_MUTE ? " pm" : ""}`;
+      for (const [string, fret] of places) {
+        out.push(`<text class="${kind}" x="${x(t)}" y="${y(row, string)}">${esc(fretText(fret, tech))}</text>`);
+      }
+    });
+    for (const [t, places] of d.muted || []) {
+      if (t < start || t >= end) continue;
+      for (const [string] of places) out.push(`<text class="${t > at ? "" : "past"}" x="${x(t)}" y="${y(row, string)}">x</text>`);
+    }
+    if (row === 0 && at >= start && at < end) {
+      out.push(`<line class="head" x1="${x(at)}" x2="${x(at)}" y1="${top - 4}" y2="${bottom + 4}"/>`);
+    }
+  }
+  const rows = Math.min(TAB.ROWS, d.rows.length - first);
+  const total = y(rows - 1, fretThickOnTop ? n - 1 : 0) + TAB.GAP;
+  return `<svg viewBox="0 0 ${width} ${total}" role="img" aria-label="Tab">${out.join("")}</svg>`;
+}
+
+function tabFrame() {
+  requestAnimationFrame(tabFrame);
+  const d = tabData, s = selected;
+  if (!d || !s || !d.rows.length || $("tabCard").hidden || `${s.id}|${d.part}` !== tabWanted) return;
+  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
+  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+  const at = clock ? clock.position + since : Number(s.start) || 0;  // (not playing: where it starts)
+  let first = d.rows.findIndex(([, end]) => at < end);
+  if (first < 0) first = d.rows.length - 1;
+  const width = Math.max(320, Math.round($("tab").clientWidth));
+  const lo = d.notes.findIndex((note) => note[0] > at);
+  const playing = d.notes.reduce((n, note, i) => n + (note[0] <= at && Math.max(note[1], note[0] + LIT) >= at ? i : 0), 0);
+  const shown = `${first}|${lo}|${playing}|${width}|${fretThickOnTop}|${Math.round(at * 20)}`;
+  if (shown === tabShown) return;
+  tabShown = shown;
+  $("tab").innerHTML = tabSvg(d, first, at, width);
+}
+requestAnimationFrame(tabFrame);
+$("tabBars").value = String(tabBars);
+$("tabBars").addEventListener("change", () => {
+  tabBars = Number($("tabBars").value) || 2;
+  store.set("rsk.tabBars", tabBars);
+  if (tabData) tabData = {...tabData, rows: tabRows(tabData)};
+  tabShown = "";
+});
+$("tabPart").addEventListener("change", () => {
+  tabPicked = $("tabPart").value;
+  if (selected) renderTab(selected);
 });
 
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
@@ -1103,6 +1278,7 @@ function renderSong() {
   $("file").textContent = `${s.artist ? "· " : ""}${s.file} · ${fmt(s.length)}`;
   $("songKey").replaceChildren(keyLine(s.key, s.id));
   renderFretboard(s);
+  renderTab(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
     $("songArt").classList.add("none");

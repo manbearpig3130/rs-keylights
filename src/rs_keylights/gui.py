@@ -504,18 +504,25 @@ class Gui:
         }
 
     def fretboard(self, sid: str, part: str | None = None) -> dict[str, Any]:
-        """An arrangement's notes and chord shapes where they're played, for the page's fretboard: each note's
-        start, end and strings with their frets, and each chord's start, end, name and shape (a fret a string, -1
-        not played); the one asked for (its part, or its persistent ID), else the song's first guitar part; with
-        the guitar it's played on."""
+        """An arrangement's notes and chord shapes where they're played, for the page's fretboard and tab: each
+        note's start, end and strings with their frets, and each chord's start, end, name and shape (a fret a
+        string, -1 not played); each note's techniques, the fret-hand mutes and the bars; the one asked for (its
+        part, or its persistent ID), else the song's first guitar part; with the guitar it's played on."""
         loaded = self._load(sid)
         ref, a = next(((r, a) for r, a in loaded if part in (r.part, r.persistent_id)), None) or \
             next(((r, a) for r, a in loaded if not r.bass), loaded[0])
+        bars = list(a.bars) or list(a.beats[::4])  # (a chart without bars: every 4th beat)
         return {**(_guitar([(ref, a)]) or {}), "part": ref.part, "arrangement": ref.persistent_id,
                 "name": ref.name or ref.part,
                 "notes": [[round(n.time, 3), round(n.time + n.sustain, 3), [[s, f] for s, f in zip(n.strings, n.frets)]]
                           for n in a.notes],
-                "chords": [[round(c.start, 3), round(c.end, 3), c.name, list(c.frets)] for c in a.chords]}
+                "chords": [[round(c.start, 3), round(c.end, 3), c.name, list(c.frets)] for c in a.chords],
+                # For its tab: each note's techniques (the chart's mask, the semitones it slides, as it's slid off
+                # too, and the most it bends), as the notes are; its fret-hand mutes; when each bar starts
+                "techniques": [[n.mask, n.slide or n.slide_off, max((up for _at, up in n.bends), default=0.0)]
+                               for n in a.notes],
+                "muted": [[round(n.time, 3), [[s, f] for s, f in zip(n.strings, n.frets)]] for n in a.muted],
+                "bars": [round(t, 3) for t in bars], "length": round(a.length, 3)}
 
     def _song_parts(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> list[dict[str, Any]]:
         """A song's parts as chosen to play: unless chosen otherwise, as default_lights has them."""

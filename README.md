@@ -181,6 +181,13 @@ the commands do:
 - **The song** in the middle: its art, title and artist, its key and scale in the top right, and a line for each arrangement (lit
   keys, volume, mute); its **Tones** button opens its tones (folded away at first, as during a song: the
   Launchkey has them). The fretboard under it shows what it lights; its legend shows as the mouse is on it.
+- **The tab**, under the fretboard: an arrangement's notes as tab, two rows of bars (1 to 4 a row; 2 at
+  first): the row the song's in, a line where it is, and the next; reaching the second, it goes up, as a page
+  turns. The notes being played light up, the ones played are dimmed, and the chords' names are over them;
+  techniques as tab has them (h, p and t before the fret, / and \ for slides, b for bends, ~ for vibrato,
+  <7> for harmonics, x for fret-hand mutes, palm mutes in italics). Its strings are the fretboard's way up,
+  and its arrangement the fretboard's (following: the one played in the game), or one picked. Not playing,
+  it shows where the song starts.
 - **The settings column**: each card folds into its title (the setup ones folded at first; remembered).
 - **Follow Rocksmith** (its button in the header): start and stop following the game (with sound unless
   muted); full screen while following, if wanted (as it's started on the page: a browser only goes full
