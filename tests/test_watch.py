@@ -29,7 +29,7 @@ class FakeGui:
         self.listen, self.pedal_calls = False, []
         self.game = {"answered": True, "hook": True, "riff": True}  # (following: the game's riffloop mod)
         self.riff, self.riff_calls = {"speed": 100, "accelerator": False, "passes": 1}, []
-        self.pedal = {"slot": 49, "previous": None, "error": None, "favourites": [51, 187]}
+        self.pedal = {"slot": 49, "previous": None, "error": None, "favourites": [51, 187], "hold": False}
         self.song = {
             "id": "song", "title": "Amon Amarth - Twilight of the Thunder God", "played": "L" if mode == "follow" else None,
             "key": {"name": "C# minor", "tonic": 1, "mode": "minor", "scale": [1, 3, 4, 6, 8, 9, 11], "other": [2],
@@ -61,6 +61,9 @@ class FakeGui:
 
     def set_pedal(self, body, later=0.0):  # (the slot it's going to, at once, as the pedal keeps it)
         self.pedal_calls.append((dict(body), later))
+        if "hold" in body:  # (its tone kept, or following the song's tones again)
+            self.pedal = {**self.pedal, "hold": bool(body["hold"])}
+            return dict(self.pedal)
         slot = self.pedal["previous"] if body.get("back") else body["slot"]
         if slot != self.pedal["slot"]:
             self.pedal = {**self.pedal, "slot": slot, "previous": self.pedal["slot"]}
@@ -1423,7 +1426,7 @@ def test_column_6_is_the_guitar_knob_6_its_pedals_presets():
     gui.info["song"] = gui.song
     watch.step()
     assert pads(launchkey)[(0, GUITAR_COLUMN)] == (10, 8, 0)  # on none of its favourites: yellow, dim
-    assert pads(launchkey)[(1, GUITAR_COLUMN)] == (19, 15, 0)  # not heard: dim
+    assert pads(launchkey)[(1, GUITAR_COLUMN)] == (127, 100, 0)  # following the song's tones: bright
     launchkey.queued = [Turn(GUITAR_COLUMN, 1)]  # knob 6: the next preset, once the knob rests
     clock.now = 0.5
     watch.step()
@@ -1440,7 +1443,7 @@ def test_column_6_is_the_guitar_knob_6_its_pedals_presets():
     assert screens(launchkey)[-1] == pedal_picture(200, "My love", "Pad: 051 / 187").data()
 
 
-def test_the_guitars_pads_go_through_its_favourites_and_hear_it():
+def test_the_guitars_pads_go_through_its_favourites_and_hold_its_tone():
     watch, gui, launchkey, clock = watching()
     gui.info["song"] = gui.song
     watch.step()
@@ -1457,11 +1460,17 @@ def test_the_guitars_pads_go_through_its_favourites_and_hear_it():
     clock.now = 1.5
     watch.step()
     assert [body["slot"] for body, _later in gui.pedal_calls] == [51, 187, 51]
-    launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # heard: its notes light the keys
+    launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # the bottom pad: its tone held (not switched with the song's)
     clock.now = 2.0
     watch.step()
-    assert gui.listen and note(watch) == ("Guitar lights keys: on", None)
+    assert gui.pedal["hold"] and note(watch) == ("Pedal: holding this tone", None)
+    assert pads(launchkey)[(1, GUITAR_COLUMN)] == (19, 15, 0)  # (dim)
+    launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # again: following them
+    clock.now = 2.5
+    watch.step()
+    assert not gui.pedal["hold"] and note(watch) == ("Pedal: following the song's tones", None)
     assert pads(launchkey)[(1, GUITAR_COLUMN)] == (127, 100, 0)
+    assert [body for body, _later in gui.pedal_calls][-2:] == [{"hold": True}, {"hold": False}]
     gui.pedal = {**gui.pedal, "error": "The pedal didn't answer: unplug it and plug it in again"}
     launchkey.queued = [Turn(GUITAR_COLUMN, 1)]
     clock.now = 3.0
@@ -1473,7 +1482,7 @@ def test_the_guitars_pads_go_through_its_favourites_and_hear_it():
     launchkey.queued = [Pad(0, GUITAR_COLUMN)]
     clock.now = 4.0
     watch.step()
-    assert note(watch) == ("Pedal: no favourites", None) and len(gui.pedal_calls) == 4
+    assert note(watch) == ("Pedal: no favourites", None) and len(gui.pedal_calls) == 6  # (none more)
 
 
 def test_the_guitar_column_is_dark_playing_the_song_and_in_the_mixer():

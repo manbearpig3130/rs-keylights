@@ -34,7 +34,7 @@ from .parts import Part, PlannedPart, VoicesFor, plan, player_for
 from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
-from .pedal import SLOTS as PEDAL_SLOTS, Pedal
+from .pedal import SLOTS as PEDAL_SLOTS, Pedal, PedalError
 from .riffloop import GameLoop, GameSongs, RiffLoop
 from .sng import BASS, GUITAR, Arrangement, Chord, Note, Section, note_name
 from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tones, tone_kind
@@ -1742,18 +1742,27 @@ class Gui:
 
     def pedal_info(self) -> dict[str, Any]:
         """The pedal's preset as far as it's known (None: not known) and its name, the one before, why it couldn't
-        be switched (None: it could), and the favourites the Launchkey's pad goes through."""
+        be switched (None: it could), the favourites the Launchkey's pad goes through, and whether its tone's held
+        (not switched with the song's tones)."""
         pedal = self.pedal
         slot, previous = pedal.slot, pedal.previous
         return {"slot": slot, "name": pedal.name(slot), "previous": previous, "previous_name": pedal.name(previous),
-                "error": pedal.error, "favourites": list(self.settings["pedal_favourites"])}
+                "error": pedal.error, "favourites": list(self.settings["pedal_favourites"]), "hold": pedal.held}
 
     def pedal_name(self, slot: int | None) -> str:
         return self.pedal.name(slot)
 
     def set_pedal(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
         """Switches the pedal: to a slot ("slot"), some on from the one it's on ("step", round from the last to the
-        first), or back to the one before ("back"); after later seconds, if it's not switched again by then."""
+        first), or back to the one before ("back"); after later seconds, if it's not switched again by then. Or
+        holds its tone ("hold": true; dnafx-preset's listener doesn't switch it with the song's tones), or lets it
+        follow them again (false)."""
+        if "hold" in body:
+            try:
+                self.pedal.hold(bool(body["hold"]))
+            except PedalError as exc:
+                raise GuiError(str(exc)) from exc
+            return self.pedal_info()
         if body.get("back"):
             if self.pedal.back() is None:
                 raise GuiError("No preset to go back to")

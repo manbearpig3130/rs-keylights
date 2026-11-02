@@ -899,7 +899,10 @@ def test_the_pedal_switches_from_the_page_its_presets_named_by_a_backup(server, 
     assert settings["pedal_backup_used"] == str(path) and len(settings["pedal_names"]) == 200
     assert settings["pedal_names"][48:50] == ["5050 CL", "5050 DS"]
     assert call(server, "/api/state")[1]["pedal"] == {"slot": None, "name": "", "previous": None, "previous_name": "",
-                                                      "error": None, "favourites": [51, 187]}
+                                                      "error": None, "favourites": [51, 187], "hold": False}
+    from rs_keylights import pedal as pedal_module  # (the hold file: dnafx-preset's listener keeps the tone)
+    assert call(server, "/api/pedal", {"hold": True})[1]["hold"] is True and pedal_module.HOLD_FILE.exists()
+    assert call(server, "/api/pedal", {"hold": False})[1]["hold"] is False and not pedal_module.HOLD_FILE.exists()
     _, settings = call(server, "/api/settings", {"pedal_favourites": [187, 51, 187, 5]})
     assert settings["pedal_favourites"] == [187, 51, 5]
     assert call(server, "/api/settings", {"pedal_favourites": [0]})[0] == 400

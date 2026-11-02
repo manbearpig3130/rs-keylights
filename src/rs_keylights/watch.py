@@ -85,7 +85,7 @@ SECONDS_PER_STEP = 1.0  # knob 8
 PICTURE_SHOWN, PICTURE_GAP = 3.0, 0.05
 ARRANGEMENT_KNOBS = 5  # knobs (and pad columns) 1 to 5: the arrangements (one after the 5th has none: songs seldom
 # have 6)
-GUITAR_COLUMN = 5  # knob 6 and the pads under it: the guitar (its pedal's presets, whether it's heard)
+GUITAR_COLUMN = 5  # knob 6 and the pads under it: the guitar (its pedal's presets, whether its tone's held)
 KEYS_COLUMN = 6  # knob 7 and the pads under it: its keys, a part of their own
 PEDAL_WAIT = 0.4  # seconds knob 6 rests on a preset before the pedal switches to it
 PEDAL_JUMP = 10  # presets a step of knob 8, while the pedal's on the screen
@@ -518,7 +518,7 @@ class Watch:
                 picture[(0, KEYS_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in KEYS_RGB))
             lit = (1.0 if keys.get("lights") else 0.15) if parts else 0.0
             picture[(1, KEYS_COLUMN)] = ("rgb", *(round(c * lit) for c in KEYS_RGB))
-            guitar = parts and not self.mix_knobs  # (the guitar: its pedal on a favourite or not, and heard or not)
+            guitar = parts and not self.mix_knobs  # (the guitar: its pedal on a favourite or not, its tone held or not)
             pedal = info.get("pedal") or {}
             if not guitar:
                 picture[(0, GUITAR_COLUMN)] = ("palette", 0, False)
@@ -526,8 +526,8 @@ class Watch:
                 picture[(0, GUITAR_COLUMN)] = ("palette", GUITAR_ON, False)
             else:
                 picture[(0, GUITAR_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in GUITAR_RGB))
-            heard = (1.0 if info.get("listen") else 0.15) if guitar else 0.0
-            picture[(1, GUITAR_COLUMN)] = ("rgb", *(round(c * heard) for c in GUITAR_RGB))
+            follows = (0.15 if pedal.get("hold") else 1.0) if guitar else 0.0  # (bright: it follows the song's tones)
+            picture[(1, GUITAR_COLUMN)] = ("rgb", *(round(c * follows) for c in GUITAR_RGB))
             if not parts:
                 self._playback_pads(picture, info)
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if info.get("sound") else SOUND_OFF, False)
@@ -726,7 +726,8 @@ class Watch:
 
     def _guitar_column(self, event: Pad | Turn, info: dict[str, Any], now: float) -> None:
         """Column 6, the guitar: knob 6 its pedal's presets, the top pad the next of its favourites (the first, on
-        none of them), the bottom one whether it's heard (its notes lighting the keys)."""
+        none of them), the bottom one whether the pedal switches with the song's tones (or keeps the tone it's on:
+        held)."""
         if isinstance(event, Turn):
             self._turn_pedal(event.steps, False, info, now)
         elif event.row == 0:
@@ -741,9 +742,10 @@ class Watch:
                 self._pending[("pedal", "slot")] = slot
                 self._show_for_a_while("pedal", now)
         else:
-            heard: list[bool] = []
-            if self._try(lambda: heard.append(self.gui.toggle_listen())):
-                self._said_by_pad(now, f"Guitar lights keys: {'on' if heard[0] else 'off'}")
+            held: list[bool] = []
+            hold = not (info.get("pedal") or {}).get("hold")
+            if self._try(lambda: held.append(self.gui.set_pedal({"hold": hold})["hold"])):
+                self._said_by_pad(now, "Pedal: holding this tone" if held[0] else "Pedal: following the song's tones")
 
     def _turn_pedal(self, steps: int, jump: bool, info: dict[str, Any], now: float) -> None:
         """Knob 6: the pedal's presets, one at a time (jump: knob 8, PEDAL_JUMP at a time; round from the last to

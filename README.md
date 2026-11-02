@@ -242,9 +242,11 @@ song playing, else the active one:
   all). While it shows, **knob 8** goes ten at a time, round from the last to the first. The **top pad**
   goes through your favourite presets (51 and 187 to start with; change them on the page's **Guitar pedal**
   card), the next each tap, the first when it's on none of them, bright while it's on one: from there,
-  knob 6 reaches the ones near it. The **bottom pad** turns the guitar lighting the keys on and off (the notes
-  you play lighting them, as the page's **Guitar** card; bright while it's on; "Guitar lights keys" on the
-  screen), as the bottom pads light keys.
+  knob 6 reaches the ones near it. The **bottom pad** keeps the pedal on the tone it's on, or lets it switch
+  with the song's tones again (bright while it follows them; "Pedal: holding this tone" on the screen): it
+  makes dnafx-preset's hold file, and the listener switches to the song's tone once it's let go. The page's
+  **Guitar pedal** card has it too ("Switch with the song's tones"); the guitar lighting the keys is on the
+  page's **Guitar** card.
 - **Its keys** (column 7, purple): they play the Casio on a part of their own (channel 1: no song's part or
   light uses it, and the Casio's own keys keep their tone), playing or following, a song or not. The top
   pad turns them on or off (off: dim), the bottom one whether they light the keys they play first (the Casio lights 4

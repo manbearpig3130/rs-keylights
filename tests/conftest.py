@@ -15,6 +15,7 @@ def no_real_pedal(monkeypatch, tmp_path):
     monkeypatch.setattr(pedal, "SIDEKICK_LOG", tmp_path / "sidekick-dnafx-preset.log")
     monkeypatch.setattr(pedal, "find_backup", lambda home=None: None)
     monkeypatch.setattr(pedal, "dnafx_switcher", lambda: switched.append)
+    monkeypatch.setattr(pedal, "HOLD_FILE", tmp_path / "dnafx-preset-hold")  # (not this Mac's listener's)
     return switched
 
 

@@ -25,6 +25,9 @@ SWITCHED = re.compile(rb"Switched to slot (\d+)")
 LOG_TAIL = 8192  # bytes of its log read, for the last switch
 SWITCH = (sys.executable, "-m", "dnafx_preset", "set")  # dnafx-preset switching it (the slot after)
 SWITCH_TIMEOUT = 3.0  # seconds it gets
+# While this file's there, dnafx-preset's listener keeps the tone as it is, not switching with the song's tones (its
+# --hold-file); once it's gone, it switches to the tone it held back
+HOLD_FILE = Path.home() / ".config" / "dnafx-preset" / "hold"
 
 
 class PedalError(RuntimeError):
@@ -97,10 +100,12 @@ def dnafx_switcher() -> Callable[[int], None]:
 class Pedal:
     """The pedal's presets: switch(slot) switches it (after a wait: the last one asked for, so turning through them
     switches to the one turned to), back() to the one it was on before. slot is the one it's on as far as it's
-    known: the last switched to, here or by dnafx-preset's listener (its log); None, not known."""
+    known: the last switched to, here or by dnafx-preset's listener (its log); None, not known. hold(True) keeps
+    the listener from switching it with the song's tones (held: whether it's keeping it)."""
 
     def __init__(self, switcher: Callable[[int], None] | None = None, backup: Path | None = None,
-                 log: Path | None = None, clock: Callable[[], float] = time.time) -> None:
+                 log: Path | None = None, clock: Callable[[], float] = time.time, hold_file: Path | None = None) -> None:
+        self._hold_file = hold_file or HOLD_FILE
         self._switcher = switcher or dnafx_switcher()
         self._log, self._clock = log or SIDEKICK_LOG, clock
         self._lock = threading.Lock()
@@ -142,6 +147,22 @@ class Pedal:
         with self._lock:
             self._notice()
             return self._previous
+
+    @property
+    def held(self) -> bool:
+        return self._hold_file.exists()
+
+    def hold(self, on: bool) -> bool:
+        """The listener keeping the tone as it is (on), or switching with the song's tones again; held now."""
+        try:
+            if on:
+                self._hold_file.parent.mkdir(parents=True, exist_ok=True)
+                self._hold_file.touch()
+            else:
+                self._hold_file.unlink(missing_ok=True)
+        except OSError as exc:
+            raise PedalError(f"Can't {'hold' if on else 'release'} the pedal's tone: {exc}") from exc
+        return self.held
 
     def switch(self, slot: int, wait: float = 0.0) -> int:
         """Switches to a slot (1 to SLOTS) once wait is up, if no other's asked for by then; the slot."""

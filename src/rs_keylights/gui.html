@@ -343,14 +343,16 @@
     <div class="card" id="pedalCard">
       <h3>Guitar pedal</h3>
       <div class="muted small">A Harley Benton DNAfx GiT's presets, switched over its USB cable (with dnafx-preset). On
-        the Launchkey, knob 6 steps through them (knob 8 ten at a time while one shows), and the pad under it goes
-        through your favourites.</div>
+        the Launchkey, knob 6 steps through them (knob 8 ten at a time while one shows), the pad under it goes
+        through your favourites, and the bottom pad keeps the tone you're on (lit: it follows the song's).</div>
       <div class="row stepper">
         <button type="button" id="pedalDown" title="The preset before">‹</button>
         <select id="pedalSlot"></select>
         <button type="button" id="pedalUp" title="The next preset">›</button>
         <button type="button" id="pedalBack" title="Back to the preset it was on before">Back</button>
       </div>
+      <div class="row"><label title="As the song switches tone, dnafx-preset switches the pedal to its preset for it; off, it keeps the one it's on (back on: it goes to the song's tone)">
+        <input type="checkbox" id="pedalFollows"> Switch with the song's tones</label></div>
       <div class="row"><label title="The presets the Launchkey's pad above the guitar's goes through, in turn (the first, on none of them)">Favourites
         <input id="pedalFavourites" placeholder="51, 187"></label></div>
       <div class="row"><label title="A backup the DNAfx editor saved, for the presets' names (empty: the newest in Music, Documents, Desktop or Downloads)">Names from
@@ -2017,6 +2019,7 @@ function showListening(l) {
 // The guitar's pedal: the preset it's on (as far as it's known), and the one Back goes to (or why it can't switch)
 function showPedal(p) {
   if (!p) return;
+  $("pedalFollows").checked = !p.hold;
   const select = $("pedalSlot");
   if (select !== document.activeElement) select.value = p.slot == null ? "" : String(p.slot);
   $("pedalStatus").textContent = p.error ? `Can't switch it: ${p.error}` :
@@ -2082,6 +2085,7 @@ $("pedalSlot").addEventListener("change", () => {
 $("pedalDown").addEventListener("click", () => act(() => api("/api/pedal", {step: -1})));
 $("pedalUp").addEventListener("click", () => act(() => api("/api/pedal", {step: 1})));
 $("pedalBack").addEventListener("click", () => act(() => api("/api/pedal", {back: true})));
+$("pedalFollows").addEventListener("change", () => act(async () => showPedal(await api("/api/pedal", {hold: !$("pedalFollows").checked}))));
 $("pedalFavourites").addEventListener("change", () => act(async () => {
   const favourites = $("pedalFavourites").value.split(/[\s,]+/).filter((t) => t).map(Number);
   const s = await api("/api/settings", {pedal_favourites: favourites});
