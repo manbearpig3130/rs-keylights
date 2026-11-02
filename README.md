@@ -174,10 +174,11 @@ the commands do:
   decay does the rest. **Keyboard** › Sound turns it off (each note as long as its key is lit), playing and
   following at once.
 - **The header**: the song's time slider (where it is, moved while it plays; else where it starts) and its
-  speed (25% to 150%), Play (Pause while it plays, Resume while it's paused), Stop, Mute 🔊 (the sound on the
-  keyboard, playing or following: muted 🔇, just the lights), full screen ⛶, ⚙ to fold the settings column
-  away (the middle gets its room) or bring it back, and **Follow Rocksmith**.
-- **The song** in the middle: its art, title, artist, key and scale, and a line for each arrangement (lit
+  speed (25% to 150%), ▶ (❚❚ while it plays; ▶ again resumes), ■, Mute 🔊 (the sound on the keyboard,
+  playing or following: muted 🔇, just the lights), **Follow Rocksmith** (red while following), ⚙ to fold the
+  settings column away (the middle gets its room) or bring it back, and full screen ⛶. They keep their
+  widths, so nothing moves as they change.
+- **The song** in the middle: its art, title and artist, its key and scale in the top right, and a line for each arrangement (lit
   keys, volume, mute); its **Tones** button opens its tones (folded away at first, as during a song: the
   Launchkey has them). The fretboard under it shows what it lights; its legend shows as the mouse is on it.
 - **The settings column**: each card folds into its title (the setup ones folded at first; remembered).

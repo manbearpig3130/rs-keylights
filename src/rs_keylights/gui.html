@@ -102,7 +102,7 @@
   body.side-hidden #side { display: none; }
   body.side-hidden main { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
   @media (max-width: 1100px) { body.side-hidden main { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); } }
-  header .icon { padding: 3px 9px; font-size: 17px; line-height: 1.3; }
+  header .icon { padding: 3px 0; width: 42px; font-size: 17px; line-height: 1.3; text-align: center; }
   .lit { display: inline-flex; align-items: center; gap: 4px; }
   .lit button { padding: 2px 9px; }
   .lit b { min-width: 1.3em; text-align: center; }
@@ -171,7 +171,9 @@
   .tonebox.inherited .name { color: var(--muted); font-style: italic; }  /* the default, not chosen here */
   .tonebox select { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; opacity: 0; cursor: pointer; }
   .phone-link { user-select: all; word-break: break-all; }
-  .keyline { margin: 8px 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+  .keyline { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+  .keyline > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 8px; align-items: center; }
+  #songKey { flex: none; max-width: 48%; margin-left: auto; }
   .keyline .notes { letter-spacing: .03em; }
   .keyline button { padding: 3px 9px; font-size: 12px; }
   #messages { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; color: var(--muted); max-height: 180px; overflow-y: auto; }
@@ -233,12 +235,12 @@
     <span id="len" class="time">0:00</span>
     <select id="speed" aria-label="Speed" title="Speed (following: the game's)"></select>
   </div>
-  <button id="playBtn" class="primary" disabled>▶ Play</button>
-  <button id="stopBtn" disabled>■ Stop</button>
+  <button id="playBtn" class="primary icon" title="Play" disabled>▶</button>
+  <button id="stopBtn" class="icon" title="Stop" disabled>■</button>
   <button id="muteBtn" class="icon" title="The sound on the keyboard, playing or following (muted: just the lights)">🔊</button>
-  <button id="fullBtn" class="icon" title="Full screen (Esc: back)">⛶</button>
+  <button id="followBtn" title="Follow Rocksmith: light the keys along with the song the game plays (red while it does)">Follow Rocksmith</button>
   <button id="sideBtn" class="icon" title="The settings column: hide it (the middle gets its room) or show it">⚙</button>
-  <button id="followBtn" class="primary" title="Follow Rocksmith: light the keys along with the song the game plays">Follow Rocksmith</button>
+  <button id="fullBtn" class="icon" title="Full screen (Esc: back)">⛶</button>
 </header>
 
 <main>
@@ -260,8 +262,8 @@
         <div class="song-lines">
           <h2><span id="title"></span><span id="activeBadge" class="badge" hidden>● active</span></h2>
           <div><span id="artist"></span> <span id="file" class="muted"></span></div>
-          <div id="songKey"></div>
         </div>
+        <div id="songKey"></div>
       </div>
       <div id="parts"></div>
       <div id="lightsNote" class="note" hidden></div>
@@ -505,12 +507,16 @@ function keyLine(key, song) {
   const line = document.createElement("div");
   line.className = "keyline";
   if (!key) return line;
+  // (two lines in the song card's top right: the key and its button, then its scale and the rest)
   const dot = '<span class="muted">·</span>';
-  const parts = [`Key: <b>${esc(key.name)}</b>`, `<span class="notes">${esc(key.notes.join(" "))}</span>`];
+  const name = document.createElement("div"), scale = document.createElement("div");
+  name.innerHTML = `<span>Key: <b>${esc(key.name)}</b></span>`;
+  const parts = [`<span class="notes">${esc(key.notes.join(" "))}</span>`];
   if (key.other_notes.length) parts.push(`<span class="muted">also ${esc(key.other_notes.join(" "))}</span>`);
   if (key.played_as) parts.push(`<span class="muted">played as ${esc(key.played_as)}</span>`);
   if (key.alternative) parts.push(`<span class="muted">or ${esc(key.alternative)}</span>`);
-  line.innerHTML = parts.join(dot);
+  scale.innerHTML = parts.join(dot);
+  line.append(name, scale);
   const show = document.createElement("button");
   show.type = "button";
   show.className = "scaleBtn";
@@ -518,7 +524,7 @@ function keyLine(key, song) {
   show.title = "Its scale climbs the keys and back, over and over, until a key is pressed or a song needs them";
   show.addEventListener("click", () => act(() => state.showing ? api("/api/scale/stop", {}) :
     api("/api/scale", song ? {song: song} : {})));
-  line.appendChild(show);
+  name.appendChild(show);
   return line;
 }
 
@@ -1343,7 +1349,8 @@ function updateButtons() {
   const here = playingThis();
   const pausing = here && state.mode === "playing";  // one button: plays, pauses and goes on
   $("playBtn").disabled = state.mode === "following" || (!pausing && (!selected || !playable));
-  $("playBtn").textContent = pausing ? "❚❚ Pause" : here && state.mode === "paused" ? "▶ Resume" : "▶ Play";
+  $("playBtn").textContent = pausing ? "❚❚" : "▶";
+  $("playBtn").title = pausing ? "Pause" : here && state.mode === "paused" ? "Resume" : "Play";
   $("stopBtn").disabled = state.mode === "idle";
   $("muteBtn").classList.toggle("on", state.sound === false);
   $("muteBtn").textContent = state.sound === false ? "🔇" : "🔊";
@@ -1448,8 +1455,9 @@ function showState(st) {
   $("launchkeyStatus").textContent = st.launchkey === null ? "" :
     st.launchkey === "not found" ? "· none connected" : st.launchkey === "off" ? "" : `· ${st.launchkey.replace(/ DAW In$/, "")}`;
   const following = st.mode === "following";
-  $("followBtn").textContent = following ? "Stop following" : "Follow Rocksmith";
-  $("followBtn").className = following ? "" : "primary";
+  $("followBtn").classList.toggle("primary", following);  // (red while following: its text stays)
+  $("followBtn").title = following ? "Following Rocksmith: stop" :
+    "Follow Rocksmith: light the keys along with the song the game plays (red while it does)";
   const f = st.follow || {};
   $("followNow").innerHTML = following && f.song ?
     `<span class="on-air">●</span> ${esc(f.song)}${f.position != null ? " · " + fmt(f.position) : " · paused"}` : "";
