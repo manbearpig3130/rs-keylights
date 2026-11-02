@@ -813,7 +813,8 @@ function renderLibrary() {
     li.classList.toggle("selected", !!selected && selected.id === s.id);
     li.classList.toggle("active", s.id === markedId());
     li.addEventListener("click", () => {
-      if (state.mode === "following") toast("Following Rocksmith: the song it plays shows here");
+      if (state.mode === "following" && state.game_list) act(() => api("/api/game/focus", {song: s.id}));
+      else if (state.mode === "following") toast("Following Rocksmith: the song it plays shows here");
       else act(() => selectSong(s.id));
     });
     rows.set(s.id, li);

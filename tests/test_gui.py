@@ -538,7 +538,17 @@ def test_following_on_the_games_song_list_a_remote_goes_through_it_and_the_libra
     assert gui.browse_letter(-1)["song"] == "The Pursuit"  # knob 8: a letter back, by the library's artists
     # ("Band": B; ghost: G; Alpha Band: A)
     assert gui.browse_letter(-1)["song"] == "ghost" and game.sent[-1] == ("focus", "ghost")
+    assert call(server, "/api/state")[1]["game_list"] is True  # (the page: a song clicked is highlighted there)
+    zulu = next(song["id"] for song in gui.library()["songs"] if song["song"] == "Zulu Song")
+    status, moved = call(server, "/api/game/focus", {"song": zulu})
+    assert status == 200 and moved["song"] == "Zulu Song" and game.sent[-1] == ("focus", "zulu")
+    assert gui.state()["browse"]["song"] == zulu
+    game.song_list, game.highlighted = ["alpha", "song"], 0  # (filtered: zulu isn't in it)
+    time.sleep(GAME_SONGS_EVERY)
+    with pytest.raises(ValueError, match="hasn't this song"):
+        gui.game_focus({"song": zulu})
     assert gui.toggle_follow() is False and gui.game_songs() is None
+    assert call(server, "/api/state")[1]["game_list"] is False
 
 
 def test_switching_songs_and_going_through_the_library(server, tmp_path):

@@ -669,6 +669,22 @@ class Gui:
             return None  # (a remote's move, or on its way there)
         return self._browse_game(float(said.row), said.count, said.key)
 
+    def game_focus(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Following, on the game's song list: a song of the library ("song": its id) highlighted there (as a
+        remote's moves are), the library's place on it; the song, as browse_move has it."""
+        said = self.game_songs()
+        if said is None:
+            raise GuiError("Rocksmith's song list isn't showing (following, Learn a Song)")
+        key = str(body.get("song", "")).split("#", 1)[-1]
+        keys = self._game_song_keys(said.count)
+        if key not in keys:
+            raise GuiError("Rocksmith's song list hasn't this song (filtered out, or not in the game)")
+        row = float(keys.index(key))
+        moved = self._game_move(said, lambda _start, _keys: row)
+        if moved is None:
+            raise GuiError("Rocksmith didn't answer")
+        return moved
+
     def _game_song_keys(self, count: int) -> list[str]:
         """The song list's keys in its order (asked again when it has another number of rows)."""
         if len(self._game_keys) != count:
@@ -1898,6 +1914,7 @@ class Gui:
     # State and settings
 
     def state(self) -> dict[str, Any]:
+        game_list = self.game_songs() is not None  # (asked first: not while it's locked)
         with self._lock:
             session = self._session
             out: dict[str, Any] = {"mode": "idle", "sound": not self.play_options["silent"],
@@ -1906,6 +1923,7 @@ class Gui:
                                    "follow_version": self.follow_version, "play_version": self.play_version,
                                    "showing": self.showing(), "active": self.play_options.get("song"),
                                    "browse": self._browse_state(), "remote": self._remote_state(),
+                                   "game_list": game_list,
                                    "keys": self.keys_info(), "loop": self.loop_info(None),
                                    "listening": self.listening(), "pedal": self.pedal_info(),
                                    "launchkey": self._watch.status if self._watch is not None else None}
@@ -2444,6 +2462,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/play/options": lambda: gui.set_play_options(body),
             "/api/song/settings": lambda: gui.set_song(body),
             "/api/switch": lambda: gui.switch(body),
+            "/api/game/focus": lambda: gui.game_focus(body),
             "/api/stop": gui.stop,
             "/api/follow": lambda: gui.follow(body),
             "/api/follow/settings": lambda: gui.set_follow(body),
