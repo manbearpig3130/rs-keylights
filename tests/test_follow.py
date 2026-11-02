@@ -300,9 +300,9 @@ def test_other_arrangements_play_along_and_can_change_while_the_song_plays():
     f.set_parts(choice.voices, f._parts_for)
     assert messages[-1] == ("Artist - Song (Lead): Lead lighting 2 keys, tone 178 SAW LEAD 1; "
                             "Bass lighting 2 keys, tone 178 SAW LEAD 1")
-    assert (14, 81, 2) in keys.voices
+    assert (12, 81, 2) in keys.voices
     f.step(0.05)
-    assert keys.lit == {60, 40} and sorted(keys.played[1:]) == [(11, (60,), 100), (14, (40,), 100)]
+    assert keys.lit == {60, 40} and sorted(keys.played[1:]) == [(11, (60,), 100), (12, (40,), 100)]
 
     del chosen["ID1"]  # just the bass, and its notes aren't read again
     f.set_parts(choice.voices, f._parts_for)

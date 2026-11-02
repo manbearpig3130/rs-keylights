@@ -20,7 +20,7 @@ from .player import play
 from .psarc import ArchiveError
 from .parts import Part, plan, player_for
 from .sng import SngError, note_name
-from .sound import BASS_TONE, CHANNEL_SETS, DEFAULT_SPLIT, GUITAR_TONE, SoundChoice, parse_note
+from .sound import BASS_TONE, DEFAULT_SPLIT, GUITAR_TONE, KEYBOARD_CHANNELS, SoundChoice, parse_note
 from .tones import TONES, Tone, find_tones, tone
 
 GAME_DIR_ENV = "RS_KEYLIGHTS_GAME_DIR"
@@ -460,9 +460,6 @@ def run_play(args: argparse.Namespace) -> int:
         if ref not in chosen:
             chosen.append(ref)
     names = [ref.part for ref in chosen]
-    if len(chosen) > len(CHANNEL_SETS):
-        print(f"rs-keylights: {len(CHANNEL_SETS)} parts at most", file=sys.stderr)
-        return 1
     unknown = sorted(choice.parts - set(names) - {ref.name.lower() for ref in chosen})
     if unknown:
         print(f"rs-keylights: {unknown[0]}= is not one of the parts playing ({', '.join(names)})", file=sys.stderr)
@@ -470,13 +467,16 @@ def run_play(args: argparse.Namespace) -> int:
     counts = lights_for(args.lights, names)
     if counts is None:
         return 1
-    used = [c for channels in CHANNEL_SETS[: len(chosen)] for c in channels]
-    if not args.silent and args.channel in used:
+    if not args.silent and args.channel in KEYBOARD_CHANNELS:
         print(f"rs-keylights: channel {args.channel} is for the sound of these parts; light another one", file=sys.stderr)
         return 1
 
     parts = [Part(ref, ref.load(), counts.get(ref.part, 0)) for ref in chosen]
-    planned = plan(parts, None if args.silent else choice.voices)
+    try:
+        planned = plan(parts, None if args.silent else choice.voices)
+    except ValueError as exc:
+        print(f"rs-keylights: {exc}", file=sys.stderr)
+        return 1
     print(chosen[0].title)
     for p in planned:
         lit = p.part.lights

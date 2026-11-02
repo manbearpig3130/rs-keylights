@@ -30,7 +30,7 @@ from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, Ke
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
-from .parts import Part, PlannedPart, VoicesFor, plan, player_for
+from .parts import CHANNELS_USED_UP, Part, PlannedPart, VoicesFor, channels_needed, plan, player_for
 from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
@@ -40,7 +40,7 @@ from .sng import BASS, GUITAR, Arrangement, Chord, Note, Section, note_name
 from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tones, tone_kind
 from .keyshow import KeyShow
 from .songkey import Key, find_key, scale_show, shapes, tuning_name
-from .sound import CHANNEL_SETS, SoundChoice, Voice, Voices, parse_note
+from .sound import KEYBOARD_CHANNELS, SoundChoice, Voice, Voices, parse_note
 from .tones import TONES, Tone, tone
 from .watch import Watch
 
@@ -563,14 +563,22 @@ class Gui:
                     others = sum(p["lights"] for n, p in parts.items() if p["play"] and n != name)
                     parts[name]["lights"] = min(parts[name]["lights"], max(0, 4 - others))
             on = [p for p in parts.values() if p["play"]]
-            if len(on) > len(CHANNEL_SETS):
-                raise GuiError(f"{len(CHANNEL_SETS)} parts at most")
             if sum(p["lights"] for p in on) > 4:
                 raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
             kept = dict(self.song_settings.get(sid, {}), parts=parts)
             if "start" in body:
                 kept["start"] = _number(body["start"], "start", 0, 24 * 3600)
+            was = self.song_settings.get(sid)
             self.song_settings[sid] = kept
+            if len(on) > 1:  # (the parts' sounds fit the keyboard's channels: else as it was)
+                try:
+                    self._plan(sid)
+                except ValueError as exc:
+                    if was is None:
+                        del self.song_settings[sid]
+                    else:
+                        self.song_settings[sid] = was
+                    raise GuiError(str(exc)) from exc
             self.play_version += 1
             self._save_songs()
             if any(field != "start" for field in body if field != "song"):
@@ -599,20 +607,19 @@ class Gui:
         keyboard, or the other MIDI device it sounds on."""
         session = self._session
         if isinstance(session, Playback) and session.running and self._playing:
-            sounding = [(p["slot"], CHANNEL_SETS[i], track.voices)
-                        for i, (p, track) in enumerate(zip(self._playing["parts"], session.player.tracks))]
+            sounding = [(p["slot"], track.voices) for p, track in zip(self._playing["parts"], session.player.tracks)]
         elif isinstance(session, Following) and session.running:
-            sounding = [(self._slot(ref), channels, planned.voices)
-                        for (ref, channels), planned in zip(session.follower.sounding(), session.follower.planned)]
+            sounding = [(self._slot(ref), planned.voices)
+                        for (ref, _channels), planned in zip(session.follower.sounding(), session.follower.planned)]
         else:
             return
-        for place, channels, voices in sounding:
-            if place != slot:
+        for place, voices in sounding:
+            if place != slot or not isinstance(voices, Voices):
                 continue
-            if isinstance(voices, Voices) and voices.output is not None:
+            if voices.output is not None:
                 voices.output.set_volume(voices.main.channel, volume)
             else:
-                for channel in channels:
+                for channel in {v.channel for v in (voices.main, voices.low, voices.mute) if v is not None}:
                     session.keyboard.set_volume(channel, volume)
 
     def _slot(self, ref: ArrangementRef) -> int:
@@ -1108,10 +1115,18 @@ class Gui:
                             settings = changed_follow(settings, {"parts": {played_id: {arrangement_id: {
                                 "lights": max(0, 4 - others)}}}})
                 on = [lights for _r, play, lights in parts_chosen(settings, played, refs) if play]
-                if len(on) > len(CHANNEL_SETS):
-                    raise GuiError(f"{len(CHANNEL_SETS)} parts at most")
                 if sum(on) > 4:
                     raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
+            was, self.follow_settings = self.follow_settings, settings
+            voices_for = self._follow_voices()  # (the parts' sounds fit the keyboard's channels: else as it was)
+            for played_id in (body.get("parts") or {}) if voices_for else ():
+                played = self.index.find(played_id)
+                refs = self._song_refs(played) if played is not None else []
+                needed = sum(channels_needed(voices_for(r, (0, 0, 0)))
+                             for r, play, _lights in parts_chosen(settings, played, refs) if play) if played else 0
+                if needed > len(KEYBOARD_CHANNELS):
+                    self.follow_settings = was
+                    raise GuiError(CHANNELS_USED_UP)
             self.follow_settings, self._follow_saved = settings, True
             self.follow_version += 1
             self._save()
@@ -1813,7 +1828,7 @@ class Gui:
 
     def _check_sound_channel(self) -> None:
         channel = int(self.settings["channel"])
-        if channel in [c for channels in CHANNEL_SETS for c in channels]:
+        if channel in KEYBOARD_CHANNELS:
             raise GuiError(f"The lights' channel ({channel}) is one the sound plays on: choose another in Keyboard")
 
     # A remote's keys (the Launchkey's), played on the keyboard

@@ -45,8 +45,9 @@ runs only read new or changed archives. The game folder is RS Re-ARMed's, unless
 ```
 
 `play` takes a `.psarc` file, or part of a song's name, artist or file name. With no part it plays
-the lead, else the rhythm, else the bass. Name more parts to play them together (up to four), each on
-channels of its own. The keyboard lights 4 keys at most in all (on both navigate channels together), so
+the lead, else the rhythm, else the bass. Name more parts to play them together, each on
+channels of its own: as many as its voices need (one, and one more each for palm mutes and low notes with tones
+of their own), from the keyboard's 12 (none for a part on another MIDI device), so five or more fit. The keyboard lights 4 keys at most in all (on both navigate channels together), so
 by default only the first part lights them; `--lights lead=2,rhythm=2` shares them (each part's lowest
 notes), `--lights lead,rhythm` shares them evenly, `--lights rhythm` lights another part, and
 `--lights none` none. Lit parts share an octave shift so their keys line up, and a key two parts hold
@@ -126,7 +127,9 @@ the commands do:
   tone, palm-mute tone, low tone and split note (from the keyboard's tone list). Until you change them, every
   part plays and lights a key, the keys left over going to the lead and rhythm parts (lead, rhythm and
   bass: 2, 1 and 1; lead and bass: 3 and 1). A song with more than 4 parts starts with its first lead,
-  rhythm and bass.
+  rhythm and bass; the others can play too, each taking the keyboard's channels its tones need (12 in all:
+  one a part, and one more each for palm-mute and low-note tones of their own; none for a part on another
+  MIDI device). Too many, and it says so.
 - **Tone changes**: when a song switches tone (as the game does: its arrangements have up to four tones,
   named and with their gear), the part switches with it, to the keyboard tone for that kind of tone (clean,
   drive, distortion, lead, acoustic, piano, organ, synth, the bass kinds…; from the tone's name, else its

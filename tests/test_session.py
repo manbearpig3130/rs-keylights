@@ -1,4 +1,7 @@
 import time
+from dataclasses import replace
+
+import pytest
 
 from builders import N, Song, song_archive
 
@@ -47,8 +50,34 @@ def test_plan_shares_the_lit_parts_shift_and_gives_each_part_its_channels(tmp_pa
     planned = plan(parts, choice.voices)
     assert planned[0].shift == planned[1].shift == 12
     assert [v.channel for v in planned[0].voices.all()] == [11]
-    assert planned[1].voices.main.channel == 14 and planned[1].voices.main.tone.number == 79
+    assert planned[1].voices.main.channel == 12 and planned[1].voices.main.tone.number == 79  # (the next free)
+    assert planned[0].channels == (11,) and planned[1].channels == (12,)
     assert plan(parts, None)[0].voices is None
+
+
+def test_plan_gives_each_part_the_channels_its_voices_need_so_five_or_more_can_play(tmp_path):
+    path = tmp_path / "a_m.psarc"
+    song = Song(levels={0: [N(1.0, string=0, fret=3)]})
+    names = ("lead", "rhythm", "bass", "combo", "lead2")
+    path.write_bytes(song_archive("a", {name: (name[0].upper() + name[-1], song) for name in names}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    parts = [Part(refs[name], refs[name].load(), 0) for name in refs]
+    assert len(parts) == 5
+    mutes = SoundChoice({}, {}, {None: tone(295)}, {}, False)  # (a palm-mute tone each: two channels a part)
+    planned = plan(parts, mutes.voices)
+    assert [p.channels for p in planned] == [(11, 12), (13, 14), (15, 16), (5, 6), (7, 8)]
+    assert [(p.voices.main.channel, p.voices.mute.channel) for p in planned] == [(11, 12), (13, 14), (15, 16), (5, 6),
+                                                                                  (7, 8)]
+    lows = SoundChoice({}, {None: tone(33)}, {None: tone(295)}, {}, False)  # (three a part: 12 for four)
+    with pytest.raises(ValueError, match="channels are used up"):
+        plan(parts, lows.voices)
+    unfit = plan(parts, lows.voices, strict=False)  # (following: the last one just lights its keys)
+    assert [p.channels for p in unfit][3:] == [(8, 9, 2), ()] and unfit[4].voices is None
+
+    def elsewhere(ref, channels):  # (one on another MIDI device takes none of them)
+        voices = lows.voices(ref, channels)
+        return replace(voices, output=object()) if ref.part == "bass" else voices
+    assert [p.channels for p in plan(parts, elsewhere)][2:] == [(), (5, 6, 7), (8, 9, 2)]  # (all five play)
 
 
 def test_playback_position_pause_seek_and_speed():

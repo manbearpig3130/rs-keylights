@@ -15,9 +15,11 @@ from .tones import Tone, tone
 # and each note sounds on a channel of its own kind, each with its tone: palm-muted notes, notes below
 # a split point, and the rest. The keyboard plays all 16 channels at once.
 
-# (main, low, mute) for each part played at once: clear of the navigate channels (3, 4), the keyboard's
-# own part (1) and the drums (10)
-CHANNEL_SETS = ((11, 12, 13), (14, 15, 16), (5, 6, 7), (8, 9, 2))
+# The channels the parts sound on: clear of the navigate channels (3, 4), the keyboard's own part (1) and the drums
+# (10). Each part on the keyboard takes as many as its voices need, in turn (parts.plan): its main voice, and its
+# palm mutes and low notes if they have tones of their own; one on another MIDI device takes none
+KEYBOARD_CHANNELS = (11, 12, 13, 14, 15, 16, 5, 6, 7, 8, 9, 2)
+CHANNEL_SETS = ((11, 12, 13), (14, 15, 16), (5, 6, 7), (8, 9, 2))  # (main, low, mute) each (the first: a part's own)
 VELOCITY, ACCENT_VELOCITY = 100, 127
 LEGATO_VELOCITY, DEAD_VELOCITY = 75, 50  # hammer-ons, pull-offs and a slide's steps; dead notes (techniques)
 DEFAULT_SPLIT = 40  # E2, a guitar's lowest note in standard tuning

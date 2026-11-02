@@ -15,7 +15,6 @@ from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .parts import Part, PlannedPart, VoicesFor, plan, player_for
 from .player import Player
 from .sng import Arrangement, note_name
-from .sound import CHANNEL_SETS
 from .tones import Tone
 
 # Follows the song Rocksmith plays through RS Companion's stream overlay API (RockSniffer's API,
@@ -275,9 +274,9 @@ class Follower:
         """The parts playing, as planned (their voices too)."""
         return list(self._planned)
 
-    def sounding(self) -> list[tuple[ArrangementRef, tuple[int, int, int]]]:
-        """The arrangements played, and the channels each sounds on."""
-        return [(planned.part.ref, CHANNEL_SETS[i]) for i, planned in enumerate(self._planned)]
+    def sounding(self) -> list[tuple[ArrangementRef, tuple[int, ...]]]:
+        """The arrangements played, and the keyboard's channels each sounds on."""
+        return [(planned.part.ref, planned.channels) for planned in self._planned]
 
     @property
     def connected(self) -> bool | None:
@@ -400,7 +399,7 @@ class Follower:
         """The parts to play while this arrangement is played, read when first needed."""
         chosen = self._parts_for(current) if self._parts_for else [(current, 4)]
         parts = []
-        for ref, lights in list(chosen)[: len(CHANNEL_SETS)]:
+        for ref, lights in chosen:
             arrangement = self._loaded.get(ref.persistent_id)
             if arrangement is None:
                 try:
@@ -409,7 +408,7 @@ class Follower:
                     self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
                     continue
             parts.append(Part(ref, arrangement, lights))
-        return plan(parts, self._voices_for)
+        return plan(parts, self._voices_for, strict=False)  # (one that doesn't fit the keyboard's channels: just lit)
 
     def _player_with(self, planned: list[PlannedPart]) -> Player:
         self._planned = planned

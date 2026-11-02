@@ -11,7 +11,7 @@ from .library import ArrangementRef
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, techniques
 from .player import Player, Track
 from .sng import Arrangement
-from .sound import CHANNEL_SETS, Voices
+from .sound import KEYBOARD_CHANNELS, Voices
 
 # The parts of a song played together, as play, the page and following make them: each part's lights
 # and voices, and one player for them all.
@@ -32,22 +32,45 @@ class PlannedPart:
     shift: int  # octaves (in semitones) its lit keys are moved up
     lights: list[Light]
     voices: Voices | None
+    channels: tuple[int, ...] = ()  # the keyboard's channels it sounds on (none: silent, or another MIDI device)
 
 
-def plan(parts: Sequence[Part], voices_for: VoicesFor | None) -> list[PlannedPart]:
-    """Lights and voices for each part. The lit parts share an octave shift, so their keys line up; each
-    part sounds on channels of its own (CHANNEL_SETS, in order)."""
-    if len(parts) > len(CHANNEL_SETS):
-        raise ValueError(f"{len(CHANNEL_SETS)} parts at most")
+def channels_needed(voices: Voices) -> int:
+    """The keyboard's channels a part's voices take: its main voice, and its palm mutes and low notes if they have
+    tones of their own; on another MIDI device, none."""
+    return 0 if voices.output is not None else 1 + (voices.low is not None) + (voices.mute is not None)
+
+
+CHANNELS_USED_UP = (f"The keyboard's {len(KEYBOARD_CHANNELS)} channels are used up: play fewer parts on it, give "
+                    "fewer palm-mute and low-note tones of their own, or move one to another MIDI device")
+
+
+def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True) -> list[PlannedPart]:
+    """Lights and voices for each part. The lit parts share an octave shift, so their keys line up; each part on
+    the keyboard sounds on channels of its own, as many as its voices need, in turn from KEYBOARD_CHANNELS (one
+    on another MIDI device, none). Too many for them: a ValueError (strict), else the parts that don't fit just
+    light their keys."""
     full = KeyRange()
     lit_shift = full.octave_shift([n for p in parts if p.lights for n in p.arrangement.notes])
+    free = list(KEYBOARD_CHANNELS)
     planned = []
-    for i, part in enumerate(parts):
+    for part in parts:
         shift = lit_shift if part.lights else full.octave_shift(part.arrangement.notes)
-        voices = voices_for(part.ref, CHANNEL_SETS[i]).for_arrangement(shift) if voices_for else None
+        voices, channels = None, ()
+        if voices_for:
+            wanted = voices_for(part.ref, (0, 0, 0))  # (its voices: which it has)
+            need = channels_needed(wanted)
+            if need > len(free) and strict:
+                raise ValueError(CHANNELS_USED_UP)
+            if need <= len(free):
+                channels, free = tuple(free[:need]), free[need:]
+                main = channels[0] if channels else 0
+                low = channels[1] if wanted.low is not None and channels else main
+                mute = channels[-1] if wanted.mute is not None and channels else main
+                voices = voices_for(part.ref, (main, low, mute)).for_arrangement(shift)
         lights = schedule(part.arrangement.notes, KeyRange(max_lit=part.lights or 4), shift, part.arrangement.shapes,
                           voices.overlap if voices is not None else 0.0)
-        planned.append(PlannedPart(part, shift, lights, voices))
+        planned.append(PlannedPart(part, shift, lights, voices, channels))
     return planned
 
 

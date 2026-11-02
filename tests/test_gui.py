@@ -160,7 +160,8 @@ def test_play_pause_seek_resume_stop(server):
     _, state = call(server, "/api/stop", {})
     assert state["mode"] == "idle"
     sent = server.outs[0].sent
-    assert [0xCA, 81] in sent and [0xCF, 28] in sent  # the tones, on the parts' channels (11, then 14-16)
+    assert [0xCA, 81] in sent and [0xCC, 28] in sent  # the tones, on the parts' channels (11; then 12, its palm
+    # mutes 13: as many as each one's voices need)
     assert sent[-1] == [0xB3, 7, 100]  # closed: the lights' channel back to normal
 
 
@@ -227,6 +228,21 @@ def test_a_songs_choices_are_kept_on_the_mac_for_every_page(server, tmp_path):
     assert again.play_options_info()["speed"] == 0.5 and again.play_options_info()["song"] == sid
 
 
+def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_take(server, tmp_path):
+    names = ("lead", "rhythm", "bass", "combo", "lead2")
+    (tmp_path / "game" / "dlc" / "five_m.psarc").write_bytes(song_archive(
+        "five", {name: (name[0].upper() + name[-1], Song(levels={0: [N(1.0)]})) for name in names},
+        song="Down in a Hole", artist="A Band"))
+    server.gui.index.refresh()
+    server.gui._library = None
+    sid = next(song["id"] for song in call(server, "/api/library")[1]["songs"] if song["song"] == "Down in a Hole")
+    status, _ = call(server, "/api/song/settings", {"song": sid, "parts": {name: {"play": True} for name in names}})
+    assert status == 200 and len(call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["parts"]) == 5
+    status, said = call(server, "/api/song/settings", {"song": sid, "parts": {  # three channels each: 15 of 12
+        name: {"low_tone": 33, "mute_tone": 29, "split": "E2"} for name in names}})
+    assert status == 400 and "channels are used up" in said["error"]
+
+
 def test_changes_while_playing_apply_where_the_song_is(server):
     sid = first_song(server)
     call(server, "/api/play", {"song": sid, "start": 10})
@@ -238,7 +254,7 @@ def test_changes_while_playing_apply_where_the_song_is(server):
     assert status == 200 and state["mode"] == "paused" and 10 <= state["position"] < 10.5
     assert state["play_version"] > version  # other pages know to show it again
     assert sounds(server) == ["tone 178 SAW LEAD 1", "tone 079 DISTORTION GT, palm mutes 077 MUTE GUITAR"]
-    assert [0xCA, 81] in server.outs[-1].sent and [0xCF, 28] in server.outs[-1].sent  # the new tones, at once
+    assert [0xCA, 81] in server.outs[-1].sent and [0xCC, 28] in server.outs[-1].sent  # the new tones, at once
     assert len(server.outs) == 1  # the same keyboard: nothing stopped
     assert call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 5}}})[0] == 400
     assert call(server, "/api/state")[1]["song"]["parts"][0]["lights"] == 2  # unchanged
@@ -366,7 +382,8 @@ def test_other_arrangements_play_along_while_following(server, tmp_path):
 
     _, info = call(server, "/api/follow/settings", {"arrangements": {"R": {"tone": 178}}, "parts": {"L": {"R": {"play": True}}}})
     assert parts(info) == [("L", True, 4), ("R", True, 0)]
-    assert [0xCD, 81] in server.outs[-1].sent  # the rhythm's tone, on the second part's channel (14)
+    assert [0xCB, 81] in server.outs[-1].sent  # the rhythm's tone, on the second part's channel (12: the lead's one
+    # channel before it)
     table = call(server, "/api/state")[1]["follow"]["parts"]
     assert [(p["name"], p["lights"], p["tone"]) for p in table] == [("Lead", 4, "079 DISTORTION GT"), ("Rhythm", 0, "178 SAW LEAD 1")]
     assert call(server, "/api/state")[1]["follow"]["messages"][-1] == (
@@ -662,7 +679,7 @@ def test_a_remotes_changes_are_kept_at_once_and_the_song_takes_them_once_they_st
     sent = len(out.sent)
     assert call(server, "/api/volumes", {"volumes": {"0": 80}})[1]["volumes"][:2] == [80, 100]  # the first
     assert gui._session.player is replaced  # arrangement's, in every song: at once on its channels, the notes going on
-    assert out.sent[sent:] == [[0xBA, 7, 80], [0xBB, 7, 80], [0xBC, 7, 80]]  # (channels 11, 12 and 13)
+    assert out.sent[sent:] == [[0xBA, 7, 80]]  # (the channel it sounds on: 11)
     gui.change_part("lead", {"lights": 1})  # other lit keys, another tone: the volume stays
     gui.change_part("lead", {"tone": 30})
     assert next(p for p in gui.song(sid)["parts"] if p["part"] == "lead")["tones"] == {"tone": 30}
