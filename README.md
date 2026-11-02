@@ -173,10 +173,17 @@ the commands do:
   at most (longer if the chart holds it), its own length at least, and palm mutes stay short. The tone's own
   decay does the rest. **Keyboard** › Sound turns it off (each note as long as its key is lit), playing and
   following at once.
-- **Playback**: Play (Pause while it plays, Resume while it's paused), Stop and Mute (the sound on the
-  keyboard, playing or following: muted, just the lights), the speed (25% to 150%), real pitch, a start
-  time, and a slider that shows where the song is and moves it while it plays.
-- **Follow Rocksmith**: start and stop following the game (with sound unless muted). While following, the
+- **The header**: the song's time slider (where it is, moved while it plays; else where it starts) and its
+  speed (25% to 150%), Play (Pause while it plays, Resume while it's paused), Stop, Mute 🔊 (the sound on the
+  keyboard, playing or following: muted 🔇, just the lights), full screen ⛶, ⚙ to fold the settings column
+  away (the middle gets its room) or bring it back, and **Follow Rocksmith**.
+- **The song** in the middle: its art, title, artist, key and scale, and a line for each arrangement (lit
+  keys, volume, mute); its **Tones** button opens its tones (folded away at first, as during a song: the
+  Launchkey has them). The fretboard under it shows what it lights; its legend shows as the mouse is on it.
+- **The settings column**: each card folds into its title (the setup ones folded at first; remembered).
+- **Follow Rocksmith** (its button in the header): start and stop following the game (with sound unless
+  muted); full screen while following, if wanted (as it's started on the page: a browser only goes full
+  screen as it's clicked). While following, the
   song you play is the one shown in the middle (once it ends, until the next; the library can still be
   gone through, but other songs can't be picked meanwhile), with each of its arrangements; the speed and where it starts are the game's. The one you
   play plays on every key; unmute others to play along (the backing band), and choose the keys each lights
@@ -186,15 +193,16 @@ the commands do:
   `rs-keylights follow` (such as the RS Re-ARMed sidekick) is running, since both would light the keys.
 - **Default tones**: one set each for lead, rhythm and bass parts (combos count as lead), for parts
   without tones of their own, playing a song or following the game. Greyed choices are defaults.
-- **Keyboard**: the MIDI output, the lights' channel, lights early and fastest flash, notes ringing (kept in
-  `~/Library/Application Support/rs-keylights/gui.json`), and a button to look for new songs. The two
+- **Keyboard**: the MIDI output, the lights' channel, lights early and fastest flash, notes ringing and real pitch
+  (the notes at their own pitch, not the lit keys', playing and following), kept in
+  `~/Library/Application Support/rs-keylights/gui.json`, and a button to look for new songs. The two
   timings apply at once, to what plays or is followed.
 
 Changes to the parts, their tones and the lights apply at once while a song plays or is followed, from
 where it is.
 
 Everything chosen is kept on the Mac, so every page (and the Launchkey) shows and changes the same: each
-song's parts, lit keys, tones and start time in `songs.json`, the rest in `gui.json` (both in
+song's parts, lit keys, tones and start (where the slider is, not playing) in `songs.json`, the rest in `gui.json` (both in
 `~/Library/Application Support/rs-keylights/`). Without `--lan` the server answers
 only on 127.0.0.1, to pages it served. `--port` changes its port, `--no-browser` doesn't open the page, and
 `--midi-port`/`--channel` before `gui` override the saved keyboard settings for that run.

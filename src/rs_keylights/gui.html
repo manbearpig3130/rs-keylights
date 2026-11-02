@@ -23,7 +23,9 @@
   header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
   header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
   header h1 span { color: var(--accent); }
-  #status { flex: 1; min-width: 200px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status { flex: 0 1 220px; min-width: 120px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header .timeline { flex: 1 1 320px; min-width: 260px; margin: 0; }
+  header .timeline select { padding: 3px 4px; }
   #status.on { color: var(--text); font-weight: 600; }
   button { font: inherit; border: 1px solid var(--line); background: var(--input); color: var(--text); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--muted); }
@@ -83,8 +85,24 @@
   #details .d-line { font-size: 12px; color: var(--muted); }
   #details .d-key { font-size: 13px; margin: 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #details .d-empty { grid-column: 1 / -1; color: var(--muted); font-size: 12px; padding-top: 30px; text-align: center; }
-  .song-head { display: flex; gap: 14px; align-items: flex-start; }
-  .song-art { width: 72px; height: 72px; flex: none; }
+  .song-head { display: flex; gap: 12px; align-items: flex-start; }
+  .song-art { width: 56px; height: 56px; flex: none; }
+  .song-lines { min-width: 0; flex: 1; }
+  .song-head h2 { font-size: 18px; }
+  /* An arrangement's tones fold away (its line: name, lit keys, volume, mute), opened by its Tones button */
+  .part-fold { padding: 1px 8px; font-size: 12px; color: var(--muted); }
+  .part-fold::after { content: " ▸"; }
+  .part-fold[aria-expanded="true"]::after { content: " ▾"; }
+  /* The settings column: each card folds into its title; the whole column folds away (the middle gets its room) */
+  #side h3.fold { cursor: pointer; user-select: none; }
+  #side h3.fold::before { content: "▾ "; color: var(--muted); }
+  #side .card.folded h3.fold::before { content: "▸ "; }
+  #side .card.folded h3 { margin: 0; }
+  #side .card.folded > :not(h3) { display: none; }
+  body.side-hidden #side { display: none; }
+  body.side-hidden main { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
+  @media (max-width: 1100px) { body.side-hidden main { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); } }
+  header .icon { padding: 3px 9px; font-size: 17px; line-height: 1.3; }
   .lit { display: inline-flex; align-items: center; gap: 4px; }
   .lit button { padding: 2px 9px; }
   .lit b { min-width: 1.3em; text-align: center; }
@@ -97,7 +115,7 @@
   .part-block { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
   .part-block.off .part-tones, .part-block.off .part-lit { opacity: .5; }
   .part-head { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
-  .part-name { flex: 1; min-width: 0; }
+  .part-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .part-name .on-air { font-size: 12px; }
   .part-lit, .part-volume { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .part-volume input { width: 110px; accent-color: var(--accent); }
@@ -195,7 +213,11 @@
   .fret-head h3 { margin: 0; flex: 1; min-width: 0; }
   .fret-chord { font-weight: 700; font-size: 16px; color: var(--live); }
   .swatch.now { background: var(--live); }
-  .fret-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .fret-legend { display: none; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); position: absolute;
+                 left: 12px; right: 12px; bottom: 8px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line);
+                 border-radius: 6px; }  /* (shown over the fretboard as the mouse is on it) */
+  #fretCard { position: relative; }
+  #fretCard:hover .fret-legend:not(:empty) { display: flex; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--muted); }
   .swatch.root { background: var(--accent); }
   .swatch.other { background: none; border: 1.5px dashed var(--muted); }
@@ -205,9 +227,18 @@
 <header>
   <h1>rs-<span>keylights</span></h1>
   <div id="status">Idle</div>
+  <div class="timeline" title="Where the song is (playing: drag it to move; else where it starts)">
+    <span id="pos" class="time">0:00</span>
+    <input type="range" id="slider" min="0" max="100" step="0.1" value="0" aria-label="Song position">
+    <span id="len" class="time">0:00</span>
+    <select id="speed" aria-label="Speed" title="Speed (following: the game's)"></select>
+  </div>
   <button id="playBtn" class="primary" disabled>▶ Play</button>
   <button id="stopBtn" disabled>■ Stop</button>
-  <button id="muteBtn" title="The sound on the keyboard, playing or following (muted: just the lights)">🔊 Mute</button>
+  <button id="muteBtn" class="icon" title="The sound on the keyboard, playing or following (muted: just the lights)">🔊</button>
+  <button id="fullBtn" class="icon" title="Full screen (Esc: back)">⛶</button>
+  <button id="sideBtn" class="icon" title="The settings column: hide it (the middle gets its room) or show it">⚙</button>
+  <button id="followBtn" class="primary" title="Follow Rocksmith: light the keys along with the song the game plays">Follow Rocksmith</button>
 </header>
 
 <main>
@@ -226,35 +257,19 @@
       <div id="activeBar" class="activebar" hidden></div>
       <div class="song-head">
         <img id="songArt" class="song-art none" alt="">
-        <div>
+        <div class="song-lines">
           <h2><span id="title"></span><span id="activeBadge" class="badge" hidden>● active</span></h2>
-          <div id="artist"></div>
-          <div id="file" class="muted"></div>
+          <div><span id="artist"></span> <span id="file" class="muted"></span></div>
+          <div id="songKey"></div>
         </div>
       </div>
-      <div id="songKey"></div>
       <div id="parts"></div>
       <div id="lightsNote" class="note" hidden></div>
-      <div class="row">
-        <label>Speed
-          <select id="speed"></select>
-        </label>
-        <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range)">
-          <input type="checkbox" id="realPitch"> Real pitch</label>
-      </div>
-      <div class="timeline">
-        <span id="pos" class="time">0:00</span>
-        <input type="range" id="slider" min="0" max="100" step="0.1" value="0" aria-label="Song position">
-        <span id="len" class="time">0:00</span>
-        <label>Start at <input id="startAt" value="0:00" aria-label="Start at (m:ss)"></label>
-      </div>
       <div id="loopLine" class="loopline" hidden title="Set on the Launchkey: ▼, then its pads on top (A, B, on or off, the section), knobs 4 and 5 (a beat at a time) and knob 8 while it shows (a bar at a time)">
         <span id="loopText"></span>
         <button type="button" id="loopOn">Loop</button>
         <button type="button" id="loopClear">Clear</button>
       </div>
-      <div class="muted" style="font-size:12px">Drag the slider to choose where to start, or to move around while it plays.
-        Changes to the parts apply at once while a song plays.</div>
     </div>
   </section>
 
@@ -276,17 +291,13 @@
       <h3>Follow Rocksmith</h3>
       <div class="muted small">Lights the keys along with the song the game plays (RS Companion's stream overlays must be on).</div>
       <div id="otherFollow" class="note" hidden>Another <code>rs-keylights follow</code> is running (the RS Re-ARMed sidekick?): both would light the keys.</div>
-      <div class="row">
-        <button id="followBtn" class="primary">Start following</button>
-      </div>
       <div id="followNow" class="muted"></div>
       <div class="muted small" style="margin-top:8px">While following, the song you play shows in the middle: its
         other arrangements can play along, and each can have tones of its own.</div>
       <div class="row">
-        <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range)">
-          <input type="checkbox" id="followRealPitch"> Real pitch</label>
         <label title="Light the keys this much earlier (negative: later)">Offset <input type="number" id="followOffset" value="0" step="10" style="width:70px"> ms</label>
         <label title="Its scale climbs the keys while the song doesn't need them yet"><input type="checkbox" id="followShowKey"> Show each song's key on the keys as it starts</label>
+        <label title="This page full screen as Follow Rocksmith (here) starts, and back as following stops (a browser only goes full screen as it's clicked: not from the Launchkey)"><input type="checkbox" id="followFull"> Full screen while following</label>
       </div>
       <details id="followLog"><summary>Messages</summary><ul id="messages"></ul></details>
     </div>
@@ -368,6 +379,8 @@
           <input type="checkbox" id="ring"> Let notes ring, as a guitar's strings do</label>
           <label title="Ringing, each note sounds on this long after the next starts (but the same note played again), so they run into each other a little. 0: each stops as the next starts">
           overlapping the next by <input id="overlap" type="number" min="0" max="500" step="10" style="width:64px"> ms</label><br>
+          <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range), playing a song or following the game">
+          <input type="checkbox" id="realPitch"> Real pitch</label><br>
           <label title="Bends (pitch bend), slides (a semitone at a time), vibrato, tremolo picking, hammer-ons and pull-offs (softer), slaps and pops (harder), harmonics' own pitches, and dead notes (a click, with a palm-mute tone). Off: accents alone">
           <input type="checkbox" id="techniques"> Play techniques: bends, slides, vibrato&hellip;</label></span>
         <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
@@ -408,14 +421,6 @@ async function api(path, body) {
 function fmt(seconds) {
   const s = Math.max(0, Math.floor(seconds || 0));
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
-}
-
-function parseTime(text) {
-  const t = String(text).trim();
-  if (!t) return 0;
-  const parts = t.split(":").map(Number);
-  if (parts.length > 3 || parts.some((n) => !isFinite(n) || n < 0)) return null;
-  return parts.reduce((total, n) => total * 60 + n, 0);
 }
 
 let toastTimer = null;
@@ -1089,7 +1094,7 @@ function renderSong() {
   renderActive();
   $("title").textContent = s.song;
   $("artist").textContent = s.artist;
-  $("file").textContent = `${s.file} · ${fmt(s.length)}`;
+  $("file").textContent = `${s.artist ? "· " : ""}${s.file} · ${fmt(s.length)}`;
   $("songKey").replaceChildren(keyLine(s.key, s.id));
   renderFretboard(s);
   if ($("songArt").dataset.song !== s.id) {
@@ -1124,7 +1129,6 @@ function renderSong() {
   $("parts").replaceChildren(rows);
   showOptions();
   $("slider").max = String(s.length);
-  if (!f && document.activeElement !== $("startAt")) $("startAt").value = fmt(s.start);
   if (!f && !playingThis() && !dragging) {
     $("slider").value = String(s.start);
     $("pos").textContent = fmt(s.start);
@@ -1174,9 +1178,14 @@ function partBlock(o) {
     o.change("play", !o.play);
   });
   volume.append("Volume", slider, shown, mute);
+  const fold = document.createElement("button");  // (its tones: folded away, as during a song; the Launchkey has them)
+  fold.type = "button";
+  fold.className = "part-fold";
+  fold.textContent = "Tones";
+  fold.title = "Its tones: palm mutes, low notes, where the low notes start (and the song's tone changes)";
   const head = document.createElement("div");
   head.className = "part-head";
-  head.append(name, lit, volume);
+  head.append(name, lit, volume, fold);
   const defaults = defaultsFor(o.kind).text;
   const field = (text, control) => {
     const label = document.createElement("label");
@@ -1198,8 +1207,19 @@ function partBlock(o) {
   tones.className = "part-tones";
   tones.append(field("Tone", tone("tone")), field("Palm mutes", tone("mute_tone")), field("Low notes", tone("low_tone")),
                field("Below", split));
-  block.append(head, tones);
-  if (o.songTones && o.songTones.length) block.append(songTonesRow(o.songTones));
+  const more = document.createElement("div");
+  more.append(tones);
+  if (o.songTones && o.songTones.length) more.append(songTonesRow(o.songTones));
+  const open = (on) => {
+    more.hidden = !on;
+    fold.setAttribute("aria-expanded", String(on));
+  };
+  open(!!store.get("rsk.tones." + o.kind, false));
+  fold.addEventListener("click", () => {
+    open(more.hidden);
+    store.set("rsk.tones." + o.kind, !more.hidden);
+  });
+  block.append(head, more);
   return block;
 }
 
@@ -1232,10 +1252,10 @@ function showSongTones(st) {
   }
 }
 
-// Following, the speed and where it starts are the game's, and real pitch and sound following's own
+// Following, the speed and where it starts are the game's (real pitch: following's own, set with playing's)
 function showOptions() {
   const f = followedSong();
-  for (const id of ["speed", "startAt", "slider"]) $(id).disabled = !!f;
+  for (const id of ["speed", "slider"]) $(id).disabled = !!f;
   if (f) {
     $("realPitch").checked = follow.real_pitch;
   } else if (playOptions) {
@@ -1326,7 +1346,9 @@ function updateButtons() {
   $("playBtn").textContent = pausing ? "❚❚ Pause" : here && state.mode === "paused" ? "▶ Resume" : "▶ Play";
   $("stopBtn").disabled = state.mode === "idle";
   $("muteBtn").classList.toggle("on", state.sound === false);
-  $("muteBtn").textContent = state.sound === false ? "🔇 Muted" : "🔊 Mute";
+  $("muteBtn").textContent = state.sound === false ? "🔇" : "🔊";
+  $("muteBtn").title = state.sound === false ? "Muted (just the lights): sound on" :
+    "The sound on the keyboard, playing or following: mute it (just the lights)";
 }
 
 async function play() {
@@ -1334,9 +1356,7 @@ async function play() {
     await api("/api/resume", {});
     return;
   }
-  const start = parseTime($("startAt").value);
-  if (start === null) throw new Error("Start at: a time such as 1:23");
-  await api("/api/play", {song: selected.id, start: start, speed: Number($("speed").value)});
+  await api("/api/play", {song: selected.id, start: Number($("slider").value), speed: Number($("speed").value)});
 }
 
 // What the Launchkey is setting (its speed strip, its position knob) shows here as it moves, before it applies
@@ -1353,11 +1373,14 @@ function showRemote(st) {
   if (r.position != null && !dragging && !playingThis() && selected && selected.id === st.active) {
     $("slider").value = String(r.position);  // where the song picked will start
     $("pos").textContent = fmt(r.position);
-    if (document.activeElement !== $("startAt")) $("startAt").value = fmt(r.position);
   }
 }
 
 function showState(st) {
+  if (fullForFollowing && state && state.mode === "following" && st.mode !== "following") {
+    fullForFollowing = false;
+    fullScreen(false);
+  }
   state = st;
   const status = $("status");
   status.className = st.mode === "idle" ? "" : "on";
@@ -1425,7 +1448,7 @@ function showState(st) {
   $("launchkeyStatus").textContent = st.launchkey === null ? "" :
     st.launchkey === "not found" ? "· none connected" : st.launchkey === "off" ? "" : `· ${st.launchkey.replace(/ DAW In$/, "")}`;
   const following = st.mode === "following";
-  $("followBtn").textContent = following ? "Stop following" : "Start following";
+  $("followBtn").textContent = following ? "Stop following" : "Follow Rocksmith";
   $("followBtn").className = following ? "" : "primary";
   const f = st.follow || {};
   $("followNow").innerHTML = following && f.song ?
@@ -1605,7 +1628,6 @@ function kindTones(kind) {
 }
 
 function renderFollow() {
-  $("followRealPitch").checked = follow.real_pitch;
   $("followShowKey").checked = follow.show_key;
   if (document.activeElement !== $("followOffset")) $("followOffset").value = follow.offset_ms;
   $("followKinds").replaceChildren(...Object.keys(KIND_NAMES).map(kindTones));
@@ -1632,7 +1654,22 @@ async function moveOldFollow() {
 }
 
 async function toggleFollow() {
-  await api(state.mode === "following" ? "/api/stop" : "/api/follow", {});
+  const starting = state.mode !== "following";
+  if (starting && $("followFull").checked) {  // (as it's clicked: a browser goes full screen only then)
+    fullScreen(true);
+    fullForFollowing = true;
+  }
+  await api(starting ? "/api/follow" : "/api/stop", {});
+}
+
+// Full screen: by hand (its button), or while following (as it starts here; back as it stops, however)
+let fullForFollowing = false;
+
+function fullScreen(on) {
+  const page = document.documentElement, now = document.fullscreenElement || document.webkitFullscreenElement;
+  const call = on ? !now && (page.requestFullscreen || page.webkitRequestFullscreen)?.call(page) :
+    now && (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+  Promise.resolve(call).catch(() => {});
 }
 
 // The Launchkey's keys: the Casio's sound and lights for them, and the tone (set here or with its knobs)
@@ -1830,7 +1867,26 @@ $("search").addEventListener("input", () => {  // (a search puts the song the La
 $("playBtn").addEventListener("click", () => act(() => playingThis() && state.mode === "playing" ? api("/api/pause", {}) : play()));
 $("stopBtn").addEventListener("click", () => act(() => api("/api/stop", {})));
 $("followBtn").addEventListener("click", () => act(toggleFollow));
-$("followRealPitch").addEventListener("change", () => changeFollow({real_pitch: $("followRealPitch").checked}));
+$("fullBtn").addEventListener("click", () => fullScreen(!(document.fullscreenElement || document.webkitFullscreenElement)));
+$("followFull").checked = !!store.get("rsk.followFull", false);
+$("followFull").addEventListener("change", () => store.set("rsk.followFull", $("followFull").checked));
+document.body.classList.toggle("side-hidden", !!store.get("rsk.sideHidden", false));
+$("sideBtn").addEventListener("click", () => store.set("rsk.sideHidden", document.body.classList.toggle("side-hidden")));
+// The settings column's cards fold into their titles (remembered; setup ones folded at first)
+const FOLDED_AT_FIRST = new Set(["defaultsCard", "outputsCard", "toneChangesCard", "keyboardCard"]);
+for (const card of document.querySelectorAll("#side > .card")) {
+  const title = card.querySelector(":scope > h3");
+  if (!title) continue;
+  title.classList.add("fold");
+  title.tabIndex = 0;
+  title.title = "Fold it into its title, or open it";
+  card.classList.toggle("folded", !!store.get("rsk.fold." + card.id, FOLDED_AT_FIRST.has(card.id)));
+  const flip = () => store.set("rsk.fold." + card.id, card.classList.toggle("folded"));
+  title.addEventListener("click", flip);
+  title.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+  });
+}
 $("followOffset").addEventListener("change", () => changeFollow({offset_ms: Number($("followOffset").value) || 0}));
 $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("followShowKey").checked}));
 $("launchkey").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
@@ -1872,18 +1928,13 @@ $("reindex").addEventListener("click", () => act(async () => {
   await loadLibrary(await api("/api/reindex", {}));
 }));
 $("speed").addEventListener("change", () => changeOptions({speed: Number($("speed").value)}));
-$("realPitch").addEventListener("change", () => followedSong() ? changeFollow({real_pitch: $("realPitch").checked}) :
-  changeOptions({real_pitch: $("realPitch").checked}));
+$("realPitch").addEventListener("change", () => {  // (one for both: playing a song and following)
+  changeOptions({real_pitch: $("realPitch").checked});
+  changeFollow({real_pitch: $("realPitch").checked});
+});
 $("muteBtn").addEventListener("click", () => act(() => api("/api/play/options", {silent: state.sound})));
 $("loopOn").addEventListener("click", () => act(() => api("/api/loop", {on: !(state.loop || {}).on})));
 $("loopClear").addEventListener("click", () => act(() => api("/api/loop", {a: null, b: null})));
-$("startAt").addEventListener("change", () => {
-  const t = parseTime($("startAt").value);
-  if (t === null) { toast("Start at: a time such as 1:23"); return; }
-  $("startAt").value = fmt(t);
-  if (!playingThis()) { $("slider").value = String(t); $("pos").textContent = fmt(t); }
-  act(() => changeSong({start: t}));
-});
 $("slider").addEventListener("input", () => {
   dragging = true;
   $("pos").textContent = fmt(Number($("slider").value));
@@ -1894,7 +1945,6 @@ $("slider").addEventListener("change", () => {
   if (playingThis()) {
     act(() => api("/api/seek", {position: position}));
   } else {
-    $("startAt").value = fmt(position);
     act(() => changeSong({start: position}));
   }
 });
