@@ -60,7 +60,8 @@ from .tones import TONES, tone
 #   touched again; knob 8 goes a letter at a time (the artists'). The song it's on takes the screen while it's
 #   in use; Record switches to it (on the song
 #   already: stops it), but not while following (the game picks the song, its last staying shown until the
-#   next). Not following, Track back is home: the screen back on the song (or waiting for one), the library too. The
+#   next). Following, on Rocksmith's song list, they go through its list instead (its order; its highlight moved
+#   to the song), and the screen shows the song it highlights however it's moved. Not following, Track back is home: the screen back on the song (or waiting for one), the library too. The
 #   modulation strip is its keys' modulation.
 # - The screen: the song (with the chord being played in its corner: from the arrangement lighting the most keys,
 #   the rhythm's first if they light as many, else from the next that has one there; whose, lit up before it: L,
@@ -342,6 +343,11 @@ class Watch:
                 self._try(lambda: self._on(event, now))
                 self._next_info, used = 0.0, True  # show what it did at once
         self._glide(now)
+        if launchkey is not None and (self._info or {}).get("mode") == "follow":
+            moved = self.gui.game_browse()  # (the game's song list moved by itself: shown as the strip shows one)
+            if moved is not None:
+                self._browsed_song(moved)
+                self._browse_until = now + BROWSE_SHOWN
         if (self._settling or self._moving_to is not None or self._speed_to is not None) \
                 and now - self._turned_at >= self._wait:
             self._apply_turns()

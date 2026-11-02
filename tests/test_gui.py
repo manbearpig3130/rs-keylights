@@ -11,7 +11,7 @@ import pytest
 from builders import N, Song, song_archive
 from test_pedal import backup
 
-from rs_keylights.gui import GAME_TIME_EVERY, Gui, GuiServer, _guitar, default_lights
+from rs_keylights.gui import GAME_SONGS_EVERY, GAME_SONGS_OWN, GAME_TIME_EVERY, Gui, GuiServer, _guitar, default_lights
 from rs_keylights.songtones import KINDS as TONE_KINDS
 from rs_keylights.keyboard import Keyboard
 from rs_keylights.tones import tone
@@ -505,6 +505,40 @@ def test_a_remote_plays_pauses_moves_and_follows(server, no_real_game_loop):
     assert gui.toggle_follow() is False and call(server, "/api/state")[1]["mode"] == "idle"
     with pytest.raises(ValueError, match="Follow Rocksmith first"):
         gui.game_key("down")
+
+
+def test_following_on_the_games_song_list_a_remote_goes_through_it_and_the_library_follows(server, tmp_path,
+                                                                                          no_real_game_loop):
+    gui = server.gui
+    for key, title, artist in (("alpha", "Alpha Song", "Alpha Band"), ("zulu", "Zulu Song", "Zulu Band")):
+        (tmp_path / "game" / "dlc" / f"{key}_m.psarc").write_bytes(song_archive(
+            key, {"lead": ("L" + key, Song(levels={0: [N(1.0)]}))}, song=title, artist=artist))
+    gui.index.refresh()
+    gui._library = None
+    assert gui.toggle_follow() is True
+    game = no_real_game_loop[-1]
+    assert gui.game_songs() is None and gui.game_browse() is None  # (not on its song list)
+    game.song_list = ["alpha", "ghost", "song", "zulu"]  # its order (a song the library hasn't: its key)
+    time.sleep(GAME_SONGS_EVERY)
+    assert gui.game_songs().key == "alpha"
+    moved = gui.game_browse()  # (its highlight, first seen: the library goes to it)
+    assert moved["song"] == "Alpha Song" and moved["place"] == 0 and moved["of"] == 4
+    moved = gui.browse_move(2)  # the strip: two songs on, in the game's order, its highlight moved there too
+    assert moved["song"] == "The Pursuit" and moved["place"] == 2 and game.sent[-1] == ("focus", "song")
+    assert gui.state()["browse"]["song"].endswith("#song")  # (the page's library on it)
+    moved = gui.browse_move(-1)
+    assert moved == {"id": "#ghost", "song": "ghost", "artist": "", "place": 1, "of": 4}
+    assert game.sent[-1] == ("focus", "ghost")
+    time.sleep(GAME_SONGS_EVERY)
+    assert gui.game_browse() is None  # (its own move: the remote's)
+    time.sleep(GAME_SONGS_OWN)
+    game.highlighted = 3  # its keys: the library follows
+    time.sleep(GAME_SONGS_EVERY)
+    assert gui.game_browse()["song"] == "Zulu Song" and gui.state()["browse"]["song"].endswith("#zulu")
+    assert gui.browse_letter(-1)["song"] == "The Pursuit"  # knob 8: a letter back, by the library's artists
+    # ("Band": B; ghost: G; Alpha Band: A)
+    assert gui.browse_letter(-1)["song"] == "ghost" and game.sent[-1] == ("focus", "ghost")
+    assert gui.toggle_follow() is False and gui.game_songs() is None
 
 
 def test_switching_songs_and_going_through_the_library(server, tmp_path):

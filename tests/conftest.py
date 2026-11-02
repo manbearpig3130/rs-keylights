@@ -19,7 +19,7 @@ def no_real_pedal(monkeypatch, tmp_path):
 
 
 from rs_keylights import gui as gui_module  # noqa: E402
-from rs_keylights.riffloop import GameLoop  # noqa: E402
+from rs_keylights.riffloop import GameLoop, GameSongs  # noqa: E402
 
 
 class FakeRiffLoop:
@@ -28,6 +28,7 @@ class FakeRiffLoop:
 
     def __init__(self, *args, **kwargs):
         self.sent, self.range, self.screen = [], None, "LearnASong_Game"
+        self.song_list, self.highlighted = None, 0  # (Learn a Song's song list: its keys, while it shows)
 
     def loop(self, a, b):
         self.sent.append(("loop", a, b))
@@ -47,6 +48,19 @@ class FakeRiffLoop:
         if self.screen and self.screen.endswith("_Game"):
             self.screen = self.screen.replace("_Game", "_Pause")
         return self.status()
+
+    def songs(self):
+        if not self.song_list:
+            return None
+        return GameSongs(self.highlighted, len(self.song_list), self.song_list[self.highlighted])
+
+    def song_keys(self, start, count):
+        return (len(self.song_list), self.song_list[start:start + count]) if self.song_list else None
+
+    def focus(self, key):
+        self.sent.append(("focus", key))
+        self.highlighted = self.song_list.index(key)
+        return True
 
     def key(self, name):
         self.sent.append(("key", name))

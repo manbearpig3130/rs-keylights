@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 # Rocksmith's Riff Repeater looping a range of our own (the A-B loop, following the game), through RS Re-ARMed's
 # riffloop mod (rearmed-sidekicks), which makes it phrases of their own in the song for Riff Repeater to pick (and
-# pauses the game's song, or has it go on): a command a datagram on 127.0.0.1, answered with its state.
+# pauses the game's song, or has it go on, types its keys, and reads and moves its song list's highlight): a command a
+# datagram on 127.0.0.1, answered with its state.
 
 PORT = int(os.environ.get("RS_RIFFLOOP_PORT", "9939"))
 WAIT = 0.25  # seconds an answer's waited for (none: the game isn't running, or hasn't the mod)
@@ -36,6 +37,15 @@ class GameLoop:
     def paused(self) -> bool:
         """On a song's pause screen (LearnASong_Pause, RiffRepeater_Pause...)."""
         return self.screen is not None and self.screen.endswith("_Pause")
+
+
+@dataclass(frozen=True)
+class GameSongs:
+    """Learn a Song's song list as the game has it: the highlighted song's row (from 0), how many rows there are, and
+    its key (the song's, e.g. "3DooAway")."""
+    row: int
+    count: int
+    key: str
 
 
 def parse(answer: str) -> GameLoop | None:
@@ -97,12 +107,38 @@ class RiffLoop:
     def status(self) -> GameLoop | None:
         return self._send("status")
 
+    def songs(self) -> GameSongs | None:
+        """Learn a Song's song list (while it shows): its highlighted song; None without it (or the mod)."""
+        words = (self._ask("songs") or "").split()
+        if len(words) != 4 or words[0] != "songs":
+            return None
+        fields = dict(word.split("=", 1) for word in words[1:] if "=" in word)
+        try:
+            return GameSongs(int(fields["row"]), int(fields["of"]), fields["key"])
+        except (KeyError, ValueError):
+            return None
+
+    def song_keys(self, start: int, count: int) -> tuple[int, list[str]] | None:
+        """The song list's keys (in its order) from a row, and how many rows it has; None without it."""
+        words = (self._ask(f"songs list {start} {count}") or "").split()
+        if len(words) < 2 or words[0] != "songs" or not words[1].startswith("of="):
+            return None
+        return int(words[1][3:]), words[2:]
+
+    def focus(self, key: str) -> bool:
+        """The song with a key highlighted in the song list, as the game's own moves do; whether it answered."""
+        return (self._ask(f"focus {key}") or "").startswith("songs focusing")
+
     def _send(self, command: str) -> GameLoop | None:
+        answer = self._ask(command)
+        return parse(answer) if answer is not None else None
+
+    def _ask(self, command: str) -> str | None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.settimeout(self.wait)
                 sock.connect(("127.0.0.1", self.port))  # (connected: no listener is refused at once)
                 sock.send(command.encode())
-                return parse(sock.recv(2048).decode(errors="replace"))
+                return sock.recv(16384).decode(errors="replace")
         except OSError:
             return None

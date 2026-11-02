@@ -300,6 +300,11 @@ song playing, else the active one:
   **Track** ◁ and ▷ are its up and down arrows, the **upper arrow** right of the pads its Escape (back),
   and **Record** its Enter. Not following, Track ◁ is home and the others say to follow first. (Real pitch
   is on the page.)
+- **Rocksmith's song list**, following, while Learn a Song's list shows: the **pitch strip** (slid or
+  flicked) and **knob 8** (a letter at a time) go through the game's list, in its order, its highlight
+  moving to the song, and the page's library going with it; however the game's highlight moves (its keys,
+  Track ◁ ▷), the page's library and the Launchkey's screen show the song. Record picks it (Enter), and the
+  song's yours once it starts, as ever. The riffloop mod reads the game's list and moves its highlight.
 - **Play** plays and pauses the
   song (the screen's ▶ or ❚❚ says which), or plays the active one. Following, it pauses and resumes
   Rocksmith's song (through RS Re-ARMed's riffloop mod, which sees the game's screen): lit and ▶ while it

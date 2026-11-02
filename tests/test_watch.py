@@ -18,6 +18,7 @@ class FakeGui:
         self.plays, self.seeks, self.following = [], [], mode == "follow"
         self.real_pitch, self.speeds, self.browsed, self.chosen = False, [], 0.0, []
         self.game_keys, self.game_waiting = [], 1  # (Rocksmith's, following)
+        self.game_moved = None  # (its song list highlighting another song by itself)
         self.stopped, self.dialling, self.letters = 0, [], []
         self.live = None  # where the song is now (playing or followed; None: the info's position)
         self.programs = []
@@ -124,6 +125,10 @@ class FakeGui:
     def remote_seek(self, position):
         self.seeks.append(position)
         self.info["position"] = position
+
+    def game_browse(self):
+        moved, self.game_moved = self.game_moved, None
+        return moved
 
     def game_key(self, name):
         self.game_keys.append(name)
@@ -587,6 +592,17 @@ def test_following_the_library_can_be_gone_through_but_the_game_picks_the_song()
     launchkey.queued = [Button(RECORD)]  # (following: Rocksmith's Enter)
     watch.step()
     assert gui.chosen == [] and gui.stopped == 0 and gui.game_keys == ["enter"]
+
+
+def test_following_the_games_song_list_moving_by_itself_shows_the_song_it_highlights():
+    watch, gui, launchkey, clock = watching()  # following
+    gui.info["song"] = gui.song
+    watch.step()
+    gui.game_moved = {"id": "x#zulu", "song": "Zulu Song", "artist": "Zulu Band", "place": 3, "of": 4}
+    clock.now = 0.5
+    watch.step()
+    assert watch._browsed == "x#zulu" and watch._browsed_text == ("Zulu Song", "Zulu Band")
+    assert clock.now < watch._browse_until  # (on the screen for a while)
 
 
 def test_a_flick_keeps_going_until_the_strip_is_touched():

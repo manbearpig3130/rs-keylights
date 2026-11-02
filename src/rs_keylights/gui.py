@@ -35,7 +35,7 @@ from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
 from .pedal import SLOTS as PEDAL_SLOTS, Pedal
-from .riffloop import GameLoop, RiffLoop
+from .riffloop import GameLoop, GameSongs, RiffLoop
 from .sng import BASS, GUITAR, Arrangement, Chord, Note, Section, note_name
 from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tones, tone_kind
 from .keyshow import KeyShow
@@ -58,6 +58,9 @@ TONE_FIELDS = ("tone", "mute_tone", "low_tone")  # a set of tones: these tone nu
 SAME_TONE = 0  # palm mutes or low notes with the tone the rest has (over a default for them)
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
+GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
+GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
+GAME_KEYS_AT_ONCE = 300  # the song list's keys asked for so many at a time
 PEDAL_FAVOURITES, PEDAL_FAVOURITES_MOST = (51, 187), 8  # the pedal presets the Launchkey's pad goes through
 WARM_AROUND = (0, 1, -1, 2, -2, 3, -3)  # the songs whose art gets ready around the one browsed or pointed at
 ARRANGEMENT_ID = re.compile(r"[0-9A-Za-z-]{1,64}")
@@ -316,6 +319,12 @@ class Gui:
         self._riff_said: GameLoop | None = None
         self._game_time: tuple[float, float | None] = (-math.inf, None)  # (when asked, the game's time then)
         self._game_said: GameLoop | None = None  # (and all the mod said then)
+        # Following, Learn a Song's song list (the game's, through the mod): its highlight as last asked (when), its
+        # keys in its order, the key last seen highlighted, and the one a remote last moved it to (when)
+        self._game_songs: tuple[float, GameSongs | None] = (-math.inf, None)
+        self._game_keys: list[str] = []
+        self._game_seen: str | None = None
+        self._game_sent: tuple[float, str | None] = (-math.inf, None)
         self._riff_settings: dict[str, Any] = {"speed": 100, "accelerator": False, "passes": 1}  # (as set here)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
@@ -632,9 +641,83 @@ class Gui:
 
     # Going through the library with a remote
 
+    # Following, on Learn a Song's song list, a remote goes through the game's list instead (its order, its
+    # highlight moved to the song too) and the library follows it, as it does the game's own moves
+
+    def game_songs(self) -> GameSongs | None:
+        """Following, Learn a Song's song list while it shows: its highlighted song (asked at most every
+        GAME_SONGS_EVERY); None otherwise, or without the mod."""
+        with self._lock:
+            session = self._session
+        if not (isinstance(session, Following) and session.running):
+            return None
+        now = time.monotonic()
+        asked, said = self._game_songs
+        if now - asked >= GAME_SONGS_EVERY:
+            said = self._riff_loop.songs()
+            self._game_songs = (now, said)
+        return said
+
+    def game_browse(self) -> dict[str, Any] | None:
+        """Following, the game's song list highlighting another song by itself (its keys, Rocksmith's up and down on
+        a remote): the library's place moved to it too; the song, as browse_move has it. None otherwise."""
+        said = self.game_songs()
+        if said is None or said.key == self._game_seen:
+            return None
+        self._game_seen = said.key
+        if time.monotonic() - self._game_sent[0] < GAME_SONGS_OWN:
+            return None  # (a remote's move, or on its way there)
+        return self._browse_game(float(said.row), said.count, said.key)
+
+    def _game_song_keys(self, count: int) -> list[str]:
+        """The song list's keys in its order (asked again when it has another number of rows)."""
+        if len(self._game_keys) != count:
+            keys: list[str] = []
+            while len(keys) < count:
+                said = self._riff_loop.song_keys(len(keys), GAME_KEYS_AT_ONCE)
+                if said is None or not said[1]:
+                    break
+                keys += said[1]
+            self._game_keys = keys
+        return self._game_keys
+
+    def _browse_game(self, row: float, count: int, key: str) -> dict[str, Any]:
+        """The library's place on the game's song with a key (a row of its song list, maybe between two, as a slow
+        strip has it); the song, as browse_move has it (one the library hasn't: its key)."""
+        listed = self.library()["songs"]
+        index = next((i for i, song in enumerate(listed) if song["id"].split("#", 1)[-1] == key), None)
+        with self._lock:
+            version = self._browse["version"] + 1 if self._browse is not None else 1
+            here = index if index is not None else (self._browse or {}).get("index", 0.0)
+            self._browse = {"index": float(here), "game_row": row, "version": version, "at": time.monotonic()}
+        if index is None:
+            return {"id": f"#{key}", "song": key, "artist": "", "place": round(row), "of": count}
+        self.warm_around(listed[index]["id"])
+        return {**listed[index], "place": round(row), "of": count}
+
+    def _game_move(self, said: GameSongs, to: Callable[[float, list[str]], float]) -> dict[str, Any] | None:
+        """A remote's move through the game's song list: from the row it's on (or the remote's, moving it still), to
+        another; the game's highlight moved there, and the library's place."""
+        keys = self._game_song_keys(said.count)
+        if not keys:
+            return None
+        recent = time.monotonic() - self._game_sent[0] < GAME_SONGS_OWN
+        with self._lock:
+            row = (self._browse or {}).get("game_row") if recent else None
+        start = float(row) if row is not None else float(said.row)
+        row = min(max(to(start, keys), 0.0), len(keys) - 1.0)
+        key = keys[round(row)]
+        if key != self._game_sent[1] or not recent:
+            self._riff_loop.focus(key)
+        self._game_sent = (time.monotonic(), key)
+        return self._browse_game(row, len(keys), key)
+
     def browse_move(self, songs: float) -> dict[str, Any] | None:
         """Moves a remote's place in the library by some songs (from the active song at first); the song there (its
-        place in it too, and how many songs it has: place, of)."""
+        place in it too, and how many songs it has: place, of). Following, on the game's song list: through its."""
+        said = self.game_songs()
+        if said is not None:
+            return self._game_move(said, lambda start, _keys: start + songs)
         listed = self.library()["songs"]
         if not listed:
             return None
@@ -666,7 +749,21 @@ class Gui:
     def browse_letter(self, steps: int) -> dict[str, Any] | None:
         """Moves a remote's place in the library a letter at a time (its artists': the library is in their order):
         on, to the first song of the next (past the last: the last song); back, to the first of the one it's on,
-        then of the one before. The song there, as browse_move has it."""
+        then of the one before. The song there, as browse_move has it. Following, on the game's song list: through
+        its (the library's artists for its keys)."""
+        said = self.game_songs()
+        if said is not None:
+            artists = {song["id"].split("#", 1)[-1]: song["artist"] for song in self.library()["songs"]}
+
+            def by_letter(start: float, keys: list[str]) -> float:
+                letters = [_initial(artists.get(key, key)) for key in keys]
+                firsts = [i for i in range(len(keys)) if i == 0 or letters[i] != letters[i - 1]]
+                index = round(start)
+                for _step in range(abs(steps)):
+                    index = (next((i for i in firsts if i > index), len(keys) - 1) if steps > 0 else
+                             max((i for i in firsts if i < index), default=0))
+                return float(index)
+            return self._game_move(said, by_letter)
         listed = self.library()["songs"]
         if not listed:
             return None
