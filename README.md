@@ -210,7 +210,7 @@ the commands do:
   game first, then the song's order, each part's lowest notes first; a part's lit keys then just say whether it
   lights keys: an On/Off button on the page, and the Launchkey's pad below it turns them on or off, "Lead:
   lights on", any number of parts lit) and real pitch
-  (the notes at their own pitch, not the lit keys', playing and following), kept in
+  (the notes at their own pitch, not the lit keys', playing and following; on at first), kept in
   `~/Library/Application Support/rs-keylights/gui.json`, and a button to look for new songs. The two
   timings apply at once, to what plays or is followed.
 

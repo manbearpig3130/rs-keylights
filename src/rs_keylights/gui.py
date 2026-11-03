@@ -122,7 +122,7 @@ def default_follow() -> dict[str, Any]:
     (playing songs uses them too), the tones of arrangements given their own, and the parts chosen to play
     while an arrangement is played (all by persistent ID: {played: {arrangement: {play, lights}}}, where
     only the one played plays on every key)."""
-    return {"real_pitch": False, "offset_ms": 0, "show_key": True, "lead": {}, "rhythm": {},
+    return {"real_pitch": True, "offset_ms": 0, "show_key": True, "lead": {}, "rhythm": {},
             "bass": {}, "arrangements": {}, "parts": {}}
 
 
@@ -380,7 +380,8 @@ class Gui:
         self.follow_version = 0  # changes with them, so pages know to show them again
         self._follow_saved = False
         # Playing songs: the options, the song picked, and each song's parts, lit keys, tones and start
-        self.play_options: dict[str, Any] = {"speed": 1.0, "real_pitch": False, "silent": False, "song": None}
+        self.play_options: dict[str, Any] = {"speed": 1.0, "real_pitch": True, "silent": False, "song": None}  # (real
+        # pitch: the notes as they sound on the guitar, at first)
         self.song_settings: dict[str, dict[str, Any]] = {}
         self.play_version = 0
         self._play_saved = False

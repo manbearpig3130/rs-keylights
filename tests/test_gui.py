@@ -80,6 +80,8 @@ def server(tmp_path):
     Thread(target=overlay.serve_forever, daemon=True).start()
     gui = Gui(index, factory, tmp_path / "gui.json", overlay_port=overlay.server_address[1],
               list_ports=lambda: ["CASIO USB-MIDI"], other_follow=lambda: False)
+    assert gui.play_options["real_pitch"] and gui.follow_settings["real_pitch"]  # (on, as it starts)
+    gui.play_options["real_pitch"] = gui.follow_settings["real_pitch"] = False  # (these tests: the lit keys' pitch)
     srv = GuiServer(gui, 0)
     Thread(target=srv.serve_forever, daemon=True).start()
     srv.outs = outs
@@ -866,6 +868,7 @@ def test_a_kind_of_part_can_sound_on_another_midi_device(tmp_path):
     gui.set_song({"song": sid, "parts": {"bass": {"play": True, "lights": 2}, "lead": {"lights": 2}}})
     gui.play({"song": sid})
     assert wait_for(lambda: [m for m in synth_out.sent if m[0] == 0x90], bool)  # the bass's notes there, channel 1
+    first = min(m[1] for m in synth_out.sent if m[0] == 0x90)
     assert not [m for m in keyboard_outs[-1].sent if m[0] in (0x9B, 0x9C, 0x9D)]  # (none on the keyboard's for it)
     assert not [m for m in synth_out.sent if m[0] & 0xF0 == 0xC0]  # (its own sound: no tone)
     gui.set_volumes({1: 90})  # the mixer: its volume on it too
@@ -876,7 +879,7 @@ def test_a_kind_of_part_can_sound_on_another_midi_device(tmp_path):
     gui.set_settings({"outputs": {"bass": {"port": "monologue SOUND", "channel": 1, "program": 11, "octave": 1}}})
     assert wait_for(lambda: [m for m in synth_out.sent[sent:] if m[0] == 0x90], bool)
     played = [m[1] for m in synth_out.sent[sent:] if m[0] == 0x90]
-    assert min(played) >= 40 + 12  # (an octave up)
+    assert min(played) == first + 12  # (an octave up)
     gui.stop()
     assert gui.output_status() == {"bass": True}
     gui.close()  # (closed with the page)
