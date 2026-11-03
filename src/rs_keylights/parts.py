@@ -29,7 +29,7 @@ class Part:
 @dataclass(frozen=True)
 class PlannedPart:
     part: Part
-    shift: int  # octaves (in semitones) its lit keys are moved up
+    shift: int  # octaves (in semitones) its lit keys are moved up (its sound: by its own notes' octaves, voices.shift)
     lights: list[Light]
     voices: Voices | None
     channels: tuple[int, ...] = ()  # the keyboard's channels it sounds on (none: silent, or another MIDI device)
@@ -46,7 +46,8 @@ CHANNELS_USED_UP = (f"The keyboard's {len(KEYBOARD_CHANNELS)} channels are used 
 
 
 def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True) -> list[PlannedPart]:
-    """Lights and voices for each part. The lit parts share an octave shift, so their keys line up; each part on
+    """Lights and voices for each part. The lit parts' keys share an octave shift, so they line up; each part's
+    sound is moved by its own (its notes' octaves: the same however many keys it lights); each part on
     the keyboard sounds on channels of its own, as many as its voices need, in turn from KEYBOARD_CHANNELS (one
     on another MIDI device, none). Too many for them: a ValueError (strict), else the parts that don't fit just
     light their keys."""
@@ -55,7 +56,8 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
     free = list(KEYBOARD_CHANNELS)
     planned = []
     for part in parts:
-        shift = lit_shift if part.lights else full.octave_shift(part.arrangement.notes)
+        own = full.octave_shift(part.arrangement.notes)
+        shift = lit_shift if part.lights else own
         voices, channels = None, ()
         if voices_for:
             wanted = voices_for(part.ref, (0, 0, 0))  # (its voices: which it has)
@@ -67,7 +69,7 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
                 main = channels[0] if channels else 0
                 low = channels[1] if wanted.low is not None and channels else main
                 mute = channels[-1] if wanted.mute is not None and channels else main
-                voices = voices_for(part.ref, (main, low, mute)).for_arrangement(shift)
+                voices = voices_for(part.ref, (main, low, mute)).for_arrangement(own)
         lights = schedule(part.arrangement.notes, KeyRange(max_lit=part.lights or 4), shift, part.arrangement.shapes,
                           voices.overlap if voices is not None else 0.0)
         planned.append(PlannedPart(part, shift, lights, voices, channels))

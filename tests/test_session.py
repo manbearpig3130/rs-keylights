@@ -55,6 +55,20 @@ def test_plan_shares_the_lit_parts_shift_and_gives_each_part_its_channels(tmp_pa
     assert plan(parts, None)[0].voices is None
 
 
+def test_a_parts_sound_stays_in_its_octave_however_many_keys_the_parts_light(tmp_path):
+    path = tmp_path / "a_m.psarc"
+    low = Song(levels={0: [N(1.0, string=0, fret=0)]}, tuning=(-5,) * 6)  # B1
+    high = Song(levels={0: [N(1.0, string=5, fret=12)]})  # E5
+    path.write_bytes(song_archive("a", {"lead": ("L", high), "rhythm": ("R", low)}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    choice = SoundChoice({}, {}, {}, {}, False)
+
+    def sounds(lead_keys, rhythm_keys):
+        parts = [Part(refs["lead"], refs["lead"].load(), lead_keys), Part(refs["rhythm"], refs["rhythm"].load(), rhythm_keys)]
+        return [p.voices.shift for p in plan(parts, choice.voices)]
+    assert sounds(2, 2) == sounds(0, 2) == sounds(2, 0) == sounds(0, 0) == sounds(4, 0)  # (just the lights move)
+
+
 def test_plan_gives_each_part_the_channels_its_voices_need_so_five_or_more_can_play(tmp_path):
     path = tmp_path / "a_m.psarc"
     song = Song(levels={0: [N(1.0, string=0, fret=3)]})
