@@ -558,12 +558,13 @@ class Gui:
                 play = bool(fields["play"]) if "play" in fields else part["play"]
                 lights = int(_number(fields["lights"], "lit keys", 0, 4)) if "lights" in fields else part["lights"]
                 parts[name] = {"play": play, "lights": lights, **tones}
+            pooled = bool(self.settings["most_lights"])  # (the lit parts sharing the 4 keys: any number lit)
             for name, fields in change.items():  # a part turned on takes the keys still free
-                if fields.get("play") and "lights" not in fields:
+                if fields.get("play") and "lights" not in fields and not pooled:
                     others = sum(p["lights"] for n, p in parts.items() if p["play"] and n != name)
                     parts[name]["lights"] = min(parts[name]["lights"], max(0, 4 - others))
             on = [p for p in parts.values() if p["play"]]
-            if sum(p["lights"] for p in on) > 4:
+            if sum(p["lights"] for p in on) > 4 and not pooled:
                 raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
             kept = dict(self.song_settings.get(sid, {}), parts=parts)
             if "start" in body:
@@ -1105,8 +1106,9 @@ class Gui:
                 if played is None:
                     raise GuiError(f"No arrangement {played_id} in the library")
                 refs = self._song_refs(played)
+                pooled = bool(self.settings["most_lights"])  # (the lit parts sharing the 4 keys: any number lit)
                 for arrangement_id, fields in chosen.items():  # one turned on takes the keys still free
-                    if isinstance(fields, dict) and fields.get("play") and "lights" not in fields:
+                    if isinstance(fields, dict) and fields.get("play") and "lights" not in fields and not pooled:
                         others = sum(lights for r, play, lights in parts_chosen(settings, played, refs)
                                      if play and r.persistent_id != arrangement_id.upper())
                         mine = next((l for r, _p, l in parts_chosen(settings, played, refs)
@@ -1115,7 +1117,7 @@ class Gui:
                             settings = changed_follow(settings, {"parts": {played_id: {arrangement_id: {
                                 "lights": max(0, 4 - others)}}}})
                 on = [lights for _r, play, lights in parts_chosen(settings, played, refs) if play]
-                if sum(on) > 4:
+                if sum(on) > 4 and not pooled:
                     raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
             was, self.follow_settings = self.follow_settings, settings
             voices_for = self._follow_voices()  # (the parts' sounds fit the keyboard's channels: else as it was)
@@ -1295,7 +1297,8 @@ class Gui:
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "volumes": list(self.settings["volumes"]),
-                    "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info()}
+                    "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
+                    "most_lights": bool(self.settings["most_lights"])}
         sid, song = playing or self.play_options.get("song"), None
         position = length = None
         if sid:
@@ -1323,7 +1326,8 @@ class Gui:
                 "real_pitch": self.play_options["real_pitch"], **defaults, "song": song, "position": position,
                 "length": length, "paused": paused, "speed": self.play_options["speed"],
                 "volumes": list(self.settings["volumes"]), "loop": self.loop_info(sid),
-                "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info()}
+                "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
+                    "most_lights": bool(self.settings["most_lights"])}
 
     def _chords(self, sid: str, key: Callable[[ArrangementRef], str]) -> dict[str, tuple[Chord, ...]]:
         """A song's arrangements' chords, by their key (the part, or its persistent ID); none if it's gone."""

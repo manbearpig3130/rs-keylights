@@ -208,7 +208,8 @@ the commands do:
   lights** (the lit parts share the 4 lit keys a moment at a time: as many different keys as they play, a note
   two parts play taking one and a resting part leaving its keys to the others; the arrangement you play in the
   game first, then the song's order, each part's lowest notes first; a part's lit keys then just say whether it
-  lights keys, 0 never) and real pitch
+  lights keys: an On/Off button on the page, and the Launchkey's pad below it turns them on or off, "Lead:
+  lights on", any number of parts lit) and real pitch
   (the notes at their own pitch, not the lit keys', playing and following), kept in
   `~/Library/Application Support/rs-keylights/gui.json`, and a button to look for new songs. The two
   timings apply at once, to what plays or is followed.

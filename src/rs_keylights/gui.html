@@ -105,6 +105,8 @@
   header .icon { padding: 3px 0; width: 42px; font-size: 17px; line-height: 1.3; text-align: center; }
   .lit { display: inline-flex; align-items: center; gap: 4px; }
   .lit button { padding: 2px 9px; }
+  .lit .lit-toggle { min-width: 3.4em; }
+  .lit .lit-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .lit b { min-width: 1.3em; text-align: center; }
   #followLog summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-top: 8px; }
   table { width: 100%; border-collapse: collapse; margin: 12px 0; }
@@ -955,6 +957,16 @@ $("tabPart").addEventListener("change", () => {
 function litControl(value, others, onChange) {
   const box = document.createElement("span");
   box.className = "lit";
+  if ($("mostLights").checked) {  // (the lit parts share the 4 keys: just whether it lights them)
+    const lit = document.createElement("button");
+    lit.type = "button";
+    lit.className = "lit-toggle" + (value ? " on" : "");
+    lit.textContent = value ? "On" : "Off";
+    lit.title = value ? "It shares the lit keys with the other lit parts: stop it lighting keys" : "Light its keys too";
+    lit.addEventListener("click", () => onChange(value ? 0 : 1));
+    box.append(lit);
+    return box;
+  }
   const step = (text, delta, title) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -2083,7 +2095,10 @@ $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("f
 $("launchkey").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("ring").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("techniques").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
-$("mostLights").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+$("mostLights").addEventListener("change", () => act(async () => {
+  await api("/api/settings", settingsRequest());
+  if (selected) renderSong();  // (its parts' lit keys: on or off, or how many)
+}));
 $("pedalSlot").addEventListener("change", () => {
   if ($("pedalSlot").value) act(() => api("/api/pedal", {slot: Number($("pedalSlot").value)}));
 });

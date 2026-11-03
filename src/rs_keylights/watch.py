@@ -23,7 +23,8 @@ from .tones import TONES, tone
 #
 # - The arrangements (the up arrow beside the knobs, lit): pads 1 to 6 on top, the song's arrangements (lit
 #   when they play, the one you play in the game pulsing; a tap mutes one or plays it again, muted: as dim as
-#   its colour goes); below them, their lit keys (a tap gives one more); knobs 1 to 6, each steps through its
+#   its colour goes); below them, their lit keys (a tap gives one more; with Most lights on, on or off, any number
+#   of them lit, sharing the 4); knobs 1 to 6, each steps through its
 #   arrangement's tones (or palm-mute or low-note tones: the up arrow again goes through them; on another MIDI device, its
 #   programs). Column 7, its keys, a part of
 #   their own playing the keyboard: the top pad turns them on or off, the bottom one whether they light the
@@ -507,7 +508,8 @@ class Watch:
                     picture[(0, column)] = ("palette", MUTED_PAD, False)
                 else:
                     picture[(0, column)] = ("rgb", *(round(c * MUTED_LEVEL) for c in rgb))
-                level = self._lights_of(a) / 4 * (1.0 if a["play"] else 0.25)
+                share = min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
+                level = share * (1.0 if a["play"] else 0.25)
                 picture[(1, column)] = ("rgb", *(round(c * level) for c in rgb))
             keys = info.get("keys") or {}
             if not parts:
@@ -654,6 +656,12 @@ class Watch:
             self._turn_tone(column, event.steps, False, info, now)
         elif event.row == 0:
             self._toggle_part(a, now)
+        elif info.get("most_lights"):  # (the lit parts share the 4 keys: just whether it lights them)
+            lights = 0 if self._lights_of(a) else 1
+            self._pending[(a["id"], "lights")] = lights
+            self.gui.change_part(a["id"], {"lights": lights}, later=PAD_WAIT)
+            self._turned_at, self._wait, self._settling = now, PAD_WAIT, True
+            self._said_by_pad(now, f"{a['name']}: lights {'on' if lights else 'off'}")
         else:
             others = sum(self._lights_of(x) for x in arrangements if x["play"] and x["id"] != a["id"])
             options = list(range(max(0, 4 - others) + 1))  # up to the keys still free
@@ -1166,7 +1174,8 @@ class Watch:
             volumes = [self._volume_of(slot, info) for slot in range(len(arrangements_now))] + [self._keys_volume(info)]
             keys = info.get("keys") or {}
             quiet = [not a["play"] for a in arrangements_now] + [not keys.get("sound", True)]
-            lights = [self._lights_of(a) / 4 for a in arrangements_now] + [1.0 if keys.get("lights") else 0.0]
+            lights = [min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
+                      for a in arrangements_now] + [1.0 if keys.get("lights") else 0.0]
             turned = (None if self._mix_slider == CONTROLS else len(arrangements_now) if self._mix_slider == KEYS_COLUMN
                       else min(self._mix_slider, len(names) - 1))  # (the keys' slider: after the arrangements')
             return (("mixer", *names, *volumes, *quiet, *lights, turned, muted),

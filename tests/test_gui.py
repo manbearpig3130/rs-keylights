@@ -242,16 +242,22 @@ def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_ta
     status, said = call(server, "/api/song/settings", {"song": sid, "parts": {  # three channels each: 15 of 12
         name: {"low_tone": 33, "mute_tone": 29, "split": "E2"} for name in names}})
     assert status == 400 and "channels are used up" in said["error"]
+    lit = {"song": sid, "parts": {name: {"lights": 1} for name in names}}  # all five lighting keys:
+    assert call(server, "/api/song/settings", lit)[0] == 400  # 5 of the 4 keys, each its own share
+    call(server, "/api/settings", {"most_lights": True})
+    assert call(server, "/api/song/settings", lit)[0] == 200  # pooled: any number lit, sharing the 4
 
 
 def test_most_lights_pools_the_lit_keys_at_once_while_a_song_plays(server):
     sid = first_song(server)
     call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 2}, "rhythm": {"play": True, "lights": 2}}})
     call(server, "/api/play", {"song": sid, "start": 1})
-    assert server.gui._session.player.most_keys is None  # (each part its own lit keys)
+    before = server.gui._session.player
+    assert before.most_keys == 4  # (whatever the parts' shares: the keyboard lights 4 at most)
     _, settings = call(server, "/api/settings", {"most_lights": True})
     player = server.gui._session.player
-    assert settings["most_lights"] is True and player.most_keys == 4 and [t.priority for t in player.tracks] == [0, 1]
+    assert settings["most_lights"] is True and player is not before  # (planned again: the keys pooled)
+    assert [t.priority for t in player.tracks] == [0, 1] and server.gui.remote_info()["most_lights"] is True
     call(server, "/api/stop", {})
 
 

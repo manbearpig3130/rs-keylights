@@ -608,6 +608,25 @@ def test_following_the_games_song_list_moving_by_itself_shows_the_song_it_highli
     assert clock.now < watch._browse_until  # (on the screen for a while)
 
 
+def test_with_most_lights_a_parts_pad_below_turns_its_lights_on_or_off():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.info["most_lights"] = gui.song, True
+    watch.step()
+    assert gui.song["arrangements"][0]["lights"] == 4
+    launchkey.queued = [Pad(1, 0)]  # the lead's: off at once (no going through 3, 2, 1)
+    clock.now = 0.5
+    watch.step()
+    assert gui.changes[-1] == ("L", {"lights": 0}) and note(watch) == ("Lead: lights off", None)
+    launchkey.queued = [Pad(1, 0)]
+    clock.now = 1.0
+    watch.step()
+    assert gui.changes[-1] == ("L", {"lights": 1}) and note(watch) == ("Lead: lights on", None)
+    launchkey.queued = [Pad(1, 1)]  # the rhythm's too, the lead's still on: any number lit (sharing the 4 keys)
+    clock.now = 1.5
+    watch.step()
+    assert gui.changes[-1] == ("R", {"lights": 1}) and note(watch) == ("Rhythm: lights on", None)
+
+
 def test_a_flick_keeps_going_until_the_strip_is_touched():
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song

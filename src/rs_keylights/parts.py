@@ -98,9 +98,8 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
             p.voices.output.program(p.voices.main.channel, p.voices.program)
         for voice in p.voices.all():
             sound.set_voice(voice.channel, voice.tone.program, voice.tone.bank, volume=p.voices.volume)
-    pooled = any(p.pooled for p in planned)
     return Player([_track(p) for p in planned], keyboard, lead=lead, min_period=min_period,
-                  most_keys=MOST_LIT if pooled else None)
+                  most_keys=MOST_LIT)  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
 
 
 def _track(p: PlannedPart) -> Track:
