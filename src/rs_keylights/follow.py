@@ -242,6 +242,7 @@ class Follower:
         self._parts_for = parts_for  # None: just the arrangement played, on every key
         self.lights_early = lights_early  # seconds the keys light before the notes
         self.fastest_flash = fastest_flash  # a key's repeats closer than this flash on every other note
+        self.pooled_lights = False  # the lit parts share the 4 lit keys a moment at a time, the one played first
         self._trace = trace  # what RS Companion reports and what the clock makes of it, for debugging
         self._clock = clock
         self._sleep = sleep
@@ -408,7 +409,8 @@ class Follower:
                     self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
                     continue
             parts.append(Part(ref, arrangement, lights))
-        return plan(parts, self._voices_for, strict=False)  # (one that doesn't fit the keyboard's channels: just lit)
+        return plan(parts, self._voices_for, strict=False, pooled=self.pooled_lights,
+                    first=current)  # (one that doesn't fit the keyboard's channels: just lit)
 
     def _player_with(self, planned: list[PlannedPart]) -> Player:
         self._planned = planned
@@ -454,8 +456,8 @@ class Follower:
 
 
 def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, int, object]]:
-    """What makes parts play differently: which, their lit keys, octave shift and voices."""
-    return [(p.part.ref.persistent_id, p.part.lights, p.shift, p.voices) for p in planned]
+    """What makes parts play differently: which, their lit keys (pooled or not), octave shift and voices."""
+    return [(p.part.ref.persistent_id, p.part.lights, p.pooled, p.shift, p.voices) for p in planned]
 
 
 def _tone_text(tone: Tone) -> str:

@@ -76,6 +76,7 @@ class Track:
     changes: Sequence[tuple[float, int, int, int | None]] = ()
     extras: Sequence[Light] = ()
     sound: KeysProtocol | None = None
+    priority: int = 0  # its lights' rank, the keys pooled (Player's most_keys): 0 first
 
 
 class Player:
@@ -85,8 +86,10 @@ class Player:
     rings (a note sounding twice at once stops once both are done)."""
 
     def __init__(self, tracks: Sequence[Track], keys: KeysProtocol, rate: float = 1.0, lead: float = 0.0,
-                 min_period: float = MIN_PERIOD):
+                 min_period: float = MIN_PERIOD, most_keys: int | None = None):
         self.tracks = list(tracks)
+        self.most_keys = most_keys  # the lit tracks' keys pooled: at most this many at once, by their priority (None:
+        # each track's own lights)
         self.keys = keys
         self.rate = rate  # song seconds per second: the keys' flashing is timed for it
         self.lead = lead  # seconds the keys light before the notes
@@ -98,8 +101,9 @@ class Player:
         self._build()
 
     def _build(self) -> None:
-        self.display: list[KeyLight] = merge_keys([t.lights for t in self.tracks if t.lit], self.rate, self.lead,
-                                                  self.min_period)
+        lit = [t for t in self.tracks if t.lit]
+        self.display: list[KeyLight] = merge_keys([t.lights for t in lit], self.rate, self.lead, self.min_period,
+                                                  self.most_keys, [t.priority for t in lit])
         self._display_ons = [k.on for k in self.display]
         self._sounds = [sorted([*t.lights, *t.extras], key=lambda light: light.on) for t in self.tracks]  # (what
         # each part sounds: its lights and their extras)

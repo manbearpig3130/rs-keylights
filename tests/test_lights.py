@@ -154,3 +154,27 @@ def test_ringing_notes_overlap_the_next_a_little():
     picked_in = Note(1.5, 0, (55,), strings=(3,))
     assert rings([chord, picked_in], shapes=[(1.0, 3.0)], overlap=0.1) == [(3.0, 3.0), (3.0,)]  # (held in its
     # shape, as it was: until it ends)
+
+
+def test_pooled_the_parts_share_four_keys_a_note_two_play_taking_one():
+    from rs_keylights.lights import KeyLight, Light, merge_keys
+
+    chord = [Light(1.0, 2.0, (60, 64, 67, 72))]  # the lead's four-note chord (pooled: all four of its keys)
+    rhythm, bass = [Light(1.0, 2.0, (60,))], [Light(1.0, 2.0, (64,))]  # two of the same notes
+    keys = merge_keys([chord, rhythm, bass], most=4, priorities=[0, 1, 2])
+    assert sorted(k.key for k in keys) == [60, 64, 67, 72]  # (each part its own share: two keys, just 60 and 64)
+    budgets = merge_keys([[Light(1.0, 2.0, (60, 64))], rhythm, bass])  # (lead 2, rhythm 1, bass 1)
+    assert sorted(k.key for k in budgets) == [60, 64]
+
+
+def test_pooled_more_notes_than_keys_the_part_ranked_first_lights_its_lowest():
+    from rs_keylights.lights import KeyLight, Light, merge_keys
+
+    chord, low = [Light(1.0, 2.0, (60, 64, 67, 72))], [Light(1.0, 2.0, (50,))]
+    assert sorted(k.key for k in merge_keys([chord, low], most=4, priorities=[0, 1])) == [60, 64, 67, 72]
+    assert sorted(k.key for k in merge_keys([chord, low], most=4, priorities=[1, 0])) == [50, 60, 64, 67]  # (the
+    # one played in the game first: the chord's highest left out)
+    held, struck = [Light(1.0, 3.0, (60, 64, 67, 72))], [Light(2.0, 2.5, (50,))]  # one ranked first struck later:
+    # the one ranked last cut short
+    keys = merge_keys([held, struck], most=4, priorities=[1, 0])
+    assert KeyLight(1.0, 2.0, 72) in keys and KeyLight(2.0, 2.5, 50) in keys and KeyLight(1.0, 3.0, 67) in keys

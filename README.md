@@ -204,7 +204,11 @@ the commands do:
   `rs-keylights follow` (such as the RS Re-ARMed sidekick) is running, since both would light the keys.
 - **Default tones**: one set each for lead, rhythm and bass parts (combos count as lead), for parts
   without tones of their own, playing a song or following the game. Greyed choices are defaults.
-- **Keyboard**: the MIDI output, the lights' channel, lights early and fastest flash, notes ringing and real pitch
+- **Keyboard**: the MIDI output, the lights' channel, lights early and fastest flash, notes ringing, **most
+  lights** (the lit parts share the 4 lit keys a moment at a time: as many different keys as they play, a note
+  two parts play taking one and a resting part leaving its keys to the others; the arrangement you play in the
+  game first, then the song's order, each part's lowest notes first; a part's lit keys then just say whether it
+  lights keys, 0 never) and real pitch
   (the notes at their own pitch, not the lit keys', playing and following), kept in
   `~/Library/Application Support/rs-keylights/gui.json`, and a button to look for new songs. The two
   timings apply at once, to what plays or is followed.

@@ -405,6 +405,8 @@
           <input type="checkbox" id="ring"> Let notes ring, as a guitar's strings do</label>
           <label title="Ringing, each note sounds on this long after the next starts (but the same note played again), so they run into each other a little. 0: each stops as the next starts">
           overlapping the next by <input id="overlap" type="number" min="0" max="500" step="10" style="width:64px"> ms</label><br>
+          <label title="The lit parts share the 4 lit keys, a moment at a time: as many different keys as they play (a note two parts play takes one), a part resting leaving its keys to the others; the arrangement you play in the game first, then the song's order, the lowest notes first. Their lit keys just say whether each part lights keys (0: never)">
+          <input type="checkbox" id="mostLights"> Most lights: the parts share the 4 lit keys</label><br>
           <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range), playing a song or following the game">
           <input type="checkbox" id="realPitch"> Real pitch</label><br>
           <label title="Bends (pitch bend), slides (a semitone at a time), vibrato, tremolo picking, hammer-ons and pull-offs (softer), slaps and pops (harder), harmonics' own pitches, and dead notes (a click, with a palm-mute tone). Off: accents alone">
@@ -1902,6 +1904,7 @@ async function loadSettings() {
   $("ring").checked = s.ring;
   $("overlap").value = s.overlap_ms;
   $("techniques").checked = s.techniques;
+  $("mostLights").checked = !!s.most_lights;
   $("toneChanges").checked = s.tone_changes;
   $("listen").checked = s.listen;
   const inputs = s.inputs.includes(s.listen_device) ? s.inputs : [s.listen_device, ...s.inputs];
@@ -2036,6 +2039,7 @@ function settingsRequest() {
     ring: $("ring").checked,
     overlap_ms: Number($("overlap").value) || 0,
     techniques: $("techniques").checked,
+    most_lights: $("mostLights").checked,
   };
 }
 
@@ -2079,6 +2083,7 @@ $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("f
 $("launchkey").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("ring").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("techniques").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+$("mostLights").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("pedalSlot").addEventListener("change", () => {
   if ($("pedalSlot").value) act(() => api("/api/pedal", {slot: Number($("pedalSlot").value)}));
 });

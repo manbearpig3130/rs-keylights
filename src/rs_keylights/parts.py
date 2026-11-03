@@ -33,6 +33,8 @@ class PlannedPart:
     lights: list[Light]
     voices: Voices | None
     channels: tuple[int, ...] = ()  # the keyboard's channels it sounds on (none: silent, or another MIDI device)
+    pooled: bool = False  # its keys come from the 4 the lit parts share, a moment at a time (plan's pooled)
+    priority: int = 0  # its rank for them: 0 first
 
 
 def channels_needed(voices: Voices) -> int:
@@ -41,21 +43,27 @@ def channels_needed(voices: Voices) -> int:
     return 0 if voices.output is not None else 1 + (voices.low is not None) + (voices.mute is not None)
 
 
+MOST_LIT = 4  # keys the keyboard lights at once
+
 CHANNELS_USED_UP = (f"The keyboard's {len(KEYBOARD_CHANNELS)} channels are used up: play fewer parts on it, give "
                     "fewer palm-mute and low-note tones of their own, or move one to another MIDI device")
 
 
-def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True) -> list[PlannedPart]:
+def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True, pooled: bool = False,
+         first: ArrangementRef | None = None) -> list[PlannedPart]:
     """Lights and voices for each part. The lit parts' keys share an octave shift, so they line up; each part's
     sound is moved by its own (its notes' octaves: the same however many keys it lights); each part on
     the keyboard sounds on channels of its own, as many as its voices need, in turn from KEYBOARD_CHANNELS (one
     on another MIDI device, none). Too many for them: a ValueError (strict), else the parts that don't fit just
-    light their keys."""
+    light their keys. Pooled, the lit parts share the keyboard's 4 lit keys, a moment at a time, as many different
+    keys as they play (one two parts play: one key), the one first (the arrangement played in the game), then the
+    rest in turn, ranked first; else each lights as many as it's given."""
     full = KeyRange()
     lit_shift = full.octave_shift([n for p in parts if p.lights for n in p.arrangement.notes])
     free = list(KEYBOARD_CHANNELS)
     planned = []
-    for part in parts:
+    ranked = sorted(range(len(parts)), key=lambda i: (first is None or parts[i].ref != first, i))
+    for i, part in enumerate(parts):
         own = full.octave_shift(part.arrangement.notes)
         shift = lit_shift if part.lights else own
         voices, channels = None, ()
@@ -70,9 +78,11 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
                 low = channels[1] if wanted.low is not None and channels else main
                 mute = channels[-1] if wanted.mute is not None and channels else main
                 voices = voices_for(part.ref, (main, low, mute)).for_arrangement(own)
-        lights = schedule(part.arrangement.notes, KeyRange(max_lit=part.lights or 4), shift, part.arrangement.shapes,
+        most = MOST_LIT if pooled and part.lights else part.lights or MOST_LIT
+        lights = schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes,
                           voices.overlap if voices is not None else 0.0)
-        planned.append(PlannedPart(part, shift, lights, voices, channels))
+        planned.append(PlannedPart(part, shift, lights, voices, channels, pooled and bool(part.lights),
+                                   ranked.index(i)))
     return planned
 
 
@@ -88,7 +98,9 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
             p.voices.output.program(p.voices.main.channel, p.voices.program)
         for voice in p.voices.all():
             sound.set_voice(voice.channel, voice.tone.program, voice.tone.bank, volume=p.voices.volume)
-    return Player([_track(p) for p in planned], keyboard, lead=lead, min_period=min_period)
+    pooled = any(p.pooled for p in planned)
+    return Player([_track(p) for p in planned], keyboard, lead=lead, min_period=min_period,
+                  most_keys=MOST_LIT if pooled else None)
 
 
 def _track(p: PlannedPart) -> Track:
@@ -102,7 +114,7 @@ def _track(p: PlannedPart) -> Track:
         everything = [*lights, *extras]
         lights, extras = _one_at_a_time(lights, everything), _one_at_a_time(extras, everything)
     return Track(lights, p.voices, lit=bool(p.part.lights), changes=_tone_changes(p), extras=extras,
-                 sound=p.voices.output if p.voices is not None else None)
+                 sound=p.voices.output if p.voices is not None else None, priority=p.priority)
 
 
 def _one_at_a_time(lights: list[Light], among: list[Light]) -> list[Light]:

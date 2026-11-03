@@ -203,6 +203,7 @@ def test_settings_are_kept(server, tmp_path):
         "midi_port": "CASIO USB-MIDI", "channel": 11, "lights_early_ms": 15, "fastest_flash_ms": 70, "launchkey": True,
         "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
         "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {},
+        "most_lights": False,
         "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187]}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
@@ -241,6 +242,17 @@ def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_ta
     status, said = call(server, "/api/song/settings", {"song": sid, "parts": {  # three channels each: 15 of 12
         name: {"low_tone": 33, "mute_tone": 29, "split": "E2"} for name in names}})
     assert status == 400 and "channels are used up" in said["error"]
+
+
+def test_most_lights_pools_the_lit_keys_at_once_while_a_song_plays(server):
+    sid = first_song(server)
+    call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 2}, "rhythm": {"play": True, "lights": 2}}})
+    call(server, "/api/play", {"song": sid, "start": 1})
+    assert server.gui._session.player.most_keys is None  # (each part its own lit keys)
+    _, settings = call(server, "/api/settings", {"most_lights": True})
+    player = server.gui._session.player
+    assert settings["most_lights"] is True and player.most_keys == 4 and [t.priority for t in player.tracks] == [0, 1]
+    call(server, "/api/stop", {})
 
 
 def test_changes_while_playing_apply_where_the_song_is(server):

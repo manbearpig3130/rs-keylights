@@ -69,6 +69,19 @@ def test_a_parts_sound_stays_in_its_octave_however_many_keys_the_parts_light(tmp
     assert sounds(2, 2) == sounds(0, 2) == sounds(2, 0) == sounds(0, 0) == sounds(4, 0)  # (just the lights move)
 
 
+def test_plan_pooled_gives_the_lit_parts_every_key_and_the_one_played_first(tmp_path):
+    path = tmp_path / "a_m.psarc"
+    song = Song(levels={0: [N(1.0, string=s, fret=2) for s in range(5)]})  # a five-note chord
+    path.write_bytes(song_archive("a", {"lead": ("L", song), "rhythm": ("R", song), "bass": ("B", song)}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    parts = [Part(refs["lead"], refs["lead"].load(), 2), Part(refs["rhythm"], refs["rhythm"].load(), 1),
+             Part(refs["bass"], refs["bass"].load(), 0)]
+    assert [len(p.lights[0].keys) for p in plan(parts, None)[:2]] == [2, 1]  # (each its own share)
+    pooled = plan(parts, None, pooled=True, first=refs["rhythm"])
+    assert [len(p.lights[0].keys) for p in pooled[:2]] == [4, 4] and [p.pooled for p in pooled] == [True, True, False]
+    assert [p.priority for p in pooled] == [1, 0, 2]  # (the rhythm's played: first, then the song's order)
+
+
 def test_plan_gives_each_part_the_channels_its_voices_need_so_five_or_more_can_play(tmp_path):
     path = tmp_path / "a_m.psarc"
     song = Song(levels={0: [N(1.0, string=0, fret=3)]})

@@ -208,8 +208,11 @@ class KeyLight:
 
 
 def merge_keys(parts: Sequence[Sequence[Light]], rate: float = 1.0, lead: float = 0.0,
-               min_period: float = MIN_PERIOD) -> list[KeyLight]:
-    """One timeline per key from the lights of all the lit parts: what the keys show.
+               min_period: float = MIN_PERIOD, most: int | None = None,
+               priorities: Sequence[int] = ()) -> list[KeyLight]:
+    """One timeline per key from the lights of all the lit parts: what the keys show; at most most keys at once
+    (None: as the parts' own lights have it), the ones ranked first kept (most_at_once: the parts' priorities, 0
+    first, as they're given; else their order).
 
     Strikes of a key by different parts within TOGETHER of each other are one strike. Before a key's
     next strike it goes dark for DARK of the time to it, so repeats flash, and a strike while the key
@@ -225,6 +228,7 @@ def merge_keys(parts: Sequence[Sequence[Light]], rate: float = 1.0, lead: float 
     min_period, dark_min, dark_max, min_on = (x * rate for x in (min_period, DARK_MIN, DARK_MAX, MIN_ON))
     early = lead * rate
     out: list[KeyLight] = []
+    ranks: list[tuple[int, int]] = []  # (each one's: its parts' best priority, its key)
     for key, found in strikes.items():
         found.sort()
         merged: list[list] = []  # [on, off, parts]
@@ -237,7 +241,7 @@ def merge_keys(parts: Sequence[Sequence[Light]], rate: float = 1.0, lead: float 
                 last[1] = max(last[1], off)
             else:
                 merged.append([on, off, {part}])
-        for i, (on, off, _parts) in enumerate(merged):
+        for i, (on, off, struck_by) in enumerate(merged):
             if i + 1 < len(merged):
                 following = merged[i + 1]
                 if following[0] < off:  # struck again while lit: lit on through the longer note
@@ -245,5 +249,29 @@ def merge_keys(parts: Sequence[Sequence[Light]], rate: float = 1.0, lead: float 
                 dark = min(max(DARK * (following[0] - on), dark_min), dark_max)
                 off = min(max(min(off, following[0] - dark), on + min_on), following[0])
             out.append(KeyLight(on - early, off - early, key))
+            ranks.append((min(priorities[p] if p < len(priorities) else p for p in struck_by), key))
+    if most is not None:
+        out = most_at_once(out, ranks, most)
     out.sort(key=lambda k: (k.on, k.key))
     return out
+
+
+def most_at_once(lights: Sequence[KeyLight], ranks: Sequence[tuple[int, int]], most: int) -> list[KeyLight]:
+    """At most most keys lit at once: a key lit while that many are takes the place of the one lit ranked last (a
+    rank: its part's priority, then the key: the lower first) if it's ranked before it, cutting that one short;
+    else it isn't lit."""
+    kept: list[KeyLight | None] = []
+    lit: list[tuple[int, tuple[int, int]]] = []  # (where it's kept, its rank)
+    for light, rank in sorted(zip(lights, ranks), key=lambda pair: (pair[0].on, pair[1])):
+        lit = [(i, r) for i, r in lit if (k := kept[i]) is not None and k.off > light.on]
+        if len(lit) >= most:
+            last = max(lit, key=lambda entry: entry[1])
+            if last[1] <= rank:
+                continue
+            lit.remove(last)
+            cut = kept[last[0]]
+            assert cut is not None
+            kept[last[0]] = replace(cut, off=light.on) if light.on > cut.on else None
+        kept.append(light)
+        lit.append((len(kept) - 1, rank))
+    return [light for light in kept if light is not None]

@@ -372,7 +372,7 @@ class Gui:
                                          "launchkey": True, "keys_sound": True, "keys_lights": True, "ring": True,
                                          "overlap_ms": 120, "listen": False, "listen_device": GUITAR_INPUT,
                                          "tone_changes": True, "tone_map": dict(TONE_KINDS), "techniques": True,
-                                         "outputs": {},
+                                         "outputs": {}, "most_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
                                          "pedal_favourites": list(PEDAL_FAVOURITES)}
@@ -1001,7 +1001,7 @@ class Gui:
             assert choice is not None
             return self._routed(replace(choice.voices(ref, channels), volume=volume[ref.part]), ref)
 
-        planned = plan(parts, voices_for if choice else None)
+        planned = plan(parts, voices_for if choice else None, pooled=bool(self.settings["most_lights"]))
         length = max([a.length for _r, a in loaded] + [l.off for pp in planned for l in pp.lights[-1:]])
         return planned, length
 
@@ -1141,6 +1141,7 @@ class Gui:
     def _follow_on(self, session: Following) -> None:
         """The arrangement played goes on with the parts and tones as chosen now."""
         if session is self._session and session.running:
+            session.follower.pooled_lights = bool(self.settings["most_lights"])
             session.set_parts(self._follow_voices(), self._follow_parts())
 
     def _replay(self, key: str, action: Callable[[], None], later: float) -> None:
@@ -1183,6 +1184,7 @@ class Gui:
                 following = Following(OverlayClient(self.overlay_port), self.index, keyboard, self._follow_voices(),
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
                                       parts_for=self._follow_parts(), trace=self._trace)
+                following.follower.pooled_lights = bool(self.settings["most_lights"])
                 following.start()
                 self._session, self._followed = following, None
         return self.state()
@@ -2007,6 +2009,7 @@ class Gui:
         overlap = _number(body.get("overlap_ms", self.settings["overlap_ms"]), "overlap", 0, 500)
         tone_changes = bool(body.get("tone_changes", self.settings["tone_changes"]))
         played = bool(body.get("techniques", self.settings["techniques"]))
+        most_lights = bool(body.get("most_lights", self.settings["most_lights"]))
         listen = bool(body.get("listen", self.settings["listen"]))
         listen_device = str(body.get("listen_device", self.settings["listen_device"]) or GUITAR_INPUT)
         backup = str(body.get("pedal_backup", self.settings["pedal_backup"]) or "").strip()
@@ -2016,11 +2019,12 @@ class Gui:
         if not port:
             raise GuiError("Choose the keyboard's MIDI output")
         sounded = (self.settings["ring"], self.settings["tone_changes"], self.settings["tone_map"],
-                   self.settings["techniques"], self.settings["outputs"], self.settings["overlap_ms"])
+                   self.settings["techniques"], self.settings["outputs"], self.settings["overlap_ms"],
+                   self.settings["most_lights"])
         changed = dict(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash, launchkey=launchkey,
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, pedal_backup=backup,
-                       pedal_favourites=favourites)
+                       pedal_favourites=favourites, most_lights=most_lights)
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
         self.settings.update(changed)
@@ -2032,8 +2036,8 @@ class Gui:
             if isinstance(session, (Playback, Following)) and session.running:
                 session.retime_lights(*self._light_timing())
         self.listen_now()  # (the guitar heard, or not)
-        if (ring, tone_changes, tone_map, played, outputs, overlap) != sounded:  # (the notes ringing, tone changes,
-            # techniques and other MIDI devices: at once)
+        if (ring, tone_changes, tone_map, played, outputs, overlap, most_lights) != sounded:  # (the notes ringing, tone
+            # changes, techniques, other MIDI devices and the lights pooled: at once)
             if isinstance(session, Following):
                 self._follow_on(session)
             elif self._playing:
