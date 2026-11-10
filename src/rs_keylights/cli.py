@@ -83,8 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     drums_parser = commands.add_parser("drums", help="make a song's drum part from its audio (a minute or so: the tools "
                                                      "from tools/drums-setup.sh); the page plays it along")
-    drums_parser.add_argument("song", help="a .psarc file, or part of a song's name, artist or file name")
+    drums_parser.add_argument("song", nargs="?", help="a .psarc file, or part of a song's name, artist or file name")
     drums_parser.add_argument("--again", action="store_true", help="make it again, if it's made")
+    drums_parser.add_argument("--made", action="store_true",
+                              help="make every song's part again that was made before (as an update needs: a minute "
+                                   "or so each)")
     drums_parser.set_defaults(handler=run_drums)
 
     index = commands.add_parser("index", help="update the index of the game's songs")
@@ -512,18 +515,35 @@ def run_play(args: argparse.Namespace) -> int:
 
 
 def run_drums(args: argparse.Namespace) -> int:
+    if args.made:
+        songs: dict[tuple[str, str], list[ArrangementRef]] = {}
+        for ref in open_index(args).arrangements():
+            songs.setdefault((ref.archive, ref.song_key), []).append(ref)
+        made = sorted((refs for refs in songs.values() if drums.made_before(refs[0])), key=lambda r: r[0].sort_key)
+        print(f"{len(made)} drum parts to make again")
+        game = game_dir(args)
+        failed = sum(_make_drums(refs, True, game) for refs in made)
+        return 1 if failed else 0
+    if args.song is None:
+        print("rs-keylights: which song? (or --made)", file=sys.stderr)
+        return 1
     refs = find_song(args)
     if refs is None:
         return 1
+    return _make_drums(refs, args.again, game=game_dir(args))
+
+
+def _make_drums(refs: list[ArrangementRef], again: bool, game: Path) -> int:
+    """One song's drum part made (1: it failed)."""
     ref = refs[0]
     print(ref.title)
-    if drums.kept(ref) is not None and not args.again:
+    if drums.kept(ref) is not None and not again:
         print("Its drum part is made already (--again to make it again)")
         return 0
     beats = next((a.beats for a in (r.load() for r in refs if r.part not in NO_NOTES) if a.beats), ())
     started = time.monotonic()
     try:
-        hits = drums.make(ref, beats, game_dir(args), say=lambda step: print(f"  {step}...", flush=True))
+        hits = drums.make(ref, beats, game, say=lambda step: print(f"  {step}...", flush=True))
     except drums.DrumsError as exc:
         print(f"rs-keylights: {exc}", file=sys.stderr)
         return 1

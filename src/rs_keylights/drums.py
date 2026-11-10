@@ -23,7 +23,7 @@ from .psarc import Archive, ArchiveError
 # in the drum track) and snapped to
 # the chart's 16th notes, so it keeps time with the game's song (Riff Repeater and speed changes too).
 
-DRUMS_VERSION = 1  # (of the kept parts: another, made again)
+DRUMS_VERSION = 2  # (of the kept parts: another, made again; 2: hits no longer pulled onto the chart's beats)
 KICK, SNARE, CLOSED_HAT, OPEN_HAT, CRASH, RIDE = 36, 38, 42, 46, 49, 51  # General MIDI drums
 TOMS = (43, 47, 50)  # low (high floor tom), mid (low-mid tom), high
 NAMES = {KICK: "kick", SNARE: "snare", CLOSED_HAT: "hi-hat", OPEN_HAT: "open hi-hat", CRASH: "crash", RIDE: "ride",
@@ -34,7 +34,8 @@ ADTOF_THRESHOLDS = (0.22, 0.24, 0.32, 0.22, 0.30)  # a hit rises this much at le
 THRESHOLDS = (0.22, 0.16, 0.32, 0.22, 0.30)  # (the snare's lower: a few quiet ones missed)
 AVERAGE = 0.1  # seconds: a hit rises over its drum's strength on average over this before it (as ADTOF's)
 COMBINE = 0.02  # seconds: one drum's peaks this close, one hit
-SNAP_MOST = 0.05  # seconds a hit's moved to the grid at most (further: left where it is)
+SNAP_MOST = 0.012  # seconds a hit's moved to the chart's grid at most (about the model's own precision: further,
+# left where the record has it)
 DRUM_CHANNEL = 10  # General MIDI's drums
 
 
@@ -83,6 +84,11 @@ def kept(ref: ArrangementRef, cache: Path | None = None) -> list[Hit] | None:
         hits = [Hit(float(t), int(n), int(v)) for t, n, v in data.get("hits", [])]
     _read[path] = (stat.st_mtime, stat.st_size, DRUMS_VERSION, hits)
     return hits
+
+
+def made_before(ref: ArrangementRef, cache: Path | None = None) -> bool:
+    """Whether the song's drum part was made, by this version or an earlier one."""
+    return _cache_file(ref, cache).exists()
 
 
 def keep(ref: ArrangementRef, hits: Sequence[Hit], cache: Path | None = None) -> None:
@@ -191,25 +197,20 @@ def refine(picked: Sequence[tuple[float, int, float]], audio: Any, rate: int) ->
 
 
 def snap(hits: Sequence[Hit], beats: Sequence[float]) -> list[Hit]:
-    """The hits on the chart's 16th notes (between its beats), the whole part moved by its median offset to them
-    first (the model's frames and the separation's delay); one SNAP_MOST off or more left where it is, and one drum
-    twice on a 16th once (the louder)."""
+    """The hits as the record has them, tidied: one within SNAP_MOST of the chart's 16th notes (between its beats)
+    put on it, the rest left where they are, and one drum twice on a time once (the louder). Not moved to the chart:
+    a song's chart can be tens of milliseconds off its audio (custom ones especially), and the part plays with the
+    audio, not the chart."""
     import numpy as np
     b = np.array(sorted(beats), dtype=np.float64)
     if len(b) < 2 or not hits:
         return list(hits)
     grid = np.concatenate([np.linspace(b0, b1, 5)[:-1] for b0, b1 in zip(b, b[1:])] + [b[-1:]])
     t = np.array([h.time for h in hits])
-
-    def nearest(x: Any) -> Any:
-        i = np.clip(np.searchsorted(grid, x), 1, len(grid) - 1)
-        return np.where(np.abs(grid[i] - x) < np.abs(grid[i - 1] - x), grid[i], grid[i - 1])
-
-    shift = float(np.median(t - nearest(t)))
-    moved = t - shift
-    at = nearest(moved)
+    i = np.clip(np.searchsorted(grid, t), 1, len(grid) - 1)
+    at = np.where(np.abs(grid[i] - t) < np.abs(grid[i - 1] - t), grid[i], grid[i - 1])
     kept_hits: dict[tuple[float, int], Hit] = {}
-    for h, m, g in zip(hits, moved, at):
+    for h, m, g in zip(hits, t, at):
         when = float(g) if abs(g - m) <= SNAP_MOST else float(m)
         key = (round(when, 4), h.note)
         if key not in kept_hits or kept_hits[key].velocity < h.velocity:

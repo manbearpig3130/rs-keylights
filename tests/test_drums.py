@@ -31,11 +31,13 @@ def test_hits_are_picked_where_a_drum_rises_over_its_threshold():
     # ms apart one)
 
 
-def test_hits_are_snapped_to_the_charts_16ths_the_part_moved_by_its_offset_first():
+def test_hits_close_to_the_charts_16ths_go_on_them_the_rest_stay_where_the_record_has_them():
     beats = [0.0, 0.5, 1.0, 1.5, 2.0]  # (a 16th: 0.125 s)
-    hits = [Hit(0.51, KICK, 100), Hit(0.635, SNARE, 90), Hit(1.27, KICK, 100), Hit(1.262, KICK, 120), Hit(1.9, CRASH, 80)]
-    assert snap(hits, beats) == [Hit(0.5, KICK, 100), Hit(0.625, SNARE, 90), Hit(1.25, KICK, 120),
-                                 Hit(1.875, CRASH, 80)]  # (all 10 ms late: moved; the kick twice on a 16th: the louder)
+    hits = [Hit(0.51, KICK, 100), Hit(0.66, SNARE, 90), Hit(1.255, KICK, 100), Hit(1.246, KICK, 120),
+            Hit(1.84, CRASH, 80)]
+    assert snap(hits, beats) == [Hit(0.5, KICK, 100), Hit(0.66, SNARE, 90), Hit(1.25, KICK, 120),
+                                 Hit(1.84, CRASH, 80)]  # (10 ms off: on it; 35 ms off: as they are, not pulled to the
+    # chart; the kick twice on a 16th: the louder)
     assert snap(hits, [1.0]) == hits  # (no grid)
 
 

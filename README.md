@@ -235,8 +235,8 @@ song playing, else the active one:
   sixth, rare, is the page's only), and its drum part after them (white; in a song with five, the fifth place, that arrangement on the
   page only; not made yet, with the tools there, dim: a tap makes it, pulsing meanwhile, then it plays): its pad on top mutes it, the mixer's knob is its volume (no tones), and
   its pad below turns **beat lights** on or off: that pad flashes white on each of the song's beats as it plays (or the
-  game's, following), brighter on a bar's first, dim between, and the whole Launchkey pulses with it (every other pad
-  and button dims between beats and is back as it was on each one),
+  game's, following), brighter on a bar's first, dim between, and the other lit pads below pulse with it (dim between
+  beats, as they were on each one; the pads on top and the buttons stay steady),
   orange for lead parts, green for rhythm, blue for bass. Bright ones play, muted ones are as dim as their
   colour goes, and the one you play in the game pulses. A tap mutes one or plays it again (the page's mute
   for it, and the mixer's pad: one switch). **Pads 1–5 below**: each one's lit keys, brighter for
@@ -396,7 +396,8 @@ own there (1 to 64; empty: the sample that drum has): it's chosen with that drum
 18, 44 or 50, its Programmer's Reference Guide 1.3) just before its hits, as it's needed, so the Circuit plays more
 than 4 sounds; two of them on one of its drums at once, the kick, snare, crash, ride, hi-hats, then toms first. Under the song's parts, **Drums**
 has **Make drum part** (a minute or so, in the background; then it plays), its volume and its mute; or
-`rs-keylights drums SONG` makes one (`--again` makes it again).
+`rs-keylights drums SONG` makes one (`--again` makes it again; `rs-keylights drums --made` makes every part made
+before again, as an update to how they're made needs: they show as not made until then).
 
 The page's **Drums** card (under the keys) draws a drum kit: each drum lights as the part strikes it (brighter the
 harder), playing or following, and a click strikes it where the drums play (the keyboard's drum channel, or their
@@ -406,8 +407,9 @@ How it's made: the song's audio taken from its archive and decoded, its drums se
 model rearmed-mods' Song Stems runs on the Neural Engine), transcribed with [ADTOF](https://github.com/MZehren/ADTOF)
 (its [PyTorch port](https://github.com/xavriley/ADTOF-pytorch): kick, snare, tom, hi-hat, cymbal), then refined: each
 hit's velocity from how loud it is, the toms low, mid or high by their pitch, the cymbals crash or ride (a ride's hits
-come in steady runs), and every hit snapped to the chart's 16th notes, so it keeps time with the game (Riff Repeater
-and speed changes too). Hi-hats are all closed: open ones can't be told from the cymbals' wash. Parts are kept in
+come in steady runs), and each hit kept where the record has it (one within 12 ms of the chart's 16th notes put on
+it: a chart's beats can be tens of milliseconds off its audio, custom ones especially, so they're not followed
+further). It plays on the song's clock, so it keeps time with the game (Riff Repeater and speed changes too). Hi-hats are all closed: open ones can't be told from the cymbals' wash. Parts are kept in
 `~/Library/Caches/rs-keylights/drums/`.
 
 The tools: `tools/drums-setup.sh` (once) builds Song Stems' helper with the drums as a part it takes out, from

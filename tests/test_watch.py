@@ -1,5 +1,7 @@
 import math
 
+import rs_keylights.watch as watch_module
+
 from rs_keylights.bitmap import (arrangements_picture, keys_picture, lyrics_picture, mixer_picture, parts_picture,
                                  pedal_picture, playback_picture, song_picture, with_note)
 from rs_keylights.launchkey import PLAY, RECORD, Button, Pad, ScaleMode, Strip, Turn
@@ -7,7 +9,7 @@ from rs_keylights.lyrics import lyric_lines
 from rs_keylights.sng import Chord, Syllable
 from rs_keylights.tones import tone
 from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, NOT_FOLLOWING_KEYS, PAD_WAIT,
-                                PEDAL_WAIT, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
+                                PEDAL_WAIT, PICTURE_GAP, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
 
 
 class FakeGui:
@@ -379,7 +381,8 @@ def test_pads_turn_arrangements_on_and_give_them_lit_keys():
     assert len(gui.changes) == before and note(watch) == ("Rhythm: no keys free", None)
 
 
-def test_encoders_step_through_tones_and_send_where_they_stop():
+def test_encoders_step_through_tones_and_send_where_they_stop(monkeypatch):
+    monkeypatch.setattr(watch_module, "PICTURE_GAP", 0.05)  # (its steps close together: each drawn)
     watch, gui, launchkey, clock = watching()
     gui.info["song"] = gui.song
     watch.step()
@@ -540,7 +543,8 @@ def pitch(step, at):
     return Strip("pitch", step * 128 + 64, at)
 
 
-def test_the_pitch_strip_goes_through_the_library_and_record_switches():
+def test_the_pitch_strip_goes_through_the_library_and_record_switches(monkeypatch):
+    monkeypatch.setattr(watch_module, "PICTURE_GAP", 0.05)  # (its steps close together: each drawn)
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song
     watch.step()
@@ -1699,7 +1703,7 @@ def test_the_drums_pad_below_turns_beat_lights_on_and_they_flash_on_each_beat():
     assert pads(launchkey)[(1, 3)] == (8, 8, 8)
 
 
-def test_beat_lights_pulse_the_whole_board_dimming_it_between_beats():
+def test_beat_lights_pulse_the_lit_pads_below_dimming_them_between_beats():
     watch, gui, launchkey, clock = watching("play")
     gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
                                      "lights": 0, "tones": {}, "volume": 100, "made": True})
@@ -1710,16 +1714,37 @@ def test_beat_lights_pulse_the_whole_board_dimming_it_between_beats():
     def play_button():
         return next(c[2:] for c in reversed(launchkey.calls) if c[:2] == ("button", 115))
 
-    sound = pads(launchkey)[(0, 7)]
-    assert sound[0] == 21 and play_button() == (3, 127)  # (on a beat: as they are)
-    gui.live, clock.now = 1.7, clock.now + 0.03  # (between: dim, the beat's pad as it is)
+    sound, follow = pads(launchkey)[(0, 7)], pads(launchkey)[(1, 7)]
+    assert sound[0] == 21 and follow == (39, False) and play_button() == (3, 127)  # (on a beat: as they are)
+    gui.live, clock.now = 1.7, clock.now + 0.03  # (between: the lit pads below dim, the beat's pad as it is)
     watch.step()
-    assert pads(launchkey)[(0, 7)] == (0, 38, 0) and play_button() == (3, 38)
-    assert pads(launchkey)[(1, 3)] == (8, 8, 8)
+    assert pads(launchkey)[(1, 7)] == (0, 2, 4) and pads(launchkey)[(1, 3)] == (8, 8, 8)
+    assert pads(launchkey)[(0, 7)] == sound and play_button() == (3, 127)  # (on top, and the buttons: steady)
     gui.live, clock.now = 2.01, clock.now + 0.03
     watch.step()
-    assert pads(launchkey)[(0, 7)] == sound and play_button() == (3, 127)
+    assert pads(launchkey)[(1, 7)] == follow
     gui.info["beat_lights"] = False  # (off, as it next looks: as they are, between beats too)
     gui.live, clock.now = 2.2, clock.now + 0.3
     watch.step()
-    assert pads(launchkey)[(0, 7)] == sound
+    assert pads(launchkey)[(1, 7)] == follow
+
+
+def test_the_screen_is_drawn_at_most_every_picture_gap_the_newest_then():
+    """The Launchkey takes ~37 ms to take in a picture, and what's sent after waits: a knob turning quickly in the
+    mixer sends a picture at most every PICTURE_GAP (the newest), not one a step."""
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(105)]  # (Func: the mixer)
+    clock.now = 0.5
+    watch.step()
+    drawn = len(screens(launchkey))
+    for i in range(1, 51):  # (a second of turning: a step every 20 ms)
+        launchkey.queued = [Turn(0, -1)]  # (down: a volume at each step)
+        clock.now = 0.5 + i * 0.02
+        watch.step()
+    sent = len(screens(launchkey)) - drawn
+    assert 8 <= sent <= 11, sent
+    clock.now += PICTURE_GAP
+    watch.step()
+    assert screens(launchkey)[-1] == watch._screen(clock.now)[1]().data()  # (where it stopped, shown)

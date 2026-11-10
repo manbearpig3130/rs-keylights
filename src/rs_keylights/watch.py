@@ -82,8 +82,10 @@ PAD_WAIT = 0.4  # lit keys
 SECONDS_PER_STEP = 1.0  # knob 8
 # The screen shows a picture of the song; for a while (this long after it's last asked for) with the speed (knob
 # 7), real pitch on or off, or where knob 8 moves it, or instead the tone the knobs are on (an arrangement's, or
-# its keys'); kept up to date, but sent at most this often
-PICTURE_SHOWN, PICTURE_GAP = 3.0, 0.05
+# its keys'); kept up to date, but sent at most this often (the newest then): the Launchkey takes about 37 ms to
+# take in a picture (1.2 KB), and what's sent after it waits (the pads' lights too: the beat lights), so this keeps
+# it busy a third of the time at most, a knob turning
+PICTURE_SHOWN, PICTURE_GAP = 3.0, 0.1
 ARRANGEMENT_KNOBS = 5  # knobs (and pad columns) 1 to 5: the arrangements (one after the 5th has none: songs seldom
 # have 6)
 GUITAR_COLUMN = 5  # knob 6 and the pads under it: the guitar (its pedal's presets, whether its tone's held)
@@ -146,7 +148,7 @@ TONE_BADGES = {"clean lead": "Clean ld", "distortion": "Dist", "acoustic": "Acou
 DRUMS_TO_MAKE = 0.12  # a song's drums not made yet: their pad this dim (a tap makes them)
 BEAT_FLASH = 0.09  # seconds the drums' pad below lights on each beat, beat lights on (the bar's first: brighter)
 BEAT_ON, BEAT_BAR, BEAT_REST = (55, 55, 55), (127, 127, 127), (8, 8, 8)  # (a beat, a bar's first, between: on)
-BOARD_REST = 0.3  # beat lights on, the song playing: every other pad and button this bright between beats (on one, as
+BOARD_REST = 0.3  # beat lights on, the song playing: the other lit pads below this bright between beats (on one, as
 # they are)
 PALETTE_RGB = {1: (14, 14, 14), 3: (127, 127, 127), 5: (127, 0, 0), 9: (127, 42, 0), 11: (20, 13, 0),
                13: (127, 127, 0), 21: (0, 127, 0), 23: (0, 12, 0), 37: (0, 84, 127), 39: (0, 8, 12), 45: (0, 0, 127),
@@ -521,11 +523,11 @@ class Watch:
         wanted = self._picture()
         info = self._info or {}
         self._beat_drawn = self._beat_now(info)
-        if self._beat_drawn == "rest":  # (beat lights on, between beats: the rest of the board dim, the beat's pad as
-            # it is)
+        if self._beat_drawn == "rest":  # (beat lights on, between beats: the other lit pads below dim, the beat's pad
+            # as it is; the pads on top and the buttons steady)
             spot = self._beat_spot(info)
-            wanted = {where: look if where in ("scale", spot) else _dimmed(look, BOARD_REST)
-                      for where, look in wanted.items()}
+            wanted = {where: _dimmed(look, BOARD_REST) if isinstance(where, tuple) and where[0] == 1 and where != spot
+                      else look for where, look in wanted.items()}
         for spot, look in wanted.items():
             if self._drawn.get(spot) == look:
                 continue

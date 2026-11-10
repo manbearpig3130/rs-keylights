@@ -2432,10 +2432,17 @@ function showToneKinds(table) {
   $("toneKinds").classList.toggle("off", !$("toneChanges").checked);
 }
 
+// The keyboard's name, as it's known: its model for a port named for its maker (else the port's name)
+const KEYBOARD_NAMES = {"CASIO USB-MIDI": "CASIO LK-170"};
+function keyboardName(port) {
+  return KEYBOARD_NAMES[port] || port || "The keyboard";
+}
+
 // Each kind of part's MIDI device: the keyboard, or another output (its channel, and a note at a time)
 function showOutputs(s) {
   const rows = document.createDocumentFragment();
   const others = s.ports.filter((port) => port !== s.midi_port);
+  const keyboard = keyboardName(s.midi_port);
   for (const part of ["lead", "rhythm", "bass", "drums"]) {
     const chosen = (s.outputs || {})[part];
     const label = document.createElement("label");
@@ -2444,7 +2451,7 @@ function showOutputs(s) {
     box.className = "output";
     const port = document.createElement("select");
     const ports = chosen && !others.includes(chosen.port) ? [...others, chosen.port] : others;
-    port.innerHTML = '<option value="">The keyboard</option>' +
+    port.innerHTML = `<option value="">${esc(keyboard)}</option>` +
       ports.map((name) => `<option>${esc(name)}</option>`).join("");
     port.value = chosen ? chosen.port : "";
     const channel = document.createElement("input");
@@ -2494,7 +2501,7 @@ function showOutputs(s) {
     if (chosen && (s.outputs_there || {})[part] === false) {
       const missing = document.createElement("span");
       missing.className = "missing";
-      missing.textContent = "not connected: the keyboard plays it";
+      missing.textContent = `not connected: ${keyboard} plays it`;
       box.append(missing);
     }
     rows.append(label, box);
