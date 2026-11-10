@@ -26,11 +26,11 @@ from typing import Any, Callable, cast
 from urllib.parse import ParseResult, parse_qs, urlparse
 
 from .follow import DEFAULT_OVERLAY_PORT, OverlayClient, PartsFor
-from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, KeyboardError, Synth
+from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, KeyboardError, Synth, keyboard_name
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
-from . import drums
+from . import drums, theory
 from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlannedPart, VoicesFor, channels_needed, drum_track, plan, player_for
 from .player import Track
 from .session import Following, Playback
@@ -472,6 +472,7 @@ class Gui:
         self._keys_thread: threading.Thread | None = None
         self._replays: dict[str, Callable[[], None]] = {}  # the parts to play again once a remote's changes pause
         self._replay_timer: threading.Timer | None = None
+        self._theories: dict[tuple[str, str | None], dict[str, Any]] = {}  # songs' theory (theory()), once worked out
         self._fit_before: dict[str, Any] = {}  # songs a remote's turning: their choices last checked to fit (None: none)
         self._warm: list[str] = []  # songs whose album art to get ready next, in the background
         self._warm_ready = threading.Condition()
@@ -686,6 +687,39 @@ class Gui:
                 "muted": [[round(n.time, 3), [[s, f] for s, f in zip(n.strings, n.frets)]] for n in a.muted],
                 "bars": [round(t, 3) for t in bars], "length": round(a.length, 3)}
 
+    def theory(self, sid: str, part: str | None = None) -> dict[str, Any]:
+        """A song's theory, for the page's theory card (theory.py): its key; its chords as numbers in it (the
+        guitar part with the most chords': the harmony), each section's progression and riffs' scale, and why a
+        part's notes work (the one asked for, by its part or persistent ID; else the lead, or the first guitar
+        part)."""
+        cached = self._theories.get((sid, part))
+        if cached is not None:
+            return cached
+        loaded = self._load(sid)
+        info = self.song_key(sid)
+        if info is None:
+            return {"key": None}
+        guitars = [(r, a) for r, a in loaded if not r.bass and a.notes]
+        harmony = max(guitars or loaded, key=lambda ra: len(ra[1].chords))
+        found = Key(info["tonic"], info["mode"])
+        other = theory.key_named(info.get("alternative") or "")
+        key = theory.chord_key([found, other] if other else [found], harmony[1], harmony[0].bass)  # (the chords say)
+        melody = next(((r, a) for r, a in loaded if part in (r.part, r.persistent_id)), None) or \
+            next(((r, a) for r, a in guitars if kind(r) == "lead"), None) or (guitars or loaded)[0]
+        bass = next((a for r, a in loaded if r.bass and a.notes), None)
+        chords = theory.chords_of(key, harmony[1], harmony[0].bass)
+        raw = next((a.sections for _r, a in loaded if a.sections), ())
+        out = {
+            "key": {"name": key.name, "tonic": key.tonic, "mode": key.mode, "notes": list(key.notes)},
+            "harmony": harmony[0].name or harmony[0].part,
+            "part": melody[0].part, "parts": [{"part": r.part, "name": r.name or r.part} for r, _a in guitars],
+            "chords": [[round(c.start, 3), round(c.end, 3), c.name, c.numeral, c.function, c.tag] for c in chords],
+            "sections": theory.sections_of(key, raw, _sections(raw), chords, [a for _r, a in loaded]),
+            "notes": theory.notes_why(key, melody[1], chords, bass),
+        }
+        self._theories[(sid, part)] = out
+        return out
+
     def roll(self, sid: str, part: str | None = None) -> dict[str, Any]:
         """What the keyboard plays of a song, for the page's keys card (its notes falling onto the keys): the parts
         playing as planned (following this song, the game's arrangement's plan; playing it, the song's; else its
@@ -854,7 +888,7 @@ class Gui:
         with self._keys_lock:
             keyboard = self._keys_keyboard(open_one=True)
             if keyboard is None:
-                raise GuiError("No keyboard to play it on")
+                raise GuiError(f"No {self._keyboard_name} to play it on")
             keyboard.sound(drums.DRUM_CHANNEL, note, velocity)
         threading.Timer(DRUM_HIT_LENGTH, lambda: keyboard.sound(drums.DRUM_CHANNEL, note, 0)).start()
         return {"played": note}
@@ -957,7 +991,7 @@ class Gui:
                     parts[name]["lights"] = min(parts[name]["lights"], max(0, 4 - others))
             on = [p for p in parts.values() if p["play"]]
             if sum(p["lights"] for p in on) > 4 and not pooled:
-                raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
+                raise GuiError(f"The {self._keyboard_name} lights 4 keys at most: give the parts fewer lit keys")
             kept = dict(self.song_settings.get(sid, {}), parts=parts)
             if "start" in body:
                 kept["start"] = _number(body["start"], "start", 0, 24 * 3600)
@@ -1578,7 +1612,7 @@ class Gui:
                                 "lights": max(0, 4 - others)}}}})
                 on = [lights for _r, play, lights in parts_chosen(settings, played, refs) if play]
                 if sum(on) > 4 and not pooled:
-                    raise GuiError("The keyboard lights 4 keys at most: give the parts fewer lit keys")
+                    raise GuiError(f"The {self._keyboard_name} lights 4 keys at most: give the parts fewer lit keys")
             was, self.follow_settings = self.follow_settings, settings
             voices_for = self._follow_voices()  # (the parts' sounds fit the keyboard's channels: else as it was)
             for played_id in (body.get("parts") or {}) if voices_for else ():
@@ -2515,6 +2549,11 @@ class Gui:
         self._riff_sync((out.get("follow") or {}).get("song_id") if out["mode"] == "following" else None)
         return out
 
+    @property
+    def _keyboard_name(self) -> str:
+        """The keyboard's name, for saying (the CASIO LK-170, by its port's)."""
+        return keyboard_name(str(self.settings["midi_port"]))
+
     def get_settings(self) -> dict[str, Any]:
         try:
             ports = self._list_ports()
@@ -2522,6 +2561,7 @@ class Gui:
             ports = []
         return {**self.settings, "ports": ports, "game_dir": str(self.index.game_dir), "overlay_port": self.overlay_port,
                 "outputs_there": self.output_status(), "inputs": _audio_inputs(),
+                "keyboard_name": keyboard_name(str(self.settings["midi_port"])),
                 "pedal_backup_used": str(self.pedal.backup or ""),
                 "pedal_names": [self.pedal.name(slot) for slot in range(1, PEDAL_SLOTS + 1)]}
 
@@ -2591,7 +2631,7 @@ class Gui:
         with self._lock:
             chosen = self.settings["outputs"].get(part)
             if chosen is None:
-                raise GuiError(f"The {part} parts sound on the keyboard")
+                raise GuiError(f"The {part} parts sound on the {self._keyboard_name}")
             chosen = {**chosen, "program": int(_number(program, "program", 0, 127))}
             self.settings["outputs"] = self._kept["outputs"] = {**self.settings["outputs"], part: chosen}
             self._save()
@@ -2975,6 +3015,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.song(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/drums/part":
                 self._json(200, gui.drum_part(parse_qs(url.query).get("id", [""])[0]))
+            elif url.path == "/api/theory":
+                query = parse_qs(url.query)
+                self._json(200, gui.theory(query.get("id", [""])[0], query.get("part", [None])[0] or None))
             elif url.path == "/api/roll":
                 query = parse_qs(url.query)
                 self._json(200, gui.roll(query.get("id", [""])[0], query.get("part", [None])[0] or None))

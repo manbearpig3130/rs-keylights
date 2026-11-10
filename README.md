@@ -403,6 +403,17 @@ The page's **Drums** card (under the keys) draws a drum kit: each drum lights as
 harder), playing or following, and a click strikes it where the drums play (the keyboard's drum channel, or their
 device: its note for it, on hover), to hear it and tune its sound; under it, how many of each the part has.
 
+The **Theory** card (under the drums) follows the song as it plays, from its charts: the chord now (the part with the
+most chords') as a Roman numeral in the song's key, written against the major scale whatever the key's mode
+(i–♭VI–♭VII, as rock's are, so songs compare), with what it does there (home, near home, away, pulls home) and
+what's borrowed or outside the key (a major V from harmonic minor, ♭II's Phrygian sound...); the section's chords as
+the phrases that repeat in it ("i – ♭VI – ♭VII ×4"), the one playing outlined and well-known progressions named
+(the pop one, the Andalusian cadence...), and the scale its riffs use ("E minor pentatonic + ♭5"); and a strip of a
+part's notes (the lead's, or another chosen) a second back and three ahead, each one green as a note of the chord
+under it (R its root, ♭3, 5...), blue as one of the key's scale (from its tonic: 2, 4, ♭6...) or orange outside the
+key. The key is the one found from the song's notes, or one nearly as likely when the chords say so (the chord it's
+on longest, starts or ends on).
+
 How it's made: the song's audio taken from its archive and decoded, its drums separated from the rest (the Demucs
 model rearmed-mods' Song Stems runs on the Neural Engine), transcribed with [ADTOF](https://github.com/MZehren/ADTOF)
 (its [PyTorch port](https://github.com/xavriley/ADTOF-pytorch): kick, snare, tom, hi-hat, cymbal), then refined: each

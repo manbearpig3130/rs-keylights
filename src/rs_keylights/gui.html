@@ -251,6 +251,30 @@
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .fret-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
   .fret-head h3 { margin: 0; flex: 1; min-width: 0; }
+  :root { --th-chord: var(--rhythm); --th-scale: var(--bass); --th-outside: var(--lead); }
+  .theory-now { display: flex; align-items: center; gap: 16px; margin: 4px 0 10px; }
+  .theory-chord { display: flex; align-items: baseline; gap: 10px; min-width: 120px; }
+  #thName { font-size: 28px; font-weight: 600; }
+  .numeral { font-size: 28px; font-family: Georgia, "Times New Roman", serif; color: var(--live); }
+  .theory-what { flex: 1; min-width: 0; }
+  .function { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--soft); }
+  .function.home { background: color-mix(in srgb, var(--rhythm) 22%, transparent); }
+  .function.near { background: color-mix(in srgb, var(--rhythm) 12%, transparent); }
+  .function.away { background: color-mix(in srgb, var(--bass) 18%, transparent); }
+  .function.pulls { background: color-mix(in srgb, var(--lead) 22%, transparent); }
+  .function.colour { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  #thTag { margin-top: 3px; color: var(--muted); }
+  .theory-section { font-size: 13px; margin-bottom: 8px; height: 84px; overflow: hidden; }  /* (steady: the strip stays put) */
+  .theory-section .where { color: var(--muted); }
+  .phrases { display: flex; gap: 6px; margin-top: 5px; overflow-x: auto; scrollbar-width: none; }
+  .phrases::-webkit-scrollbar { display: none; }
+  .phrase { flex: none; border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; font-family: Georgia, "Times New Roman", serif; }
+  .phrase.now { border-color: var(--live); }
+  .phrase b { color: var(--live); }
+  .phrase .times { font-family: inherit; color: var(--muted); font-size: 12px; }
+  .pattern { color: var(--muted); font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .theory-strip { height: 64px; }
+  .theory-strip canvas { width: 100%; height: 100%; display: block; }
   .fret-chord { font-weight: 700; font-size: 16px; color: var(--live); }
   .swatch.now { background: var(--live); }
   .fret-legend { display: none; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); position: absolute;
@@ -354,6 +378,30 @@
     <div id="drumsInfo" class="roll-legend"></div>
     <div id="circuitKit" class="circuit-kit" hidden></div>
   </section>
+
+  <section id="theoryCard" class="card" hidden>
+    <div class="fret-head">
+      <h3 id="theoryTitle">Theory</h3>
+      <select id="theoryPart" aria-label="Whose notes" title="Whose notes the strip below says why they work"></select>
+    </div>
+    <div class="theory-now">
+      <div class="theory-chord" title="The chord now (the part with the most chords'), and its number in the key">
+        <span id="thName"></span><span id="thNumeral" class="numeral"></span>
+      </div>
+      <div class="theory-what">
+        <span id="thFunction" class="function"></span>
+        <div id="thTag" class="small"></div>
+      </div>
+    </div>
+    <div id="thSection" class="theory-section"></div>
+    <div class="theory-strip"><canvas id="thNotes" aria-label="The notes now and next, and why each works"></canvas></div>
+    <div class="roll-legend">
+      <span><span class="swatch" style="background: var(--th-chord)"></span>a note of the chord under it (R = its root)</span>
+      <span><span class="swatch" style="background: var(--th-scale)"></span>the key's scale (from its tonic, 1)</span>
+      <span><span class="swatch" style="background: var(--th-outside)"></span>outside the key</span>
+      <span>Numerals: against the major scale (♭VI, ♭VII), lower case minor; a power chord, root and 5th, takes the key's case</span>
+    </div>
+  </section>
   </div>
 
   <section id="side">
@@ -409,7 +457,7 @@
     <div class="card" id="outputsCard">
       <h3>Other MIDI devices</h3>
       <div class="muted small">A kind of part can sound on another MIDI device (a synth, with its own speakers) instead
-        of the keyboard, which still lights its keys. It keeps its own sound: no tones are sent to it.</div>
+        of the <span class="kbName">keyboard</span>, which still lights its keys. It keeps its own sound: no tones are sent to it.</div>
       <div id="outputRows" class="outputs"></div>
     </div>
 
@@ -438,7 +486,7 @@
     </div>
 
     <div class="card" id="keyboardCard">
-      <h3>Keyboard</h3>
+      <h3>Keyboard <span class="muted small kbName"></span></h3>
       <div class="grid2">
         <label for="midiPort">MIDI output</label><select id="midiPort"></select>
         <label for="channel">Lights channel</label><input id="channel" type="number" min="1" max="16" style="width:70px">
@@ -1012,7 +1060,7 @@ function renderRoll(s, f) {
   card.hidden = !s;
   if (card.hidden) return;
   const select = $("rollPart");
-  const options = `<option value="">The keyboard (every part playing)</option>` +
+  const options = `<option value="">${esc(KB())} (every part playing)</option>` +
     s.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)} alone</option>`).join("");
   if (select.dataset.options !== options) {
     select.innerHTML = options;
@@ -1031,7 +1079,7 @@ function renderRoll(s, f) {
     if (rollWanted !== wanted) return;
     rollData = d;
     rollShown = "";
-    $("rollTitle").textContent = rollPicked ? `Keys · ${d.parts[0] ? d.parts[0].name : ""}` : "Keys · what the keyboard plays";
+    $("rollTitle").textContent = rollPicked ? `Keys · ${d.parts[0] ? d.parts[0].name : ""}` : `Keys · what the ${KB()} plays`;
     const kinds = [...new Set(d.parts.map((p) => p.kind))];
     $("rollLegend").innerHTML = d.parts.map((p) =>
       `<span><span class="swatch" style="background: var(--${p.kind})"></span>${esc(p.name)}${p.lights ? "" : " (sounds, not lit)"}</span>`).join("") +
@@ -1240,8 +1288,8 @@ function renderDrumsCard(s) {
     }
     const counts = Object.entries(KIT).map(([key, k]) => [k.name, byNote.has(key) ? byNote.get(key).times.length : 0])
       .filter(([, n]) => n).map(([name, n]) => `${name.toLowerCase()} ${n}`);
-    const where = d.missing ? `its device (${d.missing}) isn't connected: the keyboard's drum channel` :
-      d.device ? `${d.device}, channel ${d.channel}` : `the keyboard's drum channel (${d.channel})`;
+    const where = d.missing ? `its device (${d.missing}) isn't connected: the ${KB()}'s drum channel` :
+      d.device ? `${d.device}, channel ${d.channel}` : `the ${KB()}'s drum channel (${d.channel})`;
     showCircuitKit(d);
     $("drumsTitle").textContent = d.made ? "Drums" : "Drums · no drum part yet";
     $("drumsInfo").innerHTML = (d.made ? `<span>${d.hits.length} hits: ${esc(counts.join(" · "))}</span>` :
@@ -1319,6 +1367,160 @@ function drumsFrame() {
   drumsShown = lights.join(",");
 }
 requestAnimationFrame(drumsFrame);
+
+// The theory card: the chord now as a number in the song's key, what it does there and what's borrowed or outside;
+// the section's phrases (the one playing outlined, its chord bold) and its riffs' scale; and a strip of a part's
+// notes now and next, each said against the chord under it (or the key) and coloured by why it works.
+// GET /api/theory
+const THEORY = {BEHIND: 1, AHEAD: 3};  // seconds of notes the strip shows before now, and after
+let theoryData = null, theoryWanted = "", theoryShown = "", theoryPicked = "", theoryStrip = "";
+function renderTheoryCard(s) {
+  const card = $("theoryCard");
+  card.hidden = !s;
+  if (card.hidden) return;
+  const wanted = `${s.id}|${theoryPicked}`;
+  if (theoryWanted === wanted) return;
+  theoryWanted = wanted;
+  api(`/api/theory?id=${encodeURIComponent(s.id)}` + (theoryPicked ? `&part=${encodeURIComponent(theoryPicked)}` : ""))
+    .then((d) => {
+      if (theoryWanted !== wanted) return;
+      theoryData = {...d, runs: theoryRuns(d.notes || [])};
+      theoryShown = theoryStrip = "";
+      $("theoryTitle").textContent = d.key ? `Theory · ${d.key.name}` : "Theory";
+      const select = $("theoryPart");
+      select.innerHTML = (d.parts || []).map((p) => `<option value="${esc(p.part)}">${esc(p.name)}'s notes</option>`).join("");
+      select.value = d.part || "";
+      select.hidden = !d.parts || d.parts.length < 2;
+      if (!d.key) $("thSection").textContent = "No key found for this song, so no theory.";
+    }).catch(() => { if (theoryWanted === wanted) theoryWanted = ""; });
+}
+$("theoryPart").addEventListener("change", () => {
+  theoryPicked = $("theoryPart").value;
+  if (selected) renderTheoryCard(selected);
+});
+
+function theoryAt(list, at, start = (x) => x[0]) {  // (the last that starts by then, else -1)
+  let lo = 0, hi = list.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (start(list[mid]) <= at) lo = mid + 1; else hi = mid; }
+  return lo - 1;
+}
+
+function theoryFrame() {
+  requestAnimationFrame(theoryFrame);
+  const d = theoryData, s = selected;
+  if (!d || !d.key || !s || $("theoryCard").hidden || !theoryWanted.startsWith(`${s.id}|`)) return;
+  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
+  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+  const at = clock ? clock.position + since : Number(s.start) || 0;
+  // The chord now (held on a while after its shape ends), its section and phrase: drawn again only as they change
+  const ci = theoryAt(d.chords, at), chord = ci >= 0 && at < Math.max(d.chords[ci][1], (d.chords[ci + 1] || [Infinity])[0]) ?
+    d.chords[ci] : null;
+  const si = theoryAt(d.sections, at, (x) => x.start), section = si >= 0 && at < d.sections[si].end ? d.sections[si] : null;
+  const pi = section ? theoryAt(section.phrases, at, (x) => x.start) : -1;
+  const shown = `${ci}|${chord ? 1 : 0}|${si}|${pi}`;
+  if (shown !== theoryShown) {
+    theoryShown = shown;
+    $("thName").textContent = chord ? chord[2] : "–";
+    $("thNumeral").textContent = chord ? chord[3] : "";
+    const fn = $("thFunction");
+    fn.textContent = chord ? chord[4] || "" : (section ? "no chord here" : "");
+    fn.className = "function " + (chord ? (chord[4] || "").split(" ")[0] : "");
+    fn.hidden = !fn.textContent;
+    $("thTag").textContent = chord ? chord[5] : "";
+    const parts = [];
+    if (section) {
+      const scale = section.scale ? ` · riffs: ${esc(section.scale.said)}` : "";
+      parts.push(`<div><b>${esc(section.name)}</b><span class="where">${scale}</span></div>`);
+      const phrase = section.phrases[pi];
+      if (section.phrases.length) {
+        parts.push(`<div class="phrases">` + section.phrases.map((p, i) => {
+          const loop = p.loop.map((n) => i === pi && chord && n === chord[3] ? `<b>${esc(n)}</b>` : esc(n)).join(" – ");
+          return `<span class="phrase${i === pi ? " now" : ""}">${loop}${p.times > 1 ? ` <span class="times">×${p.times}</span>` : ""}</span>`;
+        }).join("") + `</div>`);
+      }
+      if (phrase && phrase.pattern) parts.push(`<div class="pattern">${esc(phrase.pattern)}</div>`);
+    } else {
+      parts.push(`<div class="where">Between sections</div>`);
+    }
+    $("thSection").innerHTML = parts.join("");
+    const playing = $("thSection").querySelector(".phrase.now"), row = playing && playing.parentElement;
+    if (row) row.scrollLeft = playing.offsetLeft - row.offsetLeft - 8;  // (the phrase playing in view)
+  }
+  // The notes strip: now a line, the notes before it and after, each labelled and coloured by why it works
+  const canvas = $("thNotes"), ratio = window.devicePixelRatio || 1;
+  const width = Math.round(canvas.clientWidth), height = Math.round(canvas.clientHeight);
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const strip = `${Math.round(at * 60)}|${width}|${height}|${ratio}|${dark}`;
+  if (strip === theoryStrip || !width) return;
+  theoryStrip = strip;
+  if (canvas.width !== width * ratio || canvas.height !== height * ratio) {
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+  }
+  const g = canvas.getContext("2d"), css = getComputedStyle(document.documentElement);
+  const colour = (name) => css.getPropertyValue(`--${name}`).trim();
+  g.setTransform(ratio, 0, 0, ratio, 0, 0);
+  g.clearRect(0, 0, width, height);
+  const span = THEORY.BEHIND + THEORY.AHEAD, x = (t) => (t - at + THEORY.BEHIND) / span * width;
+  const fill = {chord: colour("th-chord") || colour("rhythm"), scale: colour("th-scale") || colour("bass"),
+                outside: colour("th-outside") || colour("lead")};
+  g.textBaseline = "middle";
+  const runs = d.runs, top = 8, high = height - 16;
+  const first = Math.max(theoryAt(runs, at - THEORY.BEHIND - 4), 0);
+  for (let i = first; i < runs.length; i++) {
+    const [start, end, name, label, how, count] = runs[i];
+    if (start > at + THEORY.AHEAD) break;
+    if (end < at - THEORY.BEHIND) continue;
+    const left = x(start), w = Math.max(x(end) - left, 3);  // (as long as it lasts: a fast run, thin bars)
+    g.globalAlpha = end < at ? 0.45 : 1;
+    g.fillStyle = fill[how] || fill.scale;
+    g.beginPath();
+    g.roundRect(left, top, w, high, Math.min(4, w / 2));
+    g.fill();
+    const said = count > 1 ? `${label} ×${count}` : label;  // (said where it fits: else just its colour)
+    g.font = "600 12px -apple-system, system-ui, sans-serif";
+    if (g.measureText(said).width + 8 <= w) {
+      g.fillStyle = "#fff";
+      g.fillText(said, left + 4, top + high / 2 - (high > 30 ? 7 : 0));
+      g.font = "10px -apple-system, system-ui, sans-serif";
+      if (high > 30 && g.measureText(name).width + 8 <= w) g.fillText(name, left + 4, top + high / 2 + 8);
+    }
+  }
+  g.globalAlpha = 1;
+  // (fading in at the right, and out at the left: notes slide in and out rather than popping)
+  const bg = colour("panel");
+  for (const [from, to] of [[0, 28], [width, width - 28]]) {
+    const fade = g.createLinearGradient(from, 0, to, 0);
+    fade.addColorStop(0, bg);
+    fade.addColorStop(1, "rgba(0,0,0,0)");
+    g.globalCompositeOperation = "destination-out";
+    g.fillStyle = fade;
+    g.fillRect(Math.min(from, to), 0, 28, height);
+    g.globalCompositeOperation = "source-over";
+  }
+  g.fillStyle = colour("live");
+  g.fillRect(Math.round(x(at)), 0, 2, height);
+}
+
+// A part's notes as the strip shows them: one after another the same (its name, what it is and how), close
+// together, one run ("R ×8": a chugged root); each run ending where the next starts at the latest
+const THEORY_RUN_GAP = 0.3;  // seconds between notes of a run, at most
+function theoryRuns(notes) {
+  const runs = [];
+  for (const [start, end, name, label, how] of notes) {
+    const last = runs[runs.length - 1];
+    if (last && last[2] === name && last[3] === label && last[4] === how && start - last[1] < THEORY_RUN_GAP &&
+        start >= last[0]) {
+      last[1] = Math.max(last[1], end);
+      last[5] += 1;
+    } else {
+      if (last) last[1] = Math.min(last[1], start - 0.01);
+      runs.push([start, end, name, label, how, 1]);
+    }
+  }
+  return runs;
+}
+requestAnimationFrame(theoryFrame);
 
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
 function litControl(value, others, onChange) {
@@ -1675,6 +1877,7 @@ function renderSong() {
   renderTab(s);
   renderRoll(s, f);
   renderDrumsCard(s);
+  renderTheoryCard(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
     $("songArt").classList.add("none");
@@ -1817,7 +2020,7 @@ function partBlock(o) {
   lit.append("Lit keys", litControl(o.lights, o.others, (n) => o.change("lights", n)));
   const volume = document.createElement("label");  // (the Launchkey's mixer: Track ▷, then its knob)
   volume.className = "part-volume";
-  volume.title = "Its volume on the keyboard: the same for the arrangement in its place in every song, playing " +
+  volume.title = `Its volume on the ${KB()}: the same for the arrangement in its place in every song, playing ` +
     "or following (100%: as it starts)";
   const slider = document.createElement("input");
   slider.type = "range";
@@ -1893,7 +2096,7 @@ function partBlock(o) {
 function songTonesRow(changes, follows, follow) {
   const row = document.createElement("div");
   row.className = "song-tones" + (follows ? "" : " fixed");
-  row.title = "The song's tone changes: in the Tone changes card, the keyboard tone for each kind";
+  row.title = `The song's tone changes: in the Tone changes card, the ${KB()} tone for each kind`;
   row.append("Song's tones:");
   const box = document.createElement("label");
   box.className = "follow-tones";
@@ -2029,7 +2232,7 @@ function updateButtons() {
   $("muteBtn").classList.toggle("on", state.sound === false);
   $("muteBtn").textContent = state.sound === false ? "🔇" : "🔊";
   $("muteBtn").title = state.sound === false ? "Muted (just the lights): sound on" :
-    "The sound on the keyboard, playing or following: mute it (just the lights)";
+    `The sound on the ${KB()}, playing or following: mute it (just the lights)`;
 }
 
 async function play() {
@@ -2387,8 +2590,24 @@ function changeKeys(change) {
 
 // Settings
 
+// The keyboard's name, as the settings give it (CASIO LK-170, by its port's), wherever the page says it
+let keyboardLabel = "keyboard";
+function KB() {
+  return keyboardLabel;
+}
+function showKeyboardName(name) {
+  keyboardLabel = name || "keyboard";
+  for (const span of document.querySelectorAll(".kbName")) span.textContent = KB();
+  $("rollPart").title = `Whose notes: what the ${KB()} plays (every part playing, as it lights and sounds them), or ` +
+    "one arrangement alone";
+  const realPitch = $("realPitch") && $("realPitch").closest("label");
+  if (realPitch) realPitch.title = `Sound the notes at their own pitch, not the lit keys' (moved into the ${KB()}'s ` +
+    "range), playing a song or following the game";
+}
+
 async function loadSettings() {
   const s = await api("/api/settings");
+  showKeyboardName(s.keyboard_name);
   const ports = s.ports.includes(s.midi_port) ? s.ports : [s.midi_port, ...s.ports];
   $("midiPort").innerHTML = ports.map((p) => `<option>${esc(p)}</option>`).join("");
   $("midiPort").value = s.midi_port;
@@ -2445,16 +2664,12 @@ function showToneKinds(table) {
 }
 
 // The keyboard's name, as it's known: its model for a port named for its maker (else the port's name)
-const KEYBOARD_NAMES = {"CASIO USB-MIDI": "CASIO LK-170"};
-function keyboardName(port) {
-  return KEYBOARD_NAMES[port] || port || "The keyboard";
-}
 
 // Each kind of part's MIDI device: the keyboard, or another output (its channel, and a note at a time)
 function showOutputs(s) {
   const rows = document.createDocumentFragment();
   const others = s.ports.filter((port) => port !== s.midi_port);
-  const keyboard = keyboardName(s.midi_port);
+  const keyboard = s.keyboard_name || KB();
   for (const part of ["lead", "rhythm", "bass", "drums"]) {
     const chosen = (s.outputs || {})[part];
     const label = document.createElement("label");

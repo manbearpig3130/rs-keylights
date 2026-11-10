@@ -12,6 +12,13 @@ from typing import Any, Callable, Protocol, cast
 # once, and the song's lights get the room left (their lowest) until they're let go.
 
 DEFAULT_PORT = "CASIO USB-MIDI"
+KEYBOARD_NAMES = {"CASIO USB-MIDI": "CASIO LK-170"}  # a keyboard's name, as it's known, by its MIDI port's (else that)
+
+
+def keyboard_name(port: str) -> str:
+    """The keyboard's name, for saying: its model for a port named for its maker, else the port's name."""
+    return KEYBOARD_NAMES.get(port) or port or "the keyboard"
+
 DEFAULT_CHANNEL = 4
 BANK_SELECT = 0
 VOLUME = 7

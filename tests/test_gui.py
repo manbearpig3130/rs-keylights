@@ -179,7 +179,7 @@ def test_a_songs_parts_share_the_keys_at_first():
 def test_requests_that_are_refused(server):
     sid = first_song(server)
     assert call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"lights": 3}}}) == (
-        400, {"error": "The keyboard lights 4 keys at most: give the parts fewer lit keys"})  # the lead has 2
+        400, {"error": "The CASIO LK-170 lights 4 keys at most: give the parts fewer lit keys"})  # the lead has 2
     assert call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"tone": 999}}})[0] == 400
     assert call(server, "/api/song/settings", {"song": sid, "parts": {"solo": {"play": True}}})[1]["error"] == (
         "No part solo in this song")
@@ -489,7 +489,7 @@ def test_other_arrangements_play_along_while_following(server, tmp_path):
     assert call(server, "/api/state")[1]["follow"]["messages"][-1] == (
         "Band - The Pursuit (Lead): Lead lighting 4 keys, tone 079 DISTORTION GT; Rhythm lighting no keys, tone 178 SAW LEAD 1")
     status, answer = call(server, "/api/follow/settings", {"parts": {"L": {"R": {"lights": 1}}}})
-    assert status == 400 and answer["error"] == "The keyboard lights 4 keys at most: give the parts fewer lit keys"
+    assert status == 400 and answer["error"] == "The CASIO LK-170 lights 4 keys at most: give the parts fewer lit keys"
     _, info = call(server, "/api/follow/settings", {"parts": {"L": {"L": {"lights": 2}, "R": {"lights": 2}}}})
     assert parts(info) == [("L", True, 2), ("R", True, 2)]
     assert kept() == {"L": {"L": {"lights": 2}, "R": {"play": True, "lights": 2}}}
@@ -1303,3 +1303,14 @@ def test_the_drums_on_a_circuit_have_a_kit_its_drums_and_samples_and_a_drum_stru
     again.set_settings({"outputs": {"drums": {"port": "Circuit"}}})  # (remembered after a restart too)
     assert again.settings["outputs"]["drums"] == circuit_drums
     again.close()
+
+
+def test_a_songs_theory_its_chords_as_numbers_its_sections_and_why_its_notes_work(server):
+    sid = first_song(server)
+    status, th = call(server, f"/api/theory?id={urllib.request.quote(sid)}")
+    assert status == 200 and th["key"] is not None and th["part"] == "lead"
+    assert [p["part"] for p in th["parts"]] == ["lead", "rhythm"]
+    assert th["chords"] and all(len(c) == 6 for c in th["chords"])  # (start, end, name, numeral, what it does, tag)
+    assert [s["name"] for s in th["sections"]][:3] == ["Intro 1", "Verse 1", "Chorus 1"]
+    assert th["notes"] and {n[4] for n in th["notes"]} <= {"chord", "scale", "outside"}
+    assert call(server, f"/api/theory?id={urllib.request.quote(sid)}&part=rhythm")[1]["part"] == "rhythm"
