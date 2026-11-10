@@ -454,11 +454,33 @@ The presets' names come from a backup the DNAfx editor saved (a `.bhb` file): th
 Documents, Desktop or Downloads, or the one named on the card. A preset renamed on the pedal since keeps
 its old name here until the next backup. The pedal can't be asked which preset it's on, so rs-keylights
 goes by the last it switched to, or the last dnafx-preset's own listener switched to (RS Re-ARMed's
-sidekick, following RS Companion's song tones: its log says), whichever was later; a footswitch on the
+sidekick, following the song's tones: its log says), whichever was later; a footswitch on the
 pedal itself isn't known. Both switching it is fine: each opens the pedal just to send. Each switch runs
 dnafx-preset in a process of its own (`python -m dnafx_preset set N`), given 3 seconds: hidapi holds up
 every thread of the process it's in while it talks to the pedal, and on macOS it's only safe from one
 thread, so in rs-keylights itself a pedal slow to answer could freeze the Launchkey and the page.
+
+### Song tones, without RS Companion
+
+`rs-keylights song-tones` does for a pedal what RS Companion's song tone messages do, from the game
+itself (its riffloop mod says which arrangement plays, and where): when an arrangement loads, one SysEx
+describes its tones (each one's category, Clean, Crunch, Heavy or Lead, and its delay and modulation, and
+the song's style), then each tone plays on its own Program Change (8 for the first, 9 for the next...),
+100 ms before the game switches to it. They go out on a MIDI source of its own, **Rocksmith Tones**, so
+dnafx-preset's listener follows it just as it follows RS Companion:
+
+```bash
+~/git/dnafx-preset/.venv/bin/dnafx-preset listen --midi-source "Rocksmith Tones" --config ~/.config/dnafx-preset/tones.toml
+```
+
+The categories and styles are RS Companion's own rules (its rig.py and presets.py, ported in `rig.py`),
+with its `presets.json` in `~/Library/Application Support/rs-mac-companion` (or `$RS_COMPANION_DATA`):
+your rules, overrides, artist sections and AI answers, read again when they change. So are its settings
+there (`rscompanion.json`: the MIDI channel, the first program, the lead time, or a category's program
+instead of each tone's). Checked against RS Companion's log, its 31 song tone messages, each one the same.
+Without RS Companion's files every tone is Clean, its default. A song's tones take a few milliseconds to
+read (each part's tone changes, read without its notes). Run it as an RS Re-ARMed sidekick (see
+rearmed-sidekicks), beside dnafx-preset's listener.
 
 ### On a phone
 

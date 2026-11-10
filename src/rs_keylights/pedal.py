@@ -13,7 +13,7 @@ from typing import Callable
 # The guitar's pedal, a Harley Benton DNAfx GiT (the Core too): its presets switched over USB by dnafx-preset
 # (~/git/dnafx-preset, installed with: uv pip install --python .venv/bin/python -e ~/git/dnafx-preset), and their
 # names from a backup the DNAfx editor saved (a .bhb file). dnafx-preset's own listener (RS Re-ARMed's sidekick,
-# following RS Companion's song tones) switches it too: its log says to what.
+# following the song's tones: song-tones', or RS Companion's) switches it too: its log says to what.
 
 SLOTS = 200
 NEEDS = "Needs dnafx-preset: uv pip install --python .venv/bin/python -e ~/git/dnafx-preset"

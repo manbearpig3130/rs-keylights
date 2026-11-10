@@ -161,6 +161,28 @@ class _Reader:
         return n
 
 
+CHORD_NOTES = "6I" + ("ff4x" * 32 + "i") * 6 + "6b6b6h"  # a chord's strings' techniques (as parse reads them)
+
+
+def tone_changes(data: bytes) -> tuple[tuple[float, int], ...]:
+    """Just an arrangement's tone changes (parse's, as it has them), its notes not read: quick, for a whole song."""
+    r = _Reader(data)
+    for record in ("f2h2i", "4b2i32s", "I6b6b6i32s", CHORD_NOTES):  # beats, phrases, chord templates, chord notes
+        r.skip(struct.calcsize("<" + record))
+    if r.skip(struct.calcsize("<fif48s")):  # vocals, and their symbols
+        r.skip(32)
+        r.skip(144)
+        r.skip(44)
+    r.skip(struct.calcsize("<iff3i"))  # phrase iterations
+    r.skip(16)  # phrase extra info
+    for _ in range(r.count()):  # new linked difficulties
+        r.take("i")
+        r.skip(4)
+    r.skip(260)  # actions
+    r.skip(260)  # events
+    return tuple((at, slot) for at, slot in (r.take("fi") for _ in range(r.count())))
+
+
 def parse(data: bytes, bass: bool = False) -> Arrangement:
     r = _Reader(data)
     beat_records = [r.take("f2h2i") for _ in range(r.count())]  # when, its bar, its beat in it (0: the bar's first)

@@ -19,6 +19,8 @@ from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, HOP, LOWEST, RATE, Dete
 from .library import NO_NOTES, ArrangementRef, SongIndex, read_arrangements
 from .player import play
 from .psarc import ArchiveError
+from .riffloop import RiffLoop
+from .tonemessages import SOURCE, ToneSender, virtual_source
 from .parts import Part, plan, player_for
 from .sng import SngError, note_name
 from .sound import BASS_TONE, DEFAULT_SPLIT, GUITAR_TONE, KEYBOARD_CHANNELS, SoundChoice, parse_note
@@ -92,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     index = commands.add_parser("index", help="update the index of the game's songs")
     index.set_defaults(handler=run_index)
+
+    song_tones = commands.add_parser(
+        "song-tones", help="send each song's tones as Rocksmith plays them, as RS Companion's song tone messages do "
+                           "(for dnafx-preset listen --midi-source \"Rocksmith Tones\"), from the game itself: no RS "
+                           "Companion needed, its presets.json and settings used if they're there")
+    song_tones.add_argument("--source", default=SOURCE, help=f"the MIDI source's name (default: {SOURCE})")
+    song_tones.set_defaults(handler=run_song_tones)
 
     gui = commands.add_parser("gui", help="a page in the browser to pick songs, parts and tones, and play or follow")
     gui.add_argument("--port", type=int, default=DEFAULT_GUI_PORT, help=f"its port on 127.0.0.1 (default: {DEFAULT_GUI_PORT})")
@@ -251,6 +260,32 @@ def open_index(args: argparse.Namespace) -> SongIndex:
 def run_index(args: argparse.Namespace) -> int:
     index = open_index(args)
     print(f"{len(index)} arrangements in {index.game_dir}")
+    return 0
+
+
+def run_song_tones(args: argparse.Namespace) -> int:
+    index = open_index(args)
+    try:
+        out = virtual_source(args.source)
+    except ImportError:
+        print("rs-keylights: python-rtmidi is required: pip install python-rtmidi", file=sys.stderr)
+        return 1
+
+    def say(message: str) -> None:
+        print(f"{time.strftime('%H:%M:%S')} {message}", flush=True)
+
+    def quit_(_signal: int, _frame: object) -> None:
+        raise KeyboardInterrupt  # (the game quit: RS Re-ARMed's sidekicks stop it so)
+
+    for stop in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(stop, quit_)
+    say(f"{len(index)} arrangements. Sending the song tones on the MIDI source '{args.source}'. Ctrl-C stops.")
+    try:
+        ToneSender(RiffLoop(), index, out, status=say).run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        out.close_port()
     return 0
 
 
