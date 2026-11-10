@@ -1492,7 +1492,7 @@ let playOptions = null;
 
 async function loadPlayOptions(info) {
   playOptions = info || await api("/api/play/options");
-  $("speed").value = String(playOptions.speed);
+  showSpeed(playOptions.speed);
   showOptions();
 }
 
@@ -1584,7 +1584,7 @@ function showRemote(st) {
   const speed = r.speed ?? null;
   if (speed !== remoteSpeed) {
     remoteSpeed = speed;
-    if (speed !== null) $("speed").value = String(speed);  // once applied, the options come back with it
+    if (speed !== null) showSpeed(speed);  // once applied, the options come back with it
   }
   if (r.position != null && !dragging && !playingThis() && selected && selected.id === st.active) {
     $("slider").value = String(r.position);  // where the song picked will start
@@ -2175,7 +2175,19 @@ $("slider").addEventListener("change", () => {
   }
 });
 
-$("speed").innerHTML = Array.from({length: 26}, (_, i) => 25 + 5 * i)
+// The speed in its list: one between its choices (the Launchkey's knob goes 1% a step) gets a choice of its own
+function showSpeed(speed) {
+  const list = $("speed"), value = String(speed);
+  for (const o of [...list.options]) if (o.dataset.own && o.value !== value) o.remove();
+  if (![...list.options].some(o => o.value === value)) {
+    const own = new Option(`${Math.round(speed * 100)}%`, value);
+    own.dataset.own = "1";
+    list.add(own, [...list.options].find(o => Number(o.value) > speed) || null);
+  }
+  list.value = value;
+}
+
+$("speed").innerHTML = Array.from({length: 36}, (_, i) => 25 + 5 * i)
   .map((p) => `<option value="${p / 100}">${p}%</option>`).join("");
 
 (async function start() {

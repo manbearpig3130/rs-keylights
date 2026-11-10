@@ -177,7 +177,7 @@ the commands do:
   decay does the rest. **Keyboard** › Sound turns it off (each note as long as its key is lit), playing and
   following at once.
 - **The header**: the song's time slider (where it is, moved while it plays; else where it starts) and its
-  speed (25% to 150%), ▶ (❚❚ while it plays; ▶ again resumes), ■, Mute 🔊 (the sound on the keyboard,
+  speed (25% to 200%), ▶ (❚❚ while it plays; ▶ again resumes), ■, Mute 🔊 (the sound on the keyboard,
   playing or following: muted 🔇, just the lights), **Follow Rocksmith** (red while following), ⚙ to fold the
   settings column away (the middle gets its room) or bring it back, and full screen ⛶. They keep their
   widths, so nothing moves as they change.
@@ -267,9 +267,9 @@ song playing, else the active one:
 - **Playing the song** (▼ beside the knobs, lit): **knobs 1 and 2** move the A-B loop's start and end
   (above pads 1 and 2, which set them; see below), **knob 3** moves through the song (or, while nothing
   plays, where the active song starts: a handle moves along the song screen's progress line and its time
-  with it, keeping up with the song as it plays, until 3 seconds after), **knob 5** sets the speed, 5% a
-  step from 25% to 150% (the progress line turns into it, 100% in the middle, the speed said in the scale's
-  place; the song takes it once it stops), and **knob 4** goes a section at a time (above pad 4, which loops one; its name in the
+  with it, keeping up with the song as it plays, until 3 seconds after), **knob 5** sets the speed, 1% a
+  step from 25% to 200% (the progress line turns into it, 100% in the middle, the speed said in the scale's
+  place; the song takes it as it turns), and **knob 4** goes a section at a time (above pad 4, which loops one; its name in the
   scale's place; back, to the start of the one it's in first). These knobs and the pads below take the
   screen back from the library (stopping a flick through it). ▼ again shows what the knobs do (again:
   away). Following, with Rocksmith paused (Play), **knob 3** steps through the game's song as its pause
@@ -293,7 +293,7 @@ song playing, else the active one:
     own in the song, picked in Riff Repeater already (else pick it: it's between the usual ones), and it loops
     just that, count-in and Accelerator as ever ("Pick it in Riff Repeater", the screen says; the page's loop
     line too). Moved, pick it again. Without the mod the screen says so. Following another song, or stopping,
-    the song's phrases are as they were. Following, **knob 5** is Riff Repeater's speed (5% a step) and the
+    the song's phrases are as they were. Following, **knob 5** is Riff Repeater's speed (1% a step, to 200%, set as it turns, its menu's Speed slider moving with it; moved in the game, the Launchkey goes on from there) and the
     **pad below on the left** its Accelerator (green, bright while it's on): a little faster each time
     through.
   - **Bars:** while the loop shows (after knob 1 or 2), **knob 8** moves that end a bar at a time, to the
@@ -311,7 +311,9 @@ song playing, else the active one:
     They come from the song's vocals part (not every song has one).
 - **The mixer**: **Func** (right of the pads, bottom; lit) opens it until Func again, and **knob 8** while no tone shows opens it for a
   few seconds (longer each time it's used, however it's used). Knobs 1–5 are the arrangements' volumes, knob 7 its keys', knob 8 all of them
-  together, 1% a step, at once (the notes going on), the screen showing a slider for each with its volume
+  together, 1% a step, at once (the notes going on); following, **knob 6** is the game's Music volume (its mixer's: the
+  song; a slider named Music, from where the game has it, 0 to 100%, through RS Re-ARMed's riffloop mod: the game's own
+  mixer setting, as its mixer menu sets it, kept with your profile), the screen showing a slider for each with its volume
   over it; the pads on top mute each one or play it again, as outside the mixer (muted: red, its slider
   greyed with a crossed-out speaker), its keys' pad too. Each is the volume of the arrangement in that place
   in every song. The **pitch strip** moves the slider last used (a knob's, or a pad's on top; after knob 8 or

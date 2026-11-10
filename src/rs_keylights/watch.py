@@ -42,8 +42,8 @@ from .tones import TONES, tone
 #   them (Record: the song from the line shown; Track back: as they're sung, again the song); what the knobs and
 #   pads do shows there too. Knob 7 picks whose chords show (auto, or an arrangement). The down arrow again shows
 #   what they do (again: away).
-# - The mixer (Func, lit; or knob 8 for a while, however it's used): knobs 1 to 6 are the arrangements'
-#   volumes, knob 7 its keys', knob 8 all of them together, and the pads on top mute each (red) or play it
+# - The mixer (Func, lit; or knob 8 for a while, however it's used): knobs 1 to 5 are the arrangements'
+#   volumes, knob 6 (following) the game's Music volume, knob 7 its keys', knob 8 all the keyboard's together, and the pads on top mute each (red) or play it
 #   again, as they do outside it; the pitch strip moves the slider last used (a knob's, or a pad's on top; knob
 #   8 or Mute: all of them). The pads below give lit keys, rails beside the sliders showing them. On the screen
 #   until Func again or anything else is done (but the pads below and Rocksmith's keys). The pads are on the
@@ -92,7 +92,7 @@ PEDAL_WAIT = 0.4  # seconds knob 6 rests on a preset before the pedal switches t
 PEDAL_JUMP = 10  # presets a step of knob 8, while the pedal's on the screen
 LOOP_KNOBS, SEEK_KNOB = (0, 1), 2  # playing the song: knobs 1 and 2 the loop's start and end (beats: above their
 # pads), knob 3 moves through it,
-SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.05  # knob 4 a section at a time (above the pad looping one), 5 its speed
+SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.01  # knob 4 a section at a time (above the pad looping one), 5 its speed
 # Following, paused, knobs 3 and 4 step through Rocksmith's song as its pause screen's keys do: a small step back
 # or on, a phrase back or on (its PageDown and PageUp); at most GAME_STEPS a turn, and none while GAME_BEHIND keys
 # are still to be typed (turned fast, the game doesn't fall behind)
@@ -176,6 +176,9 @@ class GuiProtocol(Protocol):
         ...
 
     def set_volumes(self, changes: dict[int, Any]) -> dict[str, Any]:
+        ...
+
+    def set_game_music(self, body: dict[str, Any]) -> dict[str, Any]:
         ...
 
     def toggle_sound(self) -> bool:
@@ -909,12 +912,24 @@ class Watch:
             self._browsed_place = (song.get("place", 0), song.get("of", 1))
 
     def _turn_speed(self, steps: int, info: dict[str, Any], now: float) -> None:
-        """Knob 5: the speed, SPEED_STEP a step from 25% to 150%, applied when it stops turning (following,
-        Riff Repeater's)."""
-        start = self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
-        self._speed_to = min(max(round((start + steps * SPEED_STEP) * 20) / 20, SLOWEST), FASTEST)
-        self._turned_at, self._wait = now, TURN_WAIT
+        """Knob 5: the speed, SPEED_STEP a step from 25% to 200%, set as it turns: the song playing's, or, following,
+        Riff Repeater's (from where the game has it, its own slider moving with it)."""
+        pending = self._pending.get(("game", "speed"))
+        start = pending / 100 if pending is not None else info.get("speed", 1.0)
+        percent = round(min(max(start + steps * SPEED_STEP, SLOWEST), FASTEST) * 100)
+        self._pending[("game", "speed")] = percent
+        if info.get("mode") == "follow":
+            self._try(lambda: self.gui.set_game_riff({"speed": percent}))
+        else:
+            self._try(lambda: self.gui.set_play_options({"speed": percent / 100}))
         self._show_for_a_while("speed", now)
+
+    def _speed_shown(self, info: dict[str, Any]) -> float:
+        """The speed as it's being set (turns not in the page's state yet too), else as it is."""
+        pending = self._pending.get(("game", "speed"))
+        if pending is not None:
+            return pending / 100
+        return self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
 
     def _move(self, steps: int, info: dict[str, Any], now: float) -> None:
         """Knob 3: the song's position, applied when it stops turning (following, the game's, a step at a time)."""
@@ -1169,17 +1184,22 @@ class Watch:
         info = self._info or {}
         arrangements_now = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]  # (with knobs)
         muted = not info.get("sound", True)
-        if self._picture_of == "mixer":  # the arrangements', then its keys'
-            names = [a["name"] for a in arrangements_now] + ["Keys"]
-            volumes = [self._volume_of(slot, info) for slot in range(len(arrangements_now))] + [self._keys_volume(info)]
+        if self._picture_of == "mixer":  # the arrangements', the game's music (following), then its keys'
+            music = self._music_of(info)
+            game = [] if music is None else [music]
+            names = [a["name"] for a in arrangements_now] + ["Music"] * len(game) + ["Keys"]
+            volumes = ([self._volume_of(slot, info) for slot in range(len(arrangements_now))] + game +
+                       [self._keys_volume(info)])
             keys = info.get("keys") or {}
-            quiet = [not a["play"] for a in arrangements_now] + [not keys.get("sound", True)]
+            quiet = [not a["play"] for a in arrangements_now] + [False] * len(game) + [not keys.get("sound", True)]
             lights = [min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
-                      for a in arrangements_now] + [1.0 if keys.get("lights") else 0.0]
-            turned = (None if self._mix_slider == CONTROLS else len(arrangements_now) if self._mix_slider == KEYS_COLUMN
-                      else min(self._mix_slider, len(names) - 1))  # (the keys' slider: after the arrangements')
+                      for a in arrangements_now] + [0.0] * len(game) + [1.0 if keys.get("lights") else 0.0]
+            tops = [127] * len(arrangements_now) + [100] * len(game) + [127]
+            turned = (None if self._mix_slider == CONTROLS else len(names) - 1 if self._mix_slider == KEYS_COLUMN
+                      else (len(arrangements_now) if game else None) if self._mix_slider == GUITAR_COLUMN
+                      else min(self._mix_slider, len(names) - 1))  # (its keys' slider: the last)
             return (("mixer", *names, *volumes, *quiet, *lights, turned, muted),
-                    lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, lights=lights))
+                    lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, lights=lights, tops=tops))
         if self._picture_of == "playback":
             return ("playback", muted), lambda: playback_picture(muted)
         if self._picture_of == "arrangements":
@@ -1241,7 +1261,7 @@ class Watch:
         # For a while, after a control: what it changed, said in the scale's place (the corner left for muted)
         shows, handle, speed = "song", False, None
         if self._picture_of == "speed":  # (the line the speed)
-            shows, speed = "speed", self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
+            shows, speed = "speed", self._speed_shown(info)
             lines = (*lines[:3], f"Speed {round(speed * 100)}%")
         elif self._picture_of in ("position", "section") and done is not None:  # (a handle on the line, the time
             # moving; or the section it's going to)
@@ -1286,7 +1306,7 @@ class Watch:
             said = found["name"] if found and at is not None else ""
         speed = None
         if shown == "speed":  # (knob 5: its speed where the section was, the progress line turned into it)
-            speed = self._speed_to if self._speed_to is not None else info.get("speed", 1.0)
+            speed = self._speed_shown(info)
             said = f"Speed {round(speed * 100)}%"
         elif shown == "loop":  # (knobs 1 and 2)
             said = self._loop_said(info.get("loop") or {})
@@ -1416,8 +1436,8 @@ class Watch:
             else:
                 self._open_mixer(now, kept=True)
         elif isinstance(event, Turn):
-            self._turn_volume(event.encoder, event.steps, info, now)
             self._open_mixer(now, kept=self._mixer_kept)
+            self._turn_volume(event.encoder, event.steps, info, now)  # (after: what it can't do is said over it)
         elif isinstance(event, Strip):
             self._slide_volume(event.value, event.at or now, info, now)
             self._open_mixer(now, kept=self._mixer_kept)
@@ -1449,7 +1469,16 @@ class Watch:
 
     def _turn_volume(self, encoder: int, steps: int, info: dict[str, Any], now: float) -> None:
         """A mixer's knob: 1 to 6 the volume of the arrangement in its place (the same in every song), 7 its keys',
-        8 all of them together; VOLUME_STEP a step, at once (the notes going on)."""
+        8 all of them together; VOLUME_STEP a step, at once (the notes going on). Knob 6, following: the game's Music
+        volume (its mixer's: the song), from where the game has it."""
+        if encoder == GUITAR_COLUMN:
+            if info.get("mode") == "follow":
+                def turn() -> None:
+                    level = self.gui.set_game_music({"step": steps * VOLUME_STEP})["music"]
+                    self._pending[("volume", "music")] = int(level)
+                if self._try(turn):
+                    self._mix_slider = GUITAR_COLUMN
+            return
         arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
         if encoder == CONTROLS:
             slots = range(len(info.get("volumes") or []))  # (all of them, in this song or not)
@@ -1474,6 +1503,13 @@ class Watch:
         pending = self._pending.get(("volume", str(slot)))
         volumes = info.get("volumes") or []
         return pending if pending is not None else int(volumes[slot]) if slot < len(volumes) else 100
+
+    def _music_of(self, info: dict[str, Any]) -> int | None:
+        """Following, the game's Music volume (turns not in the page's state yet too); None: not known."""
+        if info.get("mode") != "follow":
+            return None
+        pending = self._pending.get(("volume", "music"))
+        return pending if pending is not None else info.get("music")
 
     def _keys_volume(self, info: dict[str, Any]) -> int:
         pending = self._pending.get(("volume", "keys"))

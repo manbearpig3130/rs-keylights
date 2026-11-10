@@ -29,6 +29,7 @@ class FakeGui:
         self.listen, self.pedal_calls = False, []
         self.game = {"answered": True, "hook": True, "riff": True}  # (following: the game's riffloop mod)
         self.riff, self.riff_calls = {"speed": 100, "accelerator": False, "passes": 1}, []
+        self.music = None  # (following: the game's Music volume; None: its mod hasn't it)
         self.pedal = {"slot": 49, "previous": None, "error": None, "favourites": [51, 187], "hold": False}
         self.song = {
             "id": "song", "title": "Amon Amarth - Twilight of the Thunder God", "played": "L" if mode == "follow" else None,
@@ -53,7 +54,7 @@ class FakeGui:
     def remote_info(self):
         return {**self.info, "sound": self.sound, "real_pitch": self.real_pitch, "keys": self.keys,
                 "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal),
-                "riff": dict(self.riff)}
+                "riff": dict(self.riff), "music": self.music}
 
     def toggle_listen(self):
         self.listen = not self.listen
@@ -68,6 +69,12 @@ class FakeGui:
         if slot != self.pedal["slot"]:
             self.pedal = {**self.pedal, "slot": slot, "previous": self.pedal["slot"]}
         return dict(self.pedal)
+
+    def set_game_music(self, body):  # (following: the game's Music volume, from where it is)
+        if self.music is None:
+            raise ValueError("Music volume: update the riffloop mod")
+        self.music = min(max(self.music + body["step"], 0), 100)
+        return {"music": self.music}
 
     def set_game_riff(self, body):  # (following: Riff Repeater's settings)
         self.riff_calls.append(dict(body))
@@ -480,25 +487,21 @@ def test_the_down_arrow_puts_the_knobs_on_playing_the_song_knob_5_its_speed():
     # bright; the chorus not
     assert pads(launchkey)[(1, 4)] == (0, 0, 0) and pads(launchkey)[(0, 6)] == (0, False)  # (intro, verse, chorus and
     # solo: no fifth kind; no keys)
-    launchkey.queued = [Turn(SPEED_KNOB, -2), Turn(SPEED_KNOB, -3)]  # 5 steps down from 100%
+    launchkey.queued = [Turn(SPEED_KNOB, -2), Turn(SPEED_KNOB, -3)]  # 1% a step, set as it turns, each from the one
+    # before
     clock.now = 1.0
     watch.step()
-    speed = song_picture(*TWILIGHT[:3], "Speed 75%", done=30 / 260, sign="playing", speed=0.75,
+    speed = song_picture(*TWILIGHT[:3], "Speed 95%", done=30 / 260, sign="playing", speed=0.95,
                          beside="0:30 / 4:20").data()
     assert screens(launchkey)[-1] == speed and ("hide", 0x21) in launchkey.calls  # the line: the speed
-    assert gui.speeds == [] and gui.dialling[-1] == {"speed": 0.75, "position": None}  # the page shows it already
-    clock.now = 1.0 + TURN_WAIT + 0.01
-    watch.step()
-    assert gui.speeds == [0.75] and gui.dialling[-1] == {"speed": None, "position": None}  # applied
-    launchkey.queued = [Turn(SPEED_KNOB, -20)]  # no slower than 25%
+    assert gui.speeds == [0.98, 0.95]
+    launchkey.queued = [Turn(SPEED_KNOB, -100)]  # no slower than 25%
     clock.now = 2.0
     watch.step()
-    launchkey.queued = [Turn(SPEED_KNOB, 40)]  # and no faster than 150%
+    launchkey.queued = [Turn(SPEED_KNOB, 127), Turn(SPEED_KNOB, 127)]  # and no faster than 200%
     clock.now = 3.0
     watch.step()
-    clock.now = 3.0 + TURN_WAIT + 0.01
-    watch.step()
-    assert gui.speeds == [0.75, 1.5]
+    assert gui.speeds == [0.98, 0.95, 0.25, 1.52, 2.0]
     clock.now = 3.0 + PICTURE_SHOWN
     watch.step()
     assert screens(launchkey)[-1] == PLAYING  # a while after: the song again
@@ -1348,7 +1351,7 @@ def test_in_the_lyrics_view_playing_the_songs_knobs_show_there_too():
     clock.now = 1.0
     watch.step()
     assert screens(launchkey)[-1] == lyrics_picture("", "Hey little kid", "Did you wake", sung=(11, 14), done=22 / 260,
-                                                    sign="playing", time="0:22", said="Speed 75%", speed=0.75).data()
+                                                    sign="playing", time="0:22", said="Speed 95%", speed=0.95).data()
     launchkey.queued = [Pad(0, 0), Turn(LOOP_KNOBS[1], 4)]  # the loop's start here, its end 4 beats on: brackets
     clock.now = 1.5
     watch.step()
@@ -1513,10 +1516,50 @@ def test_the_guitar_column_is_dark_playing_the_song_and_in_the_mixer():
     watch.step()
     assert watch.mix_knobs and pads(launchkey)[(0, GUITAR_COLUMN)] == (0, False)
     assert pads(launchkey)[(1, GUITAR_COLUMN)] == (0, 0, 0)
-    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]  # knob 6 in the mixer: nothing
+    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]  # knob 6 in the mixer: not the pedal (the game's music: below)
     clock.now = 1.0
     watch.step()
     assert gui.pedal_calls == []
+
+
+def test_following_knob_6_in_the_mixer_is_the_games_music_volume():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.music = gui.song, 76
+    watch.step()
+    launchkey.queued = [Button(105)]  # Func: the mixer, the game's music between the arrangements and its keys
+    clock.now = 0.5
+    watch.step()
+    names, quiet, lights = ["Lead", "Rhythm", "Bass", "Music", "Keys"], [False, True, True, False, False], [1, 0, 0, 0, 1]
+
+    def mixer(volumes, turned):
+        return mixer_picture(names, volumes, turned, quiet=quiet, lights=lights, tops=[127, 127, 127, 100, 127]).data()
+
+    assert screens(launchkey)[-1] == mixer([100, 100, 100, 76, 100], None)
+    launchkey.queued = [Turn(GUITAR_COLUMN, -3), Turn(GUITAR_COLUMN, -3)]  # knob 6: from where the game has it
+    clock.now = 1.0
+    watch.step()
+    assert gui.music == 70 and gui.pedal_calls == [] and screens(launchkey)[-1] == mixer([100, 100, 100, 70, 100], 3)
+    launchkey.queued = [Turn(GUITAR_COLUMN, 60)]  # (100 at most)
+    clock.now = 1.5
+    watch.step()
+    assert gui.music == 100
+    launchkey.queued = [Turn(CONTROLS, -5)]  # knob 8: the keyboard's volumes, not the game's
+    clock.now = 2.0
+    watch.step()
+    assert gui.music == 100 and gui.keys["volume"] == 95
+    gui.music = None  # (a mod without it: no slider, and knob 6 says why)
+    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]
+    clock.now = 2.5
+    watch.step()
+    assert " ".join(note(watch)[1]) == "Music volume: update the riffloop mod"
+    watch, gui, launchkey, clock = watching("play")  # not following: no slider for it, knob 6 nothing
+    gui.info["song"], gui.music = gui.song, 76
+    watch.step()
+    launchkey.queued = [Button(105), Turn(GUITAR_COLUMN, 5)]
+    clock.now = 0.5
+    watch.step()
+    assert gui.music == 76 and screens(launchkey)[-1] == mixer_picture(
+        names[:3] + ["Keys"], [100] * 4, None, quiet=[False, True, True, False], lights=[1, 0, 0, 1]).data()
 
 
 def test_knob_8_while_the_loop_shows_moves_its_end_a_bar_at_a_time():
@@ -1536,17 +1579,33 @@ def test_following_knob_2_and_the_pad_below_set_riff_repeaters_speed_and_acceler
     watch, gui, launchkey, clock = watching()
     gui.info["song"] = gui.song
     watch.step()
-    launchkey.queued = [Button(52), Turn(SPEED_KNOB, -6)]  # ▼, knob 2: six steps slower
+    launchkey.queued = [Button(52), Turn(SPEED_KNOB, -6), Turn(SPEED_KNOB, -3)]  # ▼, knob 5: 1% a step, set as it
+    # turns (the game's own slider moving with it), each from the one before
     clock.now = 0.5
     watch.step()
-    clock.now = 0.5 + TURN_WAIT + 0.05  # (once it stops turning)
+    assert gui.riff_calls == [{"speed": 94}, {"speed": 91}] and gui.speeds == []  # Riff Repeater's, not the page's
+    gui.info["speed"] = 0.55  # (moved in the game, by its own slider: from there)
+    clock.now = 2.0
     watch.step()
-    assert gui.riff_calls == [{"speed": 70}] and gui.speeds == []  # Riff Repeater's, not the page's playing
+    launchkey.queued = [Turn(SPEED_KNOB, 2)]
+    clock.now = 2.1
+    watch.step()
+    assert gui.riff_calls[-1] == {"speed": 57}
+    gui.info["speed"] = 1.99  # (past 100%: to 200%)
+    clock.now = 4.0
+    watch.step()
+    launchkey.queued = [Turn(SPEED_KNOB, 5)]
+    clock.now = 4.1
+    watch.step()
+    assert gui.riff_calls[-1] == {"speed": 200} and len(gui.riff_calls) == 4
+    clock.now = 4.1 + TURN_WAIT + 0.05  # (nothing more once it stops turning)
+    watch.step()
+    assert len(gui.riff_calls) == 4
     assert pads(launchkey)[(1, 0)] == (23, False)  # the Accelerator: off, dim green
     launchkey.queued = [Pad(1, 0)]
-    clock.now = 1.5
+    clock.now = 6.5
     watch.step()
     assert gui.riff_calls[-1] == {"accelerator": True} and note(watch) == (None, ("Accelerator: on", "In Riff Repeater"))
-    clock.now = 2.0
+    clock.now = 8.0
     watch.step()
     assert pads(launchkey)[(1, 0)] == (21, False)

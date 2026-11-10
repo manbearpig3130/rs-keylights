@@ -26,6 +26,9 @@ class GameLoop:
     time: float | None = None
     screen: str | None = None
     keys: int = 0  # keys waiting to be typed in the game
+    speed: float | None = None  # Riff Repeater's speed, percent, as the game has it (None: not known)
+    accelerator: bool | None = None  # its Accelerator, as the game has it (its menu's switch; None: not known)
+    music: float | None = None  # the game's Music volume (its mixer's, 0 to 100); None: not known (yet), or an older mod
 
     @property
     def playing(self) -> bool:
@@ -63,8 +66,17 @@ def parse(answer: str) -> GameLoop | None:
     except (KeyError, ValueError):
         at = None
     screen, keys = fields.get("screen"), fields.get("keys", "0")
+    try:
+        music = float(fields["music"])
+    except (KeyError, ValueError):
+        music = None
+    try:
+        speed = float(fields["speed"])
+    except (KeyError, ValueError):
+        speed = -1.0
     return GameLoop(fields.get("hook") == "1", fields.get("riff") == "1", (ends[0], ends[1]) if len(ends) == 2 else None,
-                    at, screen if screen and screen != "-" else None, int(keys) if keys.isdigit() else 0)
+                    at, screen if screen and screen != "-" else None, int(keys) if keys.isdigit() else 0,
+                    speed if speed > 0 else None, {"1": True, "0": False}.get(fields.get("accel", "")), music)
 
 
 class RiffLoop:
@@ -103,6 +115,10 @@ class RiffLoop:
     def key(self, name: str) -> GameLoop | None:
         """A key typed in the game, as on the computer's keyboard: KEYS' (its menus' up and down, Escape, Enter...)."""
         return self._send(f"key {name}")
+
+    def music(self, level: float) -> GameLoop | None:
+        """The game's Music volume (its mixer's: the song), 0 to 100, at once."""
+        return self._send(f"music {level:g}")
 
     def status(self) -> GameLoop | None:
         return self._send("status")

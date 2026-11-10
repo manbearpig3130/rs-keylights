@@ -111,7 +111,7 @@ SIGNS = {"playing": "#.....|###...|#####.|######|#####.|###...|#.....", "paused"
          "stopped": "......|######|######|######|######|######|######"}  # a song's, as a player shows them
 SONG_BAR = 10  # where the song's progress line starts, after its sign
 MUTED = "...#......|..##.#...#|####..#.#.|####...#..|####..#.#.|..##.#...#|...#......"  # a speaker, crossed out
-SLOWEST, FASTEST = 0.25, 1.5  # the speeds at the ends of the pitch strip
+SLOWEST, FASTEST = 0.25, 2.0  # the speeds at the ends of the speed's line (100% in its middle)
 
 
 class Bitmap:
@@ -499,12 +499,14 @@ def song_bar(done: float, sign: str | None) -> int:
 
 
 def mixer_picture(names: list[str], volumes: list[int], turned: int | None, muted: bool = False,
-                  quiet: list[bool] | None = None, lights: list[float] | None = None) -> Bitmap:
+                  quiet: list[bool] | None = None, lights: list[float] | None = None,
+                  tops: list[int] | None = None) -> Bitmap:
     """The mixer: a slider for each arrangement's volume (0 to 127, 100 as it starts, marked), its volume above it
     (none: a crossed-out speaker) and its name under it, the one last turned underlined (None: all of them were).
     Each one quiet (muted by itself) is greyed, with the speaker over it; muted (the sound off), the speaker is in
     the corner, as on every screen. Its lit keys (lights: 0 to 1, of the 4) are rails either side of it, joined
-    under it, as high as it's lit (dotted, quiet)."""
+    under it, as high as it's lit (dotted, quiet). tops: what each slider is full at (127; the game's music, 100: no
+    mark at 100 then)."""
     picture = Bitmap()
     column = WIDTH // max(len(names), 3)
     first = (WIDTH - column * len(names)) // 2
@@ -521,7 +523,8 @@ def mixer_picture(names: list[str], volumes: list[int], turned: int | None, mute
             said = f"{volume}%" if percent else str(volume)
             picture.text(middle - text_width(said) // 2, 1, said)
         picture.frame(x, top, 9, height)
-        filled = round(min(max(volume, 0), 127) / 127 * room)
+        most = tops[i] if tops and i < len(tops) else 127
+        filled = round(min(max(volume, 0), most) / most * room)
         if greyed:
             picture.hatch(x + 2, top + 2 + room - filled, 5, filled)
         else:
@@ -536,9 +539,10 @@ def mixer_picture(names: list[str], volumes: list[int], turned: int | None, mute
             for across in range(x - 2, x + 11):
                 if not greyed or across % 2 == 0:
                     picture.fill(across, top + height + 1, 1, 1)
-        mark = top + 2 + room - round(100 / 127 * room)
-        picture.fill(x - 3, mark, 2, 1)  # 100%, either side
-        picture.fill(x + 10, mark, 2, 1)
+        if most > 100:
+            mark = top + 2 + room - round(100 / most * room)
+            picture.fill(x - 3, mark, 2, 1)  # 100%, either side
+            picture.fill(x + 10, mark, 2, 1)
         low, high = first + i * column, first + (i + 1) * column
         if muted and i == len(names) - 1:
             high = min(high, WIDTH - 13)  # (the corner's speaker)

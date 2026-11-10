@@ -1398,12 +1398,18 @@ class Gui:
                 except (GuiError, OSError, ValueError):
                     length = None
             state = self.game_state()  # (its song playing or paused: None, neither, or not known)
+            said = self._game_said
+            if said is not None and said.speed is not None:  # (Riff Repeater's speed as the game has it: its own
+                # slider's moves too)
+                self._riff_settings = {**self._riff_settings, "speed": round(said.speed)}
+            if said is not None and said.accelerator is not None:  # (and its Accelerator: its menu's switch)
+                self._riff_settings = {**self._riff_settings, "accelerator": said.accelerator}
             return {"mode": "follow", "sound": not self.play_options["silent"], "real_pitch": info["real_pitch"], **defaults,
                     "song": followed, "position": None, "length": length, "paused": state == "paused",
                     "state": state, "connected": connected,
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
-                    "volumes": list(self.settings["volumes"]),
+                    "music": self.game_music(), "volumes": list(self.settings["volumes"]),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
                     "most_lights": bool(self.settings["most_lights"])}
         sid, song = playing or self.play_options.get("song"), None
@@ -1527,6 +1533,40 @@ class Gui:
         said = self._game_said
         return "playing" if said is not None and said.playing else "paused" if said is not None and said.paused else None
 
+    def game_music(self) -> int | None:
+        """Following, the game's Music volume (its mixer's: the song, 0 to 100) as the game has it, through its
+        riffloop mod (asked at most every GAME_TIME_EVERY); None without the mod, or one that hasn't it."""
+        self.game_time()
+        said = self._game_said
+        return round(said.music) if said is not None and said.music is not None else None
+
+    def set_game_music(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Following, the game's Music volume set, through its riffloop mod: "level" (0 to 100), or "step" (up or
+        down from where the game has it). It's the game's own mixer setting, as its mixer menu sets it. The level
+        it's at."""
+        with self._lock:
+            session = self._session
+        if not (isinstance(session, Following) and session.running):
+            raise GuiError("Follow Rocksmith first: it's its music's volume")
+        if "level" in body:
+            level = _number(body["level"], "music volume", 0, 100)
+        else:
+            now = self.game_music()
+            if now is None:  # (the mod's first answer hasn't it: the one after has)
+                self._game_time = (-math.inf, None)
+                now = self.game_music()
+            if now is None:
+                raise GuiError("Rocksmith didn't answer" if self._game_said is None else
+                               "Music volume: update the riffloop mod")
+            level = min(max(now + _number(body.get("step", 0), "step", -100, 100), 0), 100)
+        said = self._riff_loop.music(round(level))
+        if said is None:
+            raise GuiError("Rocksmith didn't answer: needs its riffloop mod")
+        if said.music is None:
+            raise GuiError("Music volume: update the riffloop mod")
+        self._game_time, self._game_said = (time.monotonic(), said.time), said
+        return {"music": round(said.music)}
+
     def remote_dialling(self, dialling: dict[str, Any]) -> None:
         """A remote was used: what it's setting and will apply when it stops (speed, position), for the page."""
         self._dialling = {**dialling, "at": time.monotonic()}
@@ -1646,9 +1686,14 @@ class Gui:
         if "speed" in body:
             settings["speed"] = int(_number(body["speed"], "speed", 10, 200))
             said = self._riff_loop.speed(settings["speed"])
+            if said is not None:  # (what it says of its speed next is this one)
+                self._game_time, self._game_said = (time.monotonic(), said.time), replace(said, speed=settings["speed"])
         if "accelerator" in body:
             settings["accelerator"] = bool(body["accelerator"])
             said = self._riff_loop.accelerator(settings["accelerator"])
+            if said is not None:  # (what it says of it next is this)
+                self._game_time, self._game_said = (time.monotonic(), said.time), replace(
+                    said, accelerator=settings["accelerator"])
         if "passes" in body:
             settings["passes"] = int(_number(body["passes"], "passes", 1, 20))
             said = self._riff_loop.passes(settings["passes"])
@@ -2628,6 +2673,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/loop": lambda: gui.set_loop(body),
             "/api/pedal": lambda: gui.set_pedal(body),
             "/api/riff": lambda: gui.set_game_riff(body),
+            "/api/game/music": lambda: gui.set_game_music(body),
             "/api/reindex": gui.reindex,
         }
         route = routes.get(url.path)

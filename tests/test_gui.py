@@ -1099,3 +1099,35 @@ def test_following_the_loop_goes_to_the_games_riff_repeater(server, no_real_game
     call(server, "/api/stop", {})  # following stopped: Riff Repeater's own phrases again
     call(server, "/api/state")
     assert game.sent[-1] == ("off",)
+
+
+def test_following_the_games_music_volume_is_read_and_set_through_its_mod(server):
+    gui, game = server.gui, server.gui._riff_loop
+    with pytest.raises(Exception, match="Follow Rocksmith first"):
+        gui.set_game_music({"step": 1})
+    call(server, "/api/follow", {})
+    assert gui.remote_info()["music"] == 80  # (as the game has it)
+    assert call(server, "/api/game/music", {"step": -6})[1] == {"music": 74} and game.sent[-1] == ("music", 74)
+    assert gui.remote_info()["music"] == 74
+    assert gui.set_game_music({"step": 90}) == {"music": 100} and gui.set_game_music({"level": 35}) == {"music": 35}
+    assert call(server, "/api/game/music", {"level": 101})[0] == 400
+    game.music_level = None  # (a mod without it)
+    gui._game_time = (-math.inf, None)
+    assert gui.remote_info()["music"] is None
+    assert "update the riffloop mod" in call(server, "/api/game/music", {"step": 1})[1]["error"]
+
+
+def test_following_riff_repeaters_speed_is_the_games_whoever_set_it(server):
+    gui, game = server.gui, server.gui._riff_loop
+    call(server, "/api/follow", {})
+    assert gui.remote_info()["speed"] == 1.0  # (a mod that doesn't say: as set here)
+    game.riff_speed = 62.0  # (the game's own slider moved)
+    gui._game_time = (-math.inf, None)
+    assert gui.remote_info()["speed"] == 0.62 and gui.remote_info()["riff"]["speed"] == 62
+    assert call(server, "/api/riff", {"speed": 63})[1]["speed"] == 63  # (set here: its, at once, whatever the mod
+    assert gui.remote_info()["speed"] == 0.63  # says of the one before)
+    game.riff_accelerator = True  # (switched on in the game's menu)
+    gui._game_time = (-math.inf, None)
+    assert gui.remote_info()["riff"]["accelerator"] is True
+    assert call(server, "/api/riff", {"accelerator": False})[1]["accelerator"] is False
+    assert gui.remote_info()["riff"]["accelerator"] is False

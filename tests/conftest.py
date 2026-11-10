@@ -30,6 +30,9 @@ class FakeRiffLoop:
     def __init__(self, *args, **kwargs):
         self.sent, self.range, self.screen = [], None, "LearnASong_Game"
         self.song_list, self.highlighted = None, 0  # (Learn a Song's song list: its keys, while it shows)
+        self.riff_accelerator = None  # (its Accelerator, as the game has it)
+        self.riff_speed = None  # (Riff Repeater's, as the game has it; None: a mod that doesn't say)
+        self.music_level = 80.0  # (the game's Music volume; None: a mod without it)
 
     def loop(self, a, b):
         self.sent.append(("loop", a, b))
@@ -42,7 +45,13 @@ class FakeRiffLoop:
         return GameLoop(True, False, None)
 
     def status(self):
-        return GameLoop(True, False, self.range, None, self.screen)
+        return GameLoop(True, False, self.range, None, self.screen, 0, self.riff_speed, self.riff_accelerator, self.music_level)
+
+    def music(self, level):
+        self.sent.append(("music", level))
+        if self.music_level is not None:
+            self.music_level = float(level)
+        return self.status()
 
     def pause(self):
         self.sent.append(("pause",))
