@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from rs_keylights.follow import Follower, GameState, OverlayError, SongClock, parse_state
+from rs_keylights.follow import (Follower, GameClock, GameState, OverlayClient, OverlayError, OverlayReader,
+                                 SongClock, parse_state)
 from rs_keylights.library import ArrangementRef
 from rs_keylights.sng import Arrangement, Note
 
@@ -251,7 +252,7 @@ def test_with_sound_each_song_gets_its_voices_and_the_trace_records_the_polls():
     assert messages[-1] == "Artist - Song (Lead): 2 notes; tone 178 SAW LEAD 1, palm mutes 077 MUTE GUITAR"
     assert trace[0] == {"t": 0.0, "state": 4, "stage": "", "timer": 9.8, "song": "X", "arrangement": "ID1",
                         "estimate": None}
-    assert trace[1] == {"t": 0.0, "playing": 9.8, "rate": 1.0}
+    assert trace[1] == {"t": 0.0, "playing": 9.8, "rate": 1.0, "from": "companion"}  # (no game time: RS Companion's)
     f.step(1.0)  # the timer hasn't moved for a second: paused
     assert {"t": 1.0, "stopped": True} in trace
 
@@ -347,3 +348,130 @@ def test_tracks_besides_the_parts_rebuild_what_plays_only_when_they_change():
     assert built == []
     follower.set_extras(lambda ref: [drum_track([Hit(1.0, KICK, 100)], DrumVoices(volume=60))])  # (another)
     assert len(built) == 1
+
+
+
+def game_reads(clock, start, rate, seconds, now, every=0.02, frame=1 / 60):
+    """The game's own time read every 20 ms, as the game has it: a frame's (it moves on 60 times a second)."""
+    t = now
+    while t < now + seconds - 1e-9:
+        game = start + rate * (int((t - now) / frame) * frame)
+        clock.update(round(game, 4), t)
+        t += every
+    return t
+
+
+def test_the_games_own_time_is_where_the_song_is_to_within_a_frame():
+    clock = GameClock()
+    now = game_reads(clock, 30.0, 1.0, 2.0, 100.0)
+    assert clock.trusted(now) and clock.rate == 1.0
+    assert abs(clock.position(now) - (30.0 + (now - 100.0))) < 1 / 60
+    assert not clock.trusted(now + 0.5)  # (no more reads: RS Companion's again)
+
+
+def test_the_games_own_time_measures_riff_repeaters_speed():
+    clock = GameClock()
+    now = game_reads(clock, 10.0, 0.7, 1.5, 0.0)
+    assert abs(clock.rate - 0.7) < 0.05
+    assert abs(clock.position(now) - (10.0 + 0.7 * now)) < 1 / 60
+
+
+def test_the_games_own_time_stops_as_it_pauses_or_stands_still_and_is_dark_going_back():
+    clock = GameClock()
+    now = game_reads(clock, 50.0, 1.0, 1.0, 0.0)
+    clock.update(51.0, now, paused=True)  # (the pause screen: at once)
+    assert clock.position(now) is None
+    now = game_reads(clock, 51.0, 1.0, 1.0, now + 0.02)
+    assert clock.position(now) is not None
+    t = clock._last[0]
+    for i in range(20):  # (the time standing still, no pause screen: stopped after STILL)
+        clock.update(t, now + i * 0.02)
+    assert clock.position(now + 0.4) is None
+    clock.update(t - 0.5, now + 0.42)  # (Riff Repeater's rewind: dark while it goes back)
+    clock.update(t - 1.0, now + 0.44)
+    assert clock.position(now + 0.44) is None
+    clock.update(t - 0.98, now + 0.46)  # (on again: lit at once)
+    assert abs(clock.position(now + 0.46) - (t - 0.98)) < 0.01
+
+
+def test_another_songs_playback_far_from_rs_companions_timer_is_set_aside():
+    clock = GameClock()
+    now = game_reads(clock, 200.0, 1.0, 1.0, 0.0)
+    clock.check(198.2, now)  # (RS Companion behind, 2 s even, as it can be: fine)
+    assert clock.trusted(now)
+    clock.check(229.0, now)  # (one far off, as RS Companion's timer now and then is: the game's still)
+    clock.check(200.85, now)
+    assert clock.trusted(now)
+    for timer in (12.0, 12.25, 12.5):  # (far off, again and again: another song's, still found)
+        clock.check(timer, now)
+        assert clock.trusted(now)
+    clock.check(12.75, now)
+    assert not clock.trusted(now)
+    game_reads(clock, 201.0, 1.0, 1.0, now)
+    assert not clock.trusted(now + 0.9)  # (set aside a while)
+
+
+def test_following_takes_where_the_song_is_from_the_game_while_it_says_and_rs_companion_for_the_rest():
+    client, index, keys, trace = FakeClient(), FakeIndex([REF]), FakeKeys(), []
+    game: dict = {"t": None}
+    asked = []
+
+    def game_time():
+        asked.append(1)
+        return game["t"], "LearnASong_Game"  # (t None: the mod's \"t=-\", no song's playback seen)
+
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES, trace=trace.append,  # type: ignore[arg-type]
+                 game_time=game_time)
+    client.state = GameState(4, 9.0, "X", "ID1")  # (RS Companion: the song, and its timer a while behind)
+    f.step(0.0)
+    for i in range(1, 60):  # the game's own time: 9.95 on, a frame at a time (RS Companion's 0.3 s behind it)
+        now = i * 0.02
+        game["t"] = round(9.95 + now, 4)
+        client.state = GameState(4, round(9.65 + now, 2), "X", "ID1")
+        f.step(now)
+        if i == 5:  # (10.05: 10.0's note lit, as the game's time says; RS Companion's 9.75 hasn't reached it)
+            assert keys.lit == {60}
+    assert abs(f.position(now) - (9.95 + now)) < 0.02  # (the game's, not RS Companion's 0.3 s behind)
+    game["t"] = None  # (no playback seen any more: RS Companion's timer, as it goes on)
+    client.state = GameState(4, 10.95, "X", "ID1")
+    f.step(1.3)
+    assert abs(f.position(1.3) - 10.95) < 0.05  # (RS Companion's 0.3 s behind, the game's own gone)
+
+
+def test_the_games_time_unanswered_is_asked_again_a_while_later():
+    client, index, keys = FakeClient(), FakeIndex([REF]), FakeKeys()
+    asked = []
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 game_time=lambda: asked.append(1))
+    client.state = GameState(4, 9.0, "X", "ID1")
+    for i in range(110):  # (two seconds and more of steps)
+        f.step(i * 0.02)
+    assert len(asked) == 4  # (three misses, then once after GAME_TIME_BACK_OFF)
+
+
+def test_rs_companion_is_read_on_a_thread_of_its_own():
+    import threading
+    import time
+
+    gate = threading.Event()
+
+    class SlowClient(FakeClient):
+        def read(self):
+            gate.wait(2)  # (an answer that takes its time: the steps go on meanwhile)
+            return super().read()
+
+    client, index, keys = SlowClient(), FakeIndex([REF]), FakeKeys()
+    client.state = GameState(4, 10.0, "X", "ID1")
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 overlay_thread=True)
+    started = time.monotonic()
+    f.step(started)
+    assert time.monotonic() - started < 0.05 and f.current is None  # (not waited for)
+    gate.set()
+    for _ in range(100):
+        time.sleep(0.01)
+        f.step(time.monotonic())
+        if f.current is not None:
+            break
+    assert f.current is REF
+    f.close()

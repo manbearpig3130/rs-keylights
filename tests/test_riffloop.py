@@ -41,3 +41,23 @@ def test_where_the_game_is_comes_with_its_state():
     said = parse("riffloop hook=1 riff=0 loop=- calls=0 ctl=1 t=69.321 lo=72 hi=88 held=0 speed=6 4dc=69.321")
     assert said is not None and said.time == 69.321
     assert parse("riffloop hook=1 riff=0 loop=- calls=0 ctl=0 held=0 speed=0").time is None  # (not seen yet)
+
+
+def test_the_games_time_asked_for_alone():
+    mod = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mod.bind(("127.0.0.1", 0))
+    answers = [b"time t=13.2040 screen=LearnASong_Game", b"time t=- screen=MainMenu",
+               b"riffloop error: not a command: time"]  # (a mod without it)
+
+    def answer():
+        for said in answers:
+            data, sender = mod.recvfrom(256)
+            assert data == b"time"
+            mod.sendto(said, sender)
+
+    Thread(target=answer, daemon=True).start()
+    game = RiffLoop(mod.getsockname()[1])
+    assert game.time() == (13.204, "LearnASong_Game")
+    assert game.time() == (None, "MainMenu")  # (no song's playback seen)
+    assert game.time() is None
+    mod.close()

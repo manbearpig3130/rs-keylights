@@ -1680,7 +1680,8 @@ class Gui:
                 keyboard = self._open_keyboard()
                 following = Following(OverlayClient(self.overlay_port), self.index, keyboard, self._follow_voices(),
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
-                                      parts_for=self._follow_parts(), trace=self._trace)
+                                      parts_for=self._follow_parts(), trace=self._trace,
+                                      game_time=self._riff_loop.time)
                 following.follower.pooled_lights = bool(self.settings["most_lights"])
                 following.set_extras(lambda ref: self._drum_tracks(song_id(ref)))  # (its song's drum part)
                 following.start()
@@ -2360,9 +2361,7 @@ class Gui:
 
     def _song_refs(self, ref: ArrangementRef) -> list[ArrangementRef]:
         """The arrangements of a song with notes, lead first."""
-        sid = song_id(ref)
-        return sorted((r for r in self.index.arrangements() if song_id(r) == sid and r.part not in NO_NOTES),
-                      key=part_order)
+        return sorted((r for r in self.index.of_song(ref) if r.part not in NO_NOTES), key=part_order)
 
     def _follow_voices(self) -> VoicesFor | None:
         """The voices for each arrangement played: its own tones, else the defaults for its kind of part, else the

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from collections import deque
 from typing import Callable, Sequence
 
-from .follow import TICK, Follower, OverlayClient, PartsFor
+from .follow import TICK, Follower, GameTime, OverlayClient, PartsFor
 from .library import ArrangementRef
 from .keyboard import Keyboard
 from .keyshow import KeyShow
@@ -17,6 +18,17 @@ from .player import Player, Track
 # while it plays) and following the game.
 
 LOOP_LEAD_IN = 1.0  # seconds of the song before a loop's start that it goes back to, to come in on it
+
+
+# Python runs one thread at a time, handing over every so often: a change being worked out (a song's parts planned
+# again, tens of milliseconds) could keep the song's thread waiting that long, its notes late. Handed over this
+# often instead (Python's default: 5 ms), it waits a millisecond or two
+SWITCH_INTERVAL = 0.001
+
+
+def _quick_switches() -> None:
+    if sys.getswitchinterval() > SWITCH_INTERVAL:
+        sys.setswitchinterval(SWITCH_INTERVAL)
 
 
 class Playback:
@@ -63,6 +75,7 @@ class Playback:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> None:
+        _quick_switches()
         self._since = self._clock()
         self._thread = threading.Thread(target=self._run, name="rs-keylights playback", daemon=True)
         self._thread.start()
@@ -204,12 +217,14 @@ class Following:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         trace: Callable[[dict[str, object]], None] | None = None,
+        game_time: GameTime | None = None,
     ):
         self.messages: deque[str] = deque(maxlen=40)
         self.keyboard = keyboard
         self.follower = Follower(client, index, keyboard, offset=offset, status=self.messages.append,
                                  voices_for=voices_for, parts_for=parts_for, lights_early=lights_early,
-                                 fastest_flash=fastest_flash, clock=clock, sleep=sleep, trace=trace)
+                                 fastest_flash=fastest_flash, clock=clock, sleep=sleep, trace=trace,
+                                 game_time=game_time, overlay_thread=True)
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
@@ -221,9 +236,11 @@ class Following:
         return self._thread is not None and self._thread.is_alive()
 
     def set_parts(self, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
-        """Other tones (or none) or parts: what plays goes on with them from where the song is."""
+        """Other tones (or none) or parts: what plays goes on with them from where the song is. Planned and made
+        first, while the song's steps go on (tens of milliseconds: the notes would wait), then taken at once."""
+        prepared = self.follower.prepare_parts(voices_for, parts_for)
         with self._lock:
-            self.follower.set_parts(voices_for, parts_for)
+            self.follower.use_parts(prepared, voices_for, parts_for)
 
     def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
         """Tracks besides the parts (a song's drum part): what plays goes on with them from where the song is."""
@@ -252,6 +269,7 @@ class Following:
             self.follower.set_lights(lead, min_period)
 
     def start(self) -> None:
+        _quick_switches()
         self._thread = threading.Thread(target=self._run, name="rs-keylights follow", daemon=True)
         self._thread.start()
 
@@ -268,5 +286,5 @@ class Following:
                 self._sleep(TICK)
         finally:
             with self._lock:
-                self.follower.stop()
+                self.follower.close()
             self.keyboard.close()

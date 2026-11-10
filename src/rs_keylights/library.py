@@ -162,6 +162,7 @@ class SongIndex:
         self.cache = cache or default_cache()
         self._archives: dict[str, dict] = {}
         self._by_id: dict[str, ArrangementRef] = {}
+        self._by_song: dict[tuple[str, str], list[ArrangementRef]] = {}  # (each song's arrangements)
         self._load_cache()
 
     def __len__(self) -> int:
@@ -215,11 +216,17 @@ class SongIndex:
         return read
 
     def _build(self) -> None:
-        self._by_id = {}
+        self._by_id, self._by_song = {}, {}
         for entry in self._archives.values():
             for fields in entry["arrangements"]:
                 ref = ArrangementRef(**{**fields, "tuning": tuple(fields.get("tuning", ()))})
                 self._by_id[ref.persistent_id] = ref
+        for ref in self._by_id.values():
+            self._by_song.setdefault((ref.archive, ref.song_key), []).append(ref)
+
+    def of_song(self, ref: ArrangementRef) -> list[ArrangementRef]:
+        """The arrangements of an arrangement's song (its archive's, with its song key), as indexed."""
+        return list(self._by_song.get((ref.archive, ref.song_key), ()))
 
     def _load_cache(self) -> None:
         try:
@@ -234,7 +241,7 @@ class SongIndex:
             try:
                 self._build()
             except (TypeError, KeyError):
-                self._archives, self._by_id = {}, {}
+                self._archives, self._by_id, self._by_song = {}, {}, {}
 
     def _save_cache(self) -> None:
         self.cache.parent.mkdir(parents=True, exist_ok=True)

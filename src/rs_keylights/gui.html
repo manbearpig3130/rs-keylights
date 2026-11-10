@@ -100,7 +100,7 @@
   #side h3.fold::before { content: "▾ "; color: var(--muted); }
   #side .card.folded h3.fold::before { content: "▸ "; }
   #side .card.folded h3 { margin: 0; }
-  #side .card.folded > :not(h3) { display: none; }
+  #side .card.folded > :not(h3):not(.card-tools) { display: none; }
   body.side-hidden #side { display: none; }
   body.side-hidden main { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
   @media (max-width: 1100px) { body.side-hidden main { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); } }
@@ -249,8 +249,8 @@
   .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; }
   .roll-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-  .fret-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-  .fret-head h3 { margin: 0; flex: 1; min-width: 0; }
+  .fret-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
+  .fret-head h3 { margin: 0; flex: 1 1 220px; min-width: 0; }
   :root { --th-chord: var(--rhythm); --th-scale: var(--bass); --th-outside: var(--lead); }
   .theory-now { display: flex; align-items: center; gap: 16px; margin: 4px 0 10px; }
   .theory-chord { display: flex; align-items: baseline; gap: 10px; min-width: 120px; }
@@ -280,8 +280,21 @@
   .fret-legend { display: none; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); position: absolute;
                  left: 12px; right: 12px; bottom: 8px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line);
                  border-radius: 6px; }  /* (shown over the fretboard as the mouse is on it) */
-  #fretCard { position: relative; }
-  #fretCard:hover .fret-legend:not(:empty) { display: flex; }
+  .layout-bar { display: none; }
+  body.layout-editing .layout-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px;
+    padding: 10px 12px; border: 1px dashed var(--muted); border-radius: 10px; background: var(--panel); font-size: 13px; }
+  .layout-bar .spacer { flex: 1; }
+  .layout-bar button { padding: 4px 10px; }
+  .card-tools { display: none; }
+  body.layout-editing .card-tools { display: flex; align-items: center; gap: 6px; margin: -4px 0 8px; font-size: 12px; }
+  .card-tools .grip { cursor: grab; font-size: 16px; color: var(--muted); padding: 0 2px; touch-action: none; }
+  .card-tools .name { flex: 1; font-weight: 600; }
+  .card-tools button { padding: 2px 8px; font-size: 12px; }
+  body.layout-editing #middle > .card, body.layout-editing #side > .card { outline: 1px dashed var(--muted); outline-offset: 3px; }
+  body.layout-editing #middle > .card[hidden] { display: block; opacity: .6; }  /* (nothing to show yet: still movable) */
+  .card.dragging { opacity: .4; }
+  .fret-card { position: relative; }
+  .fret-card:hover .fret-legend:not(:empty) { display: flex; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--muted); }
   .swatch.root { background: var(--accent); }
   .swatch.other { background: none; border: 1.5px dashed var(--muted); }
@@ -301,6 +314,7 @@
   <button id="stopBtn" class="icon" title="Stop" disabled>■</button>
   <button id="muteBtn" class="icon" title="The sound on the keyboard, playing or following (muted: just the lights)">🔊</button>
   <button id="followBtn" title="Follow Rocksmith: light the keys along with the song the game plays (red while it does)">Follow Rocksmith</button>
+  <button id="layoutBtn" class="icon" title="Layout: move, add and remove the cards (kept in this browser)">✎</button>
   <button id="sideBtn" class="icon" title="The settings column: hide it (the middle gets its room) or show it">⚙</button>
   <button id="fullBtn" class="icon" title="Full screen (Esc: back)">⛶</button>
 </header>
@@ -315,6 +329,7 @@
   </section>
 
   <div id="middle">
+  <div id="layoutBar" class="layout-bar"></div>
   <section id="songCard" class="card">
     <div id="noSong" class="empty">Pick a song from the library.</div>
     <div id="songView" hidden>
@@ -335,39 +350,6 @@
         <button type="button" id="loopClear">Clear</button>
       </div>
     </div>
-  </section>
-
-  <section id="fretCard" class="card" hidden>
-    <div class="fret-head">
-      <h3 id="fretTitle">Fretboard</h3>
-      <span id="fretChord" class="fret-chord" title="The chord being played"></span>
-      <label class="small" title="The thick string on top, as you see the neck looking down at the guitar (else the thin one, as tab has it)">
-        <input type="checkbox" id="fretFlip"> Thick string on top</label>
-      <select id="fretPart" aria-label="Whose notes light up" title="Whose notes light up as the song plays (following the game: the arrangement it plays)"></select>
-    </div>
-    <div id="fretboard" class="fretboard"></div>
-    <div id="fretLegend" class="fret-legend"></div>
-  </section>
-
-  <section id="tabCard" class="card" hidden>
-    <div class="fret-head">
-      <h3 id="tabTitle">Tab</h3>
-      <label class="small" title="Bars a row: two rows show, where the song is and what comes next">Bars
-        <select id="tabBars"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
-      <select id="tabPart" aria-label="Whose tab" title="Whose tab (following the game: the arrangement it plays)"></select>
-    </div>
-    <div id="tab" class="tab"></div>
-  </section>
-
-  <section id="rollCard" class="card" hidden>
-    <div class="fret-head">
-      <h3 id="rollTitle">Keys</h3>
-      <label class="small" title="How far ahead the notes show, falling onto the keys">Ahead
-        <select id="rollAhead"><option value="2">2 s</option><option value="4">4 s</option><option value="6">6 s</option><option value="8">8 s</option></select></label>
-      <select id="rollPart" aria-label="Whose notes" title="Whose notes: what the keyboard plays (every part playing, as it lights and sounds them), or one arrangement alone"></select>
-    </div>
-    <div id="roll" class="roll"><canvas id="rollCanvas" aria-label="The notes falling onto the keys"></canvas></div>
-    <div id="rollLegend" class="roll-legend"></div>
   </section>
 
   <section id="drumsCard" class="card" hidden>
@@ -519,6 +501,43 @@
     </div>
   </section>
 </main>
+<template id="fretTemplate">
+  <section class="card fret-card" data-kind="fretboard" hidden>
+    <div class="fret-head">
+      <h3 data-r="title">Fretboard</h3>
+      <span data-r="chord" class="fret-chord" title="The chord being played"></span>
+      <label class="small" title="The thick string on top, as you see the neck looking down at the guitar (else the thin one, as tab has it)">
+        <input type="checkbox" data-r="flip"> Thick string on top</label>
+      <select data-r="part" aria-label="Whose notes light up" title="Whose notes light up as the song plays (following the game: the arrangement it plays)"></select>
+    </div>
+    <div data-r="board" class="fretboard"></div>
+    <div data-r="legend" class="fret-legend"></div>
+  </section>
+</template>
+<template id="tabTemplate">
+  <section class="card" data-kind="tab" hidden>
+    <div class="fret-head">
+      <h3 data-r="title">Tab</h3>
+      <label class="small" title="Bars a row: two rows show, where the song is and what comes next">Bars
+        <select data-r="bars"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
+      <select data-r="part" aria-label="Whose tab" title="Whose tab (following the game: the arrangement it plays)"></select>
+    </div>
+    <div data-r="tab" class="tab"></div>
+  </section>
+</template>
+<template id="rollTemplate">
+  <section class="card" data-kind="keys" hidden>
+    <div class="fret-head">
+      <h3 data-r="title">Keys</h3>
+      <label class="small" title="How far ahead the notes show, falling onto the keys">Ahead
+        <select data-r="ahead"><option value="2">2 s</option><option value="4">4 s</option><option value="6">6 s</option><option value="8">8 s</option></select></label>
+      <select data-r="part" aria-label="Whose notes" title="Whose notes: what the keyboard plays (every part playing, as it lights and sounds them), or one arrangement alone"></select>
+    </div>
+    <div data-r="roll" class="roll"><canvas data-r="canvas" aria-label="The notes falling onto the keys"></canvas></div>
+    <div data-r="legend" class="roll-legend"></div>
+  </section>
+</template>
+<div id="parked" hidden></div>
 <div id="toast" hidden></div>
 
 
@@ -660,11 +679,7 @@ const BOARD = {W: 34, OPEN: 32, LEFT: 22, TOP: 16, GAP: 26, R: 11};
 const LIT = 0.25;  // seconds a note's lit at least (picked, with no sustain)
 const AHEAD = 0.6, AHEAD_MOST = 6;  // seconds ahead the next notes are ringed, and how many places at most
 const COASTING = 0.6;  // seconds the song's taken to go on after the last word of where it is
-let fretData = null;  // GET /api/fretboard: the arrangement shown, its notes and chords
-let fretWanted = "";  // (the song and part asked for)
 let fretClock = null;  // where the song shown is, as last heard, and how fast it goes on from there
-let fretLiveShown = "";
-let fretPicked = null;  // the part picked to show (kept from song to song, when there's one)
 let fretThickOnTop = !!store.get("rsk.fretThickOnTop", false);  // as you see it, looking down at the guitar (else as tab)
 
 function geometry(n) {
@@ -717,22 +732,36 @@ function fretboardSvg(key, guitar) {
   });
   const label = `${key.name} on a ${guitar.bass ? "bass" : "guitar"} in ${guitar.tuning}`;
   return `<svg viewBox="0 0 ${right + 8} ${bottom + 30}" role="img" aria-label="${esc(label)}">${out.join("")}` +
-    `<g id="fretLive"></g></svg>`;
+    `<g class="fret-live"></g></svg>`;
 }
 
-// The arrangement the fretboard (or the tab) shows: the one the game plays (following this song), else the one
-// picked, else the first guitar part that plays (else the first guitar part)
-function fretPartOf(s, picked = fretPicked) {
+// The arrangement a card shows: the one picked for it, if the song has it (a copy can keep one: the bass, say);
+// else, following this song, the one the game plays; else the first guitar part that plays (else the first guitar
+// part)
+function fretPartOf(s, picked) {
+  if (picked && s.parts.some((p) => p.part === picked)) return picked;
   if (state.mode === "following" && state.follow && state.follow.song_id === s.id) {
     const played = s.parts.find((p) => p.arrangement === state.follow.arrangement);
     if (played) return played.part;
   }
-  if (s.parts.some((p) => p.part === picked)) return picked;
   const guitar = s.parts.filter((p) => p.kind !== "bass");
   return (guitar.find((p) => p.play) || guitar[0] || s.parts[0]).part;
 }
 
-// An arrangement's notes, chords, techniques and bars (GET /api/fretboard), for the fretboard and the tab: the
+// A card's choice of part: its own first (auto), then the song's parts; the one picked kept for songs that have it
+function fillParts(select, s, picked, auto, each = (p) => p.name) {
+  if (auto === "Auto") select.title = "Auto: following, the arrangement the game plays; else the one playing. " +
+    "Or one picked: kept for every song that has it";
+  const options = `<option value="">${esc(auto)}</option>` +
+    s.parts.map((p) => `<option value="${esc(p.part)}">${esc(each(p))}</option>`).join("");
+  if (select.dataset.options !== options) {
+    select.innerHTML = options;
+    select.dataset.options = options;
+  }
+  select.value = picked && s.parts.some((p) => p.part === picked) ? picked : "";
+}
+
+// An arrangement's notes, chords, techniques and bars (GET /api/fretboard), for the fretboards and the tabs: the
 // last few asked for kept
 const arrangementCache = new Map();
 function arrangementData(id, part) {
@@ -741,53 +770,102 @@ function arrangementData(id, part) {
     const asked = api(`/api/fretboard?id=${encodeURIComponent(id)}&part=${encodeURIComponent(part)}`);
     asked.catch(() => arrangementCache.delete(key));
     arrangementCache.set(key, asked);
-    while (arrangementCache.size > 6) arrangementCache.delete(arrangementCache.keys().next().value);
+    while (arrangementCache.size > 8) arrangementCache.delete(arrangementCache.keys().next().value);
   }
   return arrangementCache.get(key);
 }
 
-function renderFretboard(s) {
-  const card = $("fretCard");
-  card.hidden = !s.key || !s.guitar;
-  if (card.hidden) return;
-  const select = $("fretPart");
-  const options = s.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)}</option>`).join("");
-  if (select.dataset.options !== options) {
-    select.innerHTML = options;
-    select.dataset.options = options;
-  }
-  const part = fretPartOf(s);
-  select.value = part;
-  const wanted = `${s.id}|${part}`;
-  if (fretWanted !== wanted) {
-    fretWanted = wanted;
-    fretData = null;
-    arrangementData(s.id, part).then((d) => {
-      if (fretWanted === wanted) {
-        fretData = d;
-        drawFretboard(s.key, d);
-      }
-    }).catch(() => {});
-  }
-  drawFretboard(s.key, fretData || s.guitar);
+// Where the song shown is, from now (not moving: where it is; no clock: where it starts)
+function songNow(s) {
+  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
+  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+  return {clock, at: clock ? clock.position + since : Number(s.start) || 0};
 }
 
-function drawFretboard(key, guitar) {
-  const card = $("fretCard");
-  const shown = `${key.tonic}|${key.scale}|${key.other}|${guitar.strings}|${guitar.capo}|${guitar.name || ""}`;
-  if (card.dataset.shown === shown) return;  // (drawn already: the song's renders often)
-  card.dataset.shown = shown;
-  fretLiveShown = "";
-  const scale = key.mode === "minor" ? `${key.name} (natural)` : key.name;
-  const whose = guitar.name || (guitar.bass ? "bass" : "guitar");
-  $("fretTitle").textContent = `${scale} · ${whose} in ${guitar.tuning}`;
-  $("fretboard").innerHTML = fretboardSvg(key, guitar);
-  const legend = [`<span><span class="swatch root"></span>${esc(key.notes[0])}, the root</span>`,
-    `<span><span class="swatch"></span>the rest of the scale</span>`];
-  if (key.other.length) legend.push(`<span><span class="swatch other"></span>also used: ${esc(key.other_notes.join(" "))}</span>`);
-  if (guitar.capo > 0) legend.push(`<span>capo on fret ${guitar.capo}</span>`);
-  if (guitar.notes) legend.push(`<span><span class="swatch now"></span>playing (the next ringed), the chord's shape R b3 5…</span>`);
-  $("fretLegend").innerHTML = legend.join("");
+// A card made from its template (the copies' cards): its parts by their data-r
+function cardFrom(template) {
+  const root = document.getElementById(template).content.firstElementChild.cloneNode(true);
+  return {root, r: (name) => root.querySelector(`[data-r="${name}"]`)};
+}
+
+// The fretboard: the song's scale on the arrangement's guitar, and its notes lighting as it plays
+function makeFretCard(spec) {
+  const {root, r} = cardFrom("fretTemplate");
+  let data = null, wanted = "", liveShown = "";
+  const card = {spec, root,
+    render(s) {
+      root.hidden = !s.key || !s.guitar;
+      if (root.hidden) return;
+      fillParts(r("part"), s, card.spec.part, "Auto");
+      const part = fretPartOf(s, card.spec.part);
+      const asked = `${s.id}|${part}`;
+      if (wanted !== asked) {
+        wanted = asked;
+        data = null;
+        arrangementData(s.id, part).then((d) => {
+          if (wanted === asked) {
+            data = d;
+            draw(s.key, d);
+          }
+        }).catch(() => {});
+      }
+      draw(s.key, data || s.guitar);
+    },
+    flipped() {
+      r("flip").checked = fretThickOnTop;
+      root.dataset.shown = "";
+      if (selected) card.render(selected);
+    },
+    frame() {
+      const layer = root.querySelector(".fret-live"), s = selected;
+      if (!layer) return;
+      const clock = fretClock;
+      if (!(data && data.notes && clock && s && clock.song === s.id && s.key)) {
+        if (liveShown) {
+          layer.innerHTML = "";
+          layer.ownerSVGElement.classList.remove("live-on");
+          r("chord").textContent = "";
+          liveShown = "";
+        }
+        return;
+      }
+      const now = liveAt(data, songNow(s).at);
+      const shown = JSON.stringify(now);
+      if (shown === liveShown) return;
+      liveShown = shown;
+      layer.ownerSVGElement.classList.add("live-on");
+      layer.innerHTML = liveSvg(now, data, s.key);
+      r("chord").textContent = now.chord ? now.chord.name : "";
+    },
+  };
+  function draw(key, guitar) {
+    const shown = `${key.tonic}|${key.scale}|${key.other}|${guitar.strings}|${guitar.capo}|${guitar.name || ""}`;
+    if (root.dataset.shown === shown) return;  // (drawn already: the song's renders often)
+    root.dataset.shown = shown;
+    liveShown = "";
+    const scale = key.mode === "minor" ? `${key.name} (natural)` : key.name;
+    const whose = guitar.name || (guitar.bass ? "bass" : "guitar");
+    r("title").textContent = `${scale} · ${whose} in ${guitar.tuning}`;
+    r("board").innerHTML = fretboardSvg(key, guitar);
+    const legend = [`<span><span class="swatch root"></span>${esc(key.notes[0])}, the root</span>`,
+      `<span><span class="swatch"></span>the rest of the scale</span>`];
+    if (key.other.length) legend.push(`<span><span class="swatch other"></span>also used: ${esc(key.other_notes.join(" "))}</span>`);
+    if (guitar.capo > 0) legend.push(`<span>capo on fret ${guitar.capo}</span>`);
+    if (guitar.notes) legend.push(`<span><span class="swatch now"></span>playing (the next ringed), the chord's shape R b3 5…</span>`);
+    r("legend").innerHTML = legend.join("");
+  }
+  r("flip").checked = fretThickOnTop;
+  r("flip").addEventListener("change", () => {
+    fretThickOnTop = r("flip").checked;
+    store.set("rsk.fretThickOnTop", fretThickOnTop);
+    for (const c of liveCards) if (c.flipped) c.flipped();  // (every fretboard and tab, the other way up)
+  });
+  r("part").addEventListener("change", () => {
+    card.spec.part = r("part").value;
+    saveLayout();
+    if (selected) card.render(selected);
+  });
+  return card;
 }
 
 // Where the song shown is: following it, the game's place; playing it, the song's (none: no notes lit)
@@ -869,44 +947,6 @@ function liveSvg(live, d, key) {
   return out.join("");
 }
 
-function fretFrame() {
-  requestAnimationFrame(fretFrame);
-  const layer = document.getElementById("fretLive");
-  if (!layer) return;
-  const d = fretData, clock = fretClock, s = selected;
-  const live = d && d.notes && clock && s && clock.song === s.id && s.key && !$("fretCard").hidden;
-  if (!live) {
-    if (fretLiveShown) {
-      layer.innerHTML = "";
-      layer.ownerSVGElement.classList.remove("live-on");
-      $("fretChord").textContent = "";
-      fretLiveShown = "";
-    }
-    return;
-  }
-  const since = clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
-  const now = liveAt(d, clock.position + since);
-  const shown = JSON.stringify(now);
-  if (shown === fretLiveShown) return;
-  fretLiveShown = shown;
-  layer.ownerSVGElement.classList.add("live-on");
-  layer.innerHTML = liveSvg(now, d, s.key);
-  $("fretChord").textContent = now.chord ? now.chord.name : "";
-}
-requestAnimationFrame(fretFrame);
-$("fretFlip").checked = fretThickOnTop;
-$("fretFlip").addEventListener("change", () => {
-  fretThickOnTop = $("fretFlip").checked;
-  store.set("rsk.fretThickOnTop", fretThickOnTop);
-  $("fretCard").dataset.shown = "";  // (drawn again, the other way up)
-  tabShown = "";
-  if (selected) renderFretboard(selected);
-});
-$("fretPart").addEventListener("change", () => {
-  fretPicked = $("fretPart").value;
-  if (selected) renderFretboard(selected);
-});
-
 // The tab: an arrangement's notes as tab, its bars a few to a row (tabBars), two rows showing: the one the song's
 // in, a line where it is, and the next; reaching the second, it goes up (as a page turns). The notes being played
 // light up, the ones played are dimmed; the chords' names are over them; techniques as tab has them (h, p, t,
@@ -915,43 +955,70 @@ $("fretPart").addEventListener("change", () => {
 const TAB = {LEFT: 22, RIGHT: 10, TOP: 22, GAP: 13, ROWS: 2, ROW_GAP: 22};
 const TECH = {HARMONIC: 0x20, PALM_MUTE: 0x40, HAMMER_ON: 0x200, PULL_OFF: 0x400, TAP: 0x4000, PINCH: 0x8000,
   VIBRATO: 0x10000};
-let tabData = null, tabWanted = "", tabPicked = null, tabShown = "";
-let tabBars = Number(store.get("rsk.tabBars", 2)) || 2;
+let tabBars = Number(store.get("rsk.tabBars", 2)) || 2;  // (a new tab's bars a row: the last chosen)
 
-function renderTab(s) {
-  const card = $("tabCard");
-  card.hidden = !s.guitar;
-  if (card.hidden) return;
-  const select = $("tabPart");
-  const options = s.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)}</option>`).join("");
-  if (select.dataset.options !== options) {
-    select.innerHTML = options;
-    select.dataset.options = options;
-  }
-  const part = fretPartOf(s, tabPicked);
-  select.value = part;
-  const wanted = `${s.id}|${part}`;
-  if (tabWanted !== wanted) {
-    tabWanted = wanted;
-    tabData = null;
-    tabShown = "";
-    $("tab").innerHTML = "";
-    arrangementData(s.id, part).then((d) => {
-      if (tabWanted === wanted) {
-        tabData = {...d, rows: tabRows(d)};
-        $("tabTitle").textContent = `Tab · ${d.name}`;
-      }
-    }).catch(() => {});
-  }
+// Its rows: each one's start and end (seconds), bars bars a row
+function tabRows(d, bars = tabBars) {
+  const last = d.notes.reduce((end, n) => Math.max(end, n[1]), d.length || 0);
+  const starts = d.bars.length ? d.bars : [0];
+  const rows = [];
+  for (let i = 0; i < starts.length; i += bars) rows.push([starts[i], i + bars < starts.length ? starts[i + bars] : last]);
+  return rows.filter(([start, end]) => end > start);
 }
 
-// Its rows: each one's start and end (seconds), tabBars bars a row
-function tabRows(d) {
-  const last = d.notes.reduce((end, n) => Math.max(end, n[1]), d.length || 0);
-  const bars = d.bars.length ? d.bars : [0];
-  const rows = [];
-  for (let i = 0; i < bars.length; i += tabBars) rows.push([bars[i], i + tabBars < bars.length ? bars[i + tabBars] : last]);
-  return rows.filter(([start, end]) => end > start);
+function makeTabCard(spec) {
+  const {root, r} = cardFrom("tabTemplate");
+  let data = null, wanted = "", shown = "";
+  const bars = () => Number(card.spec.bars) || tabBars;
+  const card = {spec, root,
+    render(s) {
+      root.hidden = !s.guitar;
+      if (root.hidden) return;
+      fillParts(r("part"), s, card.spec.part, "Auto");
+      const part = fretPartOf(s, card.spec.part);
+      const asked = `${s.id}|${part}`;
+      if (wanted === asked) return;
+      wanted = asked;
+      data = null;
+      shown = "";
+      r("tab").innerHTML = "";
+      arrangementData(s.id, part).then((d) => {
+        if (wanted === asked) {
+          data = {...d, rows: tabRows(d, bars())};
+          r("title").textContent = `Tab · ${d.name}`;
+        }
+      }).catch(() => {});
+    },
+    flipped() { shown = ""; },
+    frame() {
+      const s = selected;
+      if (!data || !s || !data.rows.length || `${s.id}|${data.part}` !== wanted) return;
+      const {at} = songNow(s);  // (not playing: where it starts)
+      let first = data.rows.findIndex(([, end]) => at < end);
+      if (first < 0) first = data.rows.length - 1;
+      const width = Math.max(320, Math.round(r("tab").clientWidth));
+      const lo = data.notes.findIndex((note) => note[0] > at);
+      const playing = data.notes.reduce((n, note, i) => n + (note[0] <= at && Math.max(note[1], note[0] + LIT) >= at ? i : 0), 0);
+      const now = `${first}|${lo}|${playing}|${width}|${fretThickOnTop}|${Math.round(at * 20)}`;
+      if (now === shown) return;
+      shown = now;
+      r("tab").innerHTML = tabSvg(data, first, at, width);
+    },
+  };
+  r("bars").value = String(bars());
+  r("bars").addEventListener("change", () => {
+    card.spec.bars = tabBars = Number(r("bars").value) || 2;
+    store.set("rsk.tabBars", tabBars);
+    saveLayout();
+    if (data) data = {...data, rows: tabRows(data, bars())};
+    shown = "";
+  });
+  r("part").addEventListener("change", () => {
+    card.spec.part = r("part").value;
+    saveLayout();
+    if (selected) card.render(selected);
+  });
+  return card;
 }
 
 // A note's text: its fret, as its techniques have it
@@ -1015,77 +1082,13 @@ function tabSvg(d, first, at, width) {
   return `<svg viewBox="0 0 ${width} ${total}" role="img" aria-label="Tab">${out.join("")}</svg>`;
 }
 
-function tabFrame() {
-  requestAnimationFrame(tabFrame);
-  const d = tabData, s = selected;
-  if (!d || !s || !d.rows.length || $("tabCard").hidden || `${s.id}|${d.part}` !== tabWanted) return;
-  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
-  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
-  const at = clock ? clock.position + since : Number(s.start) || 0;  // (not playing: where it starts)
-  let first = d.rows.findIndex(([, end]) => at < end);
-  if (first < 0) first = d.rows.length - 1;
-  const width = Math.max(320, Math.round($("tab").clientWidth));
-  const lo = d.notes.findIndex((note) => note[0] > at);
-  const playing = d.notes.reduce((n, note, i) => n + (note[0] <= at && Math.max(note[1], note[0] + LIT) >= at ? i : 0), 0);
-  const shown = `${first}|${lo}|${playing}|${width}|${fretThickOnTop}|${Math.round(at * 20)}`;
-  if (shown === tabShown) return;
-  tabShown = shown;
-  $("tab").innerHTML = tabSvg(d, first, at, width);
-}
-requestAnimationFrame(tabFrame);
-$("tabBars").value = String(tabBars);
-$("tabBars").addEventListener("change", () => {
-  tabBars = Number($("tabBars").value) || 2;
-  store.set("rsk.tabBars", tabBars);
-  if (tabData) tabData = {...tabData, rows: tabRows(tabData)};
-  tabShown = "";
-});
-$("tabPart").addEventListener("change", () => {
-  tabPicked = $("tabPart").value;
-  if (selected) renderTab(selected);
-});
-
 // The keys: what the keyboard plays, its notes falling onto a keyboard drawn as the Casio's (C2 to C7, all 61 keys),
 // so each bar lands on the key it plays, as long as it's held (as it rings). Every part playing, as planned (the
 // lights' octave shift; following, the game's arrangement's plan), coloured by kind as on the Launchkey (lead orange,
 // rhythm green, bass blue): bright where they light, faint where they only sound; or one arrangement alone. The keys
 // light as the Casio's do, 4 at most (most lights: the parts' in their order, the lowest first). GET /api/roll
-let rollData = null, rollWanted = "", rollPicked = "", rollShown = "";
-let rollAhead = Number(store.get("rsk.rollAhead", 4)) || 4;
 const ROLL = {KEYS_HIGH: 54, BLACK_HIGH: 0.62, BLACK_WIDE: 0.62};
 const BLACK = new Set([1, 3, 6, 8, 10]);
-
-function renderRoll(s, f) {
-  const card = $("rollCard");
-  card.hidden = !s;
-  if (card.hidden) return;
-  const select = $("rollPart");
-  const options = `<option value="">${esc(KB())} (every part playing)</option>` +
-    s.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)} alone</option>`).join("");
-  if (select.dataset.options !== options) {
-    select.innerHTML = options;
-    select.dataset.options = options;
-  }
-  if (rollPicked && !s.parts.some((p) => p.part === rollPicked)) rollPicked = "";
-  select.value = rollPicked;
-  // (asked again as what plays changes: the parts chosen, following and the game's arrangement, most lights)
-  const choices = (f ? f.arrangements : s.parts).map((p) => `${p.id || p.part}:${p.play}:${p.lights}`).join(",");
-  const following = state.mode === "following" && state.follow ? state.follow.arrangement : "";
-  const wanted = `${s.id}|${rollPicked}|${choices}|${following}|${$("mostLights").checked}`;
-  if (rollWanted === wanted) return;
-  rollWanted = wanted;
-  const asked = `/api/roll?id=${encodeURIComponent(s.id)}` + (rollPicked ? `&part=${encodeURIComponent(rollPicked)}` : "");
-  api(asked).then((d) => {
-    if (rollWanted !== wanted) return;
-    rollData = d;
-    rollShown = "";
-    $("rollTitle").textContent = rollPicked ? `Keys · ${d.parts[0] ? d.parts[0].name : ""}` : `Keys · what the ${KB()} plays`;
-    const kinds = [...new Set(d.parts.map((p) => p.kind))];
-    $("rollLegend").innerHTML = d.parts.map((p) =>
-      `<span><span class="swatch" style="background: var(--${p.kind})"></span>${esc(p.name)}${p.lights ? "" : " (sounds, not lit)"}</span>`).join("") +
-      (kinds.length ? `<span>bright: lights the key · faint: sounds only</span>` : `<span>no part playing</span>`);
-  }).catch(() => { if (rollWanted === wanted) { rollWanted = ""; } });
-}
 
 // The keys' places: each one's left edge and width, white keys side by side and black ones over their gap
 function rollKeys(d, width) {
@@ -1111,18 +1114,66 @@ function rollLitAt(d, at) {
   return keys;
 }
 
-function rollFrame() {
-  requestAnimationFrame(rollFrame);
-  const d = rollData, s = selected, canvas = $("rollCanvas");
-  if (!d || !s || $("rollCard").hidden || !rollWanted.startsWith(`${s.id}|`)) return;
-  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
-  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
-  const at = clock ? clock.position + since : Number(s.start) || 0;
-  const ratio = window.devicePixelRatio || 1, width = Math.round(canvas.clientWidth), height = Math.round(canvas.clientHeight);
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  const shown = `${Math.round(at * 60)}|${width}|${height}|${ratio}|${rollAhead}|${dark}`;
-  if (shown === rollShown || !width) return;
-  rollShown = shown;
+let rollAhead = Number(store.get("rsk.rollAhead", 4)) || 4;  // (a new keys card's seconds ahead: the last chosen)
+
+function makeRollCard(spec) {
+  const {root, r} = cardFrom("rollTemplate");
+  let data = null, wanted = "", shown = "";
+  const ahead = () => Number(card.spec.ahead) || rollAhead;
+  const card = {spec, root,
+    render(s, f) {
+      root.hidden = !s;
+      if (root.hidden) return;
+      fillParts(r("part"), s, card.spec.part, `${KB()} (every part playing)`, (p) => `${p.name} alone`);
+      r("part").title = `Whose notes: what the ${KB()} plays (every part playing, as it lights and sounds them), or ` +
+        "one arrangement alone";
+      const picked = card.spec.part && s.parts.some((p) => p.part === card.spec.part) ? card.spec.part : "";
+      // (asked again as what plays changes: the parts chosen, following and the game's arrangement, most lights)
+      const choices = (f ? f.arrangements : s.parts).map((p) => `${p.id || p.part}:${p.play}:${p.lights}`).join(",");
+      const following = state.mode === "following" && state.follow ? state.follow.arrangement : "";
+      const asked = `${s.id}|${picked}|${choices}|${following}|${$("mostLights").checked}`;
+      if (wanted === asked) return;
+      wanted = asked;
+      api(`/api/roll?id=${encodeURIComponent(s.id)}` + (picked ? `&part=${encodeURIComponent(picked)}` : "")).then((d) => {
+        if (wanted !== asked) return;
+        data = d;
+        shown = "";
+        r("title").textContent = picked ? `Keys · ${d.parts[0] ? d.parts[0].name : ""}` : `Keys · what the ${KB()} plays`;
+        const kinds = [...new Set(d.parts.map((p) => p.kind))];
+        r("legend").innerHTML = d.parts.map((p) =>
+          `<span><span class="swatch" style="background: var(--${p.kind})"></span>${esc(p.name)}${p.lights ? "" : " (sounds, not lit)"}</span>`).join("") +
+          (kinds.length ? `<span>bright: lights the key · faint: sounds only</span>` : `<span>no part playing</span>`);
+      }).catch(() => { if (wanted === asked) wanted = ""; });
+    },
+    frame() {
+      const d = data, s = selected, canvas = r("canvas");
+      if (!d || !s || !wanted.startsWith(`${s.id}|`)) return;
+      const {at} = songNow(s), seconds = ahead();
+      const ratio = window.devicePixelRatio || 1, width = Math.round(canvas.clientWidth), height = Math.round(canvas.clientHeight);
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      const now = `${Math.round(at * 60)}|${width}|${height}|${ratio}|${seconds}|${dark}`;
+      if (now === shown || !width) return;
+      shown = now;
+      drawRoll(canvas, d, at, seconds, width, height, ratio);
+    },
+  };
+  r("ahead").value = String(ahead());
+  r("ahead").addEventListener("change", () => {
+    card.spec.ahead = rollAhead = Number(r("ahead").value) || 4;
+    store.set("rsk.rollAhead", rollAhead);
+    saveLayout();
+    shown = "";
+  });
+  r("part").addEventListener("change", () => {
+    card.spec.part = r("part").value;
+    saveLayout();
+    if (selected) card.render(selected, followedSong());
+  });
+  return card;
+}
+
+// The keys card's picture at a moment: the notes falling onto the keys, seconds of them, and the keys lit
+function drawRoll(canvas, d, at, seconds, width, height, ratio) {
   if (canvas.width !== width * ratio || canvas.height !== height * ratio) {
     canvas.width = width * ratio;
     canvas.height = height * ratio;
@@ -1131,7 +1182,7 @@ function rollFrame() {
   const colour = (name) => css.getPropertyValue(`--${name}`).trim();
   g.setTransform(ratio, 0, 0, ratio, 0, 0);
   g.clearRect(0, 0, width, height);
-  const keys = rollKeys(d, width), floor = height - ROLL.KEYS_HIGH, perSecond = floor / rollAhead;
+  const keys = rollKeys(d, width), floor = height - ROLL.KEYS_HIGH, perSecond = floor / seconds;
   // Octave lines, C marked, behind the notes
   g.fillStyle = colour("bg");
   g.fillRect(0, 0, width, floor);
@@ -1143,7 +1194,7 @@ function rollFrame() {
   const y = (t) => floor - (t - at) * perSecond;
   for (const pass of [0, 1]) {
     for (const [start, end, key, part, lit] of d.notes) {
-      if (lit !== pass || end < at || start > at + rollAhead) continue;
+      if (lit !== pass || end < at || start > at + seconds) continue;
       const place = keys.get(key), p = d.parts[part];
       if (!place || !p) continue;
       const top = Math.max(y(end), 0), bottom = Math.min(y(start), floor);
@@ -1189,17 +1240,6 @@ function rollFrame() {
     if (place) g.fillText(`C${Math.floor(k / 12) - 1}`, place.x + place.w / 2, height - 5);
   }
 }
-requestAnimationFrame(rollFrame);
-$("rollAhead").value = String(rollAhead);
-$("rollAhead").addEventListener("change", () => {
-  rollAhead = Number($("rollAhead").value) || 4;
-  store.set("rsk.rollAhead", rollAhead);
-  rollShown = "";
-});
-$("rollPart").addEventListener("change", () => {
-  rollPicked = $("rollPart").value;
-  if (selected) renderRoll(selected, followedSong());
-});
 
 // The drums: a drum kit drawn from the front, each drum lighting as the song's drum part strikes it (brighter the
 // harder, fading), playing or following; a click strikes it, where the drums play (the keyboard's drum channel or
@@ -1252,7 +1292,7 @@ function kitSvg() {
 function renderDrumsCard(s) {
   const card = $("drumsCard");
   card.hidden = !s;
-  if (card.hidden) return;
+  if (card.hidden || card.closest("#parked")) return;  // (removed from the layout: nothing to do)
   if (!$("drumkit").firstChild) {
     $("drumkit").innerHTML = kitSvg();
     for (const g of $("drumkit").querySelectorAll(".piece")) {
@@ -1340,7 +1380,7 @@ function showCircuitKit(d) {
 function drumsFrame() {
   requestAnimationFrame(drumsFrame);
   const s = selected;
-  if (!s || $("drumsCard").hidden || !$("drumkit").firstChild) return;
+  if (!s || $("drumsCard").hidden || !$("drumsCard").offsetParent || !$("drumkit").firstChild) return;
   const clock = fretClock && fretClock.song === s.id ? fretClock : null;
   const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
   const at = clock && clock.moving ? clock.position + since : null;  // (lit only as it plays)
@@ -1377,7 +1417,7 @@ let theoryData = null, theoryWanted = "", theoryShown = "", theoryPicked = "", t
 function renderTheoryCard(s) {
   const card = $("theoryCard");
   card.hidden = !s;
-  if (card.hidden) return;
+  if (card.hidden || card.closest("#parked")) return;  // (removed from the layout: nothing to do)
   const wanted = `${s.id}|${theoryPicked}`;
   if (theoryWanted === wanted) return;
   theoryWanted = wanted;
@@ -1408,7 +1448,7 @@ function theoryAt(list, at, start = (x) => x[0]) {  // (the last that starts by 
 function theoryFrame() {
   requestAnimationFrame(theoryFrame);
   const d = theoryData, s = selected;
-  if (!d || !d.key || !s || $("theoryCard").hidden || !theoryWanted.startsWith(`${s.id}|`)) return;
+  if (!d || !d.key || !s || $("theoryCard").hidden || !$("theoryCard").offsetParent || !theoryWanted.startsWith(`${s.id}|`)) return;
   const clock = fretClock && fretClock.song === s.id ? fretClock : null;
   const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
   const at = clock ? clock.position + since : Number(s.start) || 0;
@@ -1520,6 +1560,223 @@ function theoryRuns(notes) {
   }
   return runs;
 }
+
+// The page's layout (✎ in the header): the middle column's cards in the order wanted, with copies of the ones that
+// can have several (Fretboard, Tab, Keys: each with its own part, a tab of the bass beside the lead's, say) and the
+// rest there once or not at all; and the settings column's cards in order, or put away. Moved by dragging (⠿) or
+// ▲ ▼, removed with ✕, added from the bar over the cards. Kept in this browser (a phone has its own)
+const CARD_KINDS = {
+  song: {name: "Song", fixed: "songCard"},
+  fretboard: {name: "Fretboard", make: makeFretCard},
+  tab: {name: "Tab", make: makeTabCard},
+  keys: {name: "Keys", make: makeRollCard},
+  drums: {name: "Drums", fixed: "drumsCard"},
+  theory: {name: "Theory", fixed: "theoryCard"},
+};
+const LAYOUT_KEY = "rsk.layout";
+const SIDE_CARDS = [...document.querySelectorAll("#side > .card")].map((c) => c.id);  // (as the page has them)
+function defaultLayout() {
+  return {middle: ["song", "fretboard", "tab", "keys", "drums", "theory"].map((kind) => ({id: kind, kind, part: ""})),
+          side: [...SIDE_CARDS], away: []};
+}
+function loadLayout() {
+  const kept = store.get(LAYOUT_KEY, null), base = defaultLayout();
+  if (!kept || !Array.isArray(kept.middle)) return base;
+  const seen = new Set(), ids = new Set();
+  const middle = kept.middle.filter((c) => c && CARD_KINDS[c.kind] && typeof c.id === "string" && !ids.has(c.id) &&
+    ids.add(c.id) && (!CARD_KINDS[c.kind].fixed || (!seen.has(c.kind) && seen.add(c.kind))));
+  if (!middle.some((c) => c.kind === "song")) middle.unshift({id: "song", kind: "song"});  // (always there)
+  const side = (Array.isArray(kept.side) ? kept.side : []).filter((id) => SIDE_CARDS.includes(id));
+  for (const id of SIDE_CARDS) if (!side.includes(id)) side.push(id);  // (cards new since: at the end)
+  return {middle, side, away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id))};
+}
+let layout = loadLayout();
+let liveCards = [];  // the copies laid out (Fretboard, Tab, Keys): each {spec, root, render(s, f), frame()}
+function saveLayout() {
+  store.set(LAYOUT_KEY, layout);
+  for (const card of document.querySelectorAll("#middle > .card")) {  // (their names: a copy's part, say)
+    const name = card.querySelector(":scope > .card-tools .name");
+    if (name) name.textContent = cardName(card);
+  }
+}
+
+function applyLayout() {
+  const parked = $("parked"), had = new Map(liveCards.map((c) => [c.spec.id, c])), placed = [];
+  liveCards = [];
+  for (const spec of layout.middle) {
+    const kind = CARD_KINDS[spec.kind];
+    let root;
+    if (kind.fixed) {
+      root = $(kind.fixed);
+    } else {
+      let card = had.get(spec.id);
+      if (card) {
+        card.spec = spec;
+        had.delete(spec.id);
+      } else {
+        card = kind.make(spec);
+      }
+      liveCards.push(card);
+      root = card.root;
+    }
+    root.dataset.card = spec.id;
+    root.dataset.kind = spec.kind;
+    placed.push(root);
+  }
+  for (const card of had.values()) card.root.remove();
+  for (const [kind, k] of Object.entries(CARD_KINDS)) {
+    if (k.fixed && !layout.middle.some((c) => c.kind === kind)) parked.append($(k.fixed));  // (removed: put by)
+  }
+  $("middle").replaceChildren($("layoutBar"), ...placed);
+  for (const id of layout.side) {
+    const card = $(id);
+    if (card) (layout.away.includes(id) ? parked : $("side")).append(card);
+  }
+  for (const card of [...placed, ...$("side").querySelectorAll(":scope > .card")]) cardTools(card);
+  showLayoutBar();
+  if (selected) renderSong();
+}
+
+// A card's name in the layout: its kind's (a copy: numbered, and its part), or its title (a settings card)
+function cardName(card) {
+  const kind = CARD_KINDS[card.dataset.kind];
+  if (!kind) return (card.querySelector(":scope > h3") || {}).textContent || card.id;
+  const same = layout.middle.filter((c) => c.kind === card.dataset.kind);
+  const spec = layout.middle.find((c) => c.id === card.dataset.card) || {};
+  const number = same.length > 1 ? ` ${same.indexOf(spec) + 1}` : "";
+  const part = spec.part ? ` · ${spec.part}` : "";
+  return kind.name + number + part;
+}
+
+function cardTools(card) {
+  let tools = card.querySelector(":scope > .card-tools");
+  if (!tools) {
+    tools = document.createElement("div");
+    tools.className = "card-tools";
+    tools.innerHTML = `<span class="grip" title="Drag to move it">⠿</span><span class="name"></span>` +
+      `<button type="button" data-move="-1" title="Move it up">▲</button>` +
+      `<button type="button" data-move="1" title="Move it down">▼</button>` +
+      `<button type="button" data-remove title="Remove it (add it again from the bar at the top)">✕</button>`;
+    tools.addEventListener("click", (e) => {
+      const button = e.target.closest("button");
+      if (!button) return;
+      if (button.dataset.move) moveCard(card, Number(button.dataset.move));
+      else removeCard(card);
+    });
+    const grip = tools.querySelector(".grip");
+    grip.addEventListener("pointerdown", () => { card.draggable = true; });
+    card.addEventListener("dragstart", (e) => {
+      if (!card.draggable) return;
+      draggingCard = card;
+      card.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    card.addEventListener("dragend", () => {
+      card.draggable = false;
+      card.classList.remove("dragging");
+      draggingCard = null;
+      layoutFromPage();
+    });
+    card.prepend(tools);
+  }
+  tools.querySelector(".name").textContent = cardName(card);
+  tools.querySelector("[data-remove]").hidden = card.dataset.kind === "song";  // (the song's card: always there)
+}
+
+let draggingCard = null;
+for (const column of [$("middle"), $("side")]) {
+  column.addEventListener("dragover", (e) => {
+    if (!draggingCard || draggingCard.parentElement !== column) return;
+    e.preventDefault();
+    const over = e.target.closest(".card");
+    if (!over || over === draggingCard || over.parentElement !== column) return;
+    const box = over.getBoundingClientRect();
+    column.insertBefore(draggingCard, e.clientY < box.top + box.height / 2 ? over : over.nextSibling);
+  });
+  column.addEventListener("drop", (e) => { if (draggingCard) e.preventDefault(); });
+}
+
+function moveCard(card, step) {
+  const column = card.parentElement;
+  const cards = [...column.children].filter((c) => c.classList.contains("card"));
+  const i = cards.indexOf(card), j = i + step;
+  if (j < 0 || j >= cards.length) return;
+  column.insertBefore(card, step < 0 ? cards[j] : cards[j].nextSibling);
+  layoutFromPage();
+  card.scrollIntoView({block: "nearest"});
+}
+
+function removeCard(card) {
+  if (card.dataset.card) layout.middle = layout.middle.filter((c) => c.id !== card.dataset.card);
+  else if (!layout.away.includes(card.id)) layout.away.push(card.id);
+  saveLayout();
+  applyLayout();
+}
+
+// The layout as the page now has the cards (moved by hand)
+function layoutFromPage() {
+  const byId = new Map(layout.middle.map((c) => [c.id, c]));
+  layout.middle = [...$("middle").children].map((c) => byId.get(c.dataset.card)).filter(Boolean);
+  const shown = [...$("side").querySelectorAll(":scope > .card")].map((c) => c.id);
+  layout.side = [...shown, ...layout.side.filter((id) => !shown.includes(id))];
+  saveLayout();
+  for (const card of [...$("middle").children, ...$("side").children]) {
+    if (card.classList.contains("card")) cardTools(card);
+  }
+}
+
+function addCard(kind) {
+  layout.middle.push({id: `${kind}-${Date.now().toString(36)}`, kind, part: ""});
+  saveLayout();
+  applyLayout();
+  const added = $("middle").lastElementChild;
+  if (added) added.scrollIntoView({block: "nearest", behavior: "smooth"});
+}
+
+function showLayoutBar() {
+  const bar = $("layoutBar"), out = [`<span class="muted">Add:</span>`];
+  for (const [kind, k] of Object.entries(CARD_KINDS)) {
+    if (kind === "song") continue;
+    const there = k.fixed && layout.middle.some((c) => c.kind === kind);
+    out.push(`<button type="button" data-add="${kind}"${there ? " disabled" : ""}` +
+      ` title="${k.fixed ? (there ? "It's there already" : "Add it") : "Add one (another: its own part)"}">+ ${k.name}</button>`);
+  }
+  for (const id of layout.away) {
+    const name = ($(id).querySelector(":scope > h3") || {}).textContent || id;
+    out.push(`<button type="button" data-back="${esc(id)}" title="Back in the settings column">+ ${esc(name)}</button>`);
+  }
+  out.push(`<span class="spacer"></span><button type="button" data-reset title="As it was at first">Reset layout</button>`,
+           `<button type="button" class="primary" data-done>Done</button>`);
+  bar.innerHTML = out.join("");
+}
+$("layoutBar").addEventListener("click", (e) => {
+  const button = e.target.closest("button");
+  if (!button) return;
+  if (button.dataset.add) {
+    addCard(button.dataset.add);
+  } else if (button.dataset.back) {
+    layout.away = layout.away.filter((id) => id !== button.dataset.back);
+    saveLayout();
+    applyLayout();
+  } else if (button.dataset.reset !== undefined) {
+    layout = defaultLayout();
+    saveLayout();
+    applyLayout();
+  } else if (button.dataset.done !== undefined) {
+    document.body.classList.remove("layout-editing");
+  }
+});
+$("layoutBtn").addEventListener("click", () => {
+  const editing = document.body.classList.toggle("layout-editing");
+  if (editing && document.body.classList.contains("side-hidden")) $("sideBtn").click();  // (its cards to move too)
+  if (editing) for (const card of document.querySelectorAll("#middle > .card, #side > .card")) cardTools(card);
+});
+
+function cardsFrame() {
+  requestAnimationFrame(cardsFrame);
+  for (const card of liveCards) if (!card.root.hidden) card.frame();
+}
+requestAnimationFrame(cardsFrame);
 requestAnimationFrame(theoryFrame);
 
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
@@ -1873,9 +2130,7 @@ function renderSong() {
   $("artist").textContent = s.artist;
   $("file").textContent = `${s.artist ? "· " : ""}${s.file} · ${fmt(s.length)}`;
   $("songKey").replaceChildren(keyLine(s.key, s.id));
-  renderFretboard(s);
-  renderTab(s);
-  renderRoll(s, f);
+  for (const c of liveCards) c.render(s, f);
   renderDrumsCard(s);
   renderTheoryCard(s);
   if ($("songArt").dataset.song !== s.id) {
@@ -2598,8 +2853,6 @@ function KB() {
 function showKeyboardName(name) {
   keyboardLabel = name || "keyboard";
   for (const span of document.querySelectorAll(".kbName")) span.textContent = KB();
-  $("rollPart").title = `Whose notes: what the ${KB()} plays (every part playing, as it lights and sounds them), or ` +
-    "one arrangement alone";
   const realPitch = $("realPitch") && $("realPitch").closest("label");
   if (realPitch) realPitch.title = `Sound the notes at their own pitch, not the lit keys' (moved into the ${KB()}'s ` +
     "range), playing a song or following the game";
@@ -2888,6 +3141,8 @@ function showSpeed(speed) {
 
 $("speed").innerHTML = Array.from({length: 36}, (_, i) => 25 + 5 * i)
   .map((p) => `<option value="${p / 100}">${p}%</option>`).join("");
+
+applyLayout();  // (the cards as laid out: before anything's shown in them)
 
 (async function start() {
   if (location.search.includes("key=")) history.replaceState(null, "", location.pathname);  // a cookie has it now

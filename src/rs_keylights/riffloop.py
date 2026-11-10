@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 PORT = int(os.environ.get("RS_RIFFLOOP_PORT", "9939"))
 WAIT = 0.25  # seconds an answer's waited for (none: the game isn't running, or hasn't the mod)
+TIME_WAIT = 0.02  # and the time's, asked many times a second (a game this slow: its time's no use)
 KEYS = ("up", "down", "left", "right", "enter", "escape", "pageup", "pagedown")  # the keys it types
 
 
@@ -123,6 +124,21 @@ class RiffLoop:
     def status(self) -> GameLoop | None:
         return self._send("status")
 
+    def time(self, wait: float = TIME_WAIT) -> tuple[float | None, str | None] | None:
+        """Where the game's song is, exactly (its playback's own time; None: no song's playback seen), and its screen
+        (None: not seen yet), asked many times a second, following it: nothing else done. None: no answer (no game,
+        or a mod without it)."""
+        words = (self._ask("time", wait) or "").split()
+        if len(words) != 3 or words[0] != "time":
+            return None
+        fields = dict(word.split("=", 1) for word in words[1:] if "=" in word)
+        try:
+            timer = None if fields.get("t", "-") == "-" else float(fields["t"])
+        except ValueError:
+            return None
+        screen = fields.get("screen", "-")
+        return timer, None if screen == "-" else screen
+
     def songs(self) -> GameSongs | None:
         """Learn a Song's song list (while it shows): its highlighted song; None without it (or the mod)."""
         words = (self._ask("songs") or "").split()
@@ -149,10 +165,10 @@ class RiffLoop:
         answer = self._ask(command)
         return parse(answer) if answer is not None else None
 
-    def _ask(self, command: str) -> str | None:
+    def _ask(self, command: str, wait: float | None = None) -> str | None:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.settimeout(self.wait)
+                sock.settimeout(self.wait if wait is None else wait)
                 sock.connect(("127.0.0.1", self.port))  # (connected: no listener is refused at once)
                 sock.send(command.encode())
                 return sock.recv(16384).decode(errors="replace")

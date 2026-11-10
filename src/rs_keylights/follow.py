@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -20,10 +22,20 @@ from .tones import Tone
 # Follows the song Rocksmith plays through RS Companion's stream overlay API (RockSniffer's API,
 # 127.0.0.1:9938, Settings > Stream overlays): the song timer, the song and the selected
 # arrangement. RS Companion updates the timer about 4 times a second; SongClock fills in between.
+# With RS Re-ARMed's riffloop mod in the game, where the song is comes from the game itself instead (its playback's
+# own time, asked 50 times a second and answered in well under a millisecond: GameClock), RS Companion only saying
+# which song and arrangement; and RS Companion is read on a thread of its own (OverlayReader), so its answers (a
+# hundred KB, album art and all, now and then tens of milliseconds) never hold up the notes.
 
 DEFAULT_OVERLAY_PORT = 9938
 POLL_INTERVAL = 0.1
 TICK = 0.005
+GAME_TIME_EVERY = 0.02  # seconds between asks of the game's own time (riffloop's)
+GAME_TIME_MISSES, GAME_TIME_BACK_OFF = 3, 2.0  # unanswered this many times (no game, or a mod without it): asked
+# again this long after
+# The game's own song time and screen (riffloop's time command: seconds, None without a song's playback seen; and
+# its screen, "..._Pause" paused); None: no answer
+GameTime = Callable[[], "tuple[float | None, str | None] | None"]
 MENUS = (0, 1)  # currentState: no game, menus
 
 # The parts to play while an arrangement is played: arrangements of its song, each with the keys it lights
@@ -207,6 +219,135 @@ class SongClock:
         return max(timer + self.rate * (now - seen) for timer, seen in self._samples if seen >= newest - self.RECENT)
 
 
+@dataclass(frozen=True)
+class Prepared:
+    """What the song playing would go on with (Follower.prepare_parts): for the arrangement it was made for, the
+    parts planned and their player (None: the same as now), and the tracks besides them."""
+    current: ArrangementRef
+    planned: list[PlannedPart] | None
+    extras: list[Track]
+    player: Player | None
+
+
+class GameClock:
+    """The song's time as the game itself has it (riffloop's: its playback controller's), read many times a second
+    and at once: where the song is between reads (the freshest read, gone on at its rate), how fast it goes (Riff
+    Repeater's speed: from the reads), and when it isn't going on (paused: the pause screen, or the time standing
+    still; going back: Riff Repeater's rewind). Trusted while it's read (and agrees with RS Companion's timer: else
+    another song's playback's, set aside a while)."""
+
+    STILL = 0.3  # seconds of the same time: stopped (a frame's 1/60 s; a stutter shorter)
+    FRESH = 0.25  # seconds a read's trusted for
+    RECENT = 0.1  # seconds of reads for where it is
+    WINDOW = 1.0  # seconds of reads for its rate
+    RATE_SPAN = 0.4  # at least this long of them for a rate of their own
+    SNAP = 0.02  # a rate this near 1 is 1
+    JUMP = 0.5  # seconds a read is further on than its rate says: a seek
+    MISMATCH, DISTRUST = 5.0, 3.0  # seconds from RS Companion's timer: not this song's; set aside this long
+    MISMATCHES = 4  # RS Companion's timers in a row that far off, first (its timer, a trace showed, now and then
+    # reads 0, jumps half a minute on, or falls 2 s behind, for a few updates: the game's own is the one to go by)
+
+    def __init__(self) -> None:
+        self._distrusted_until = -math.inf
+        self._mismatches = 0
+        self.reset()
+
+    def reset(self) -> None:
+        self._samples: deque[tuple[float, float]] = deque()  # (time, read at)
+        self._last: tuple[float, float] | None = None
+        self._changed_at = self._read_at = -math.inf
+        self._paused = self._going_back = False
+        self.rate = 1.0
+
+    def update(self, timer: float, now: float, paused: bool = False) -> None:
+        self._read_at, self._paused = now, paused
+        last = self._last
+        if last is not None and timer == last[0]:
+            return
+        if last is not None:
+            step, expected = timer - last[0], self.rate * (now - last[1])
+            if step < 0:  # back: Riff Repeater's rewind, a restart or a seek (dark till it goes on)
+                self._samples.clear()
+                self._going_back = True
+            elif abs(step - expected) > self.JUMP:  # on: a seek, or going on after a while
+                self._samples.clear()
+                self._going_back = False
+            else:
+                self._going_back = False
+        self._last, self._changed_at = (timer, now), now
+        self._samples.append((timer, now))
+        while self._samples[0][1] < now - self.WINDOW:
+            self._samples.popleft()
+        span = self._samples[-1][1] - self._samples[0][1]
+        if span >= self.RATE_SPAN:
+            rate = (self._samples[-1][0] - self._samples[0][0]) / span
+            self.rate = 1.0 if abs(rate - 1.0) < self.SNAP else min(max(rate, 0.1), 2.0)
+
+    def trusted(self, now: float) -> bool:
+        """Read lately (the game answering, with a song's playback), and not set aside."""
+        return self._last is not None and now - self._read_at < self.FRESH and now >= self._distrusted_until
+
+    def position(self, now: float) -> float | None:
+        """Where the song is, while it goes on (None: paused, stopped or going back)."""
+        if not self._samples or self._paused or self._going_back or now - self._changed_at > self.STILL:
+            return None
+        newest = self._samples[-1][1]
+        return max(t + self.rate * (now - seen) for t, seen in self._samples if seen >= newest - self.RECENT)
+
+    def check(self, timer: float, now: float) -> None:
+        """RS Companion's timer (a little behind; each one read, as it changes): far from this, several in a row,
+        this is another song's playback (the one before, still found): set aside a while. One or two far off are
+        RS Companion's (it reads the game less surely)."""
+        position = self.position(now) if self.trusted(now) else None
+        if position is None:
+            return
+        self._mismatches = self._mismatches + 1 if abs(position - timer) > self.MISMATCH else 0
+        if self._mismatches >= self.MISMATCHES:
+            self._mismatches = 0
+            self._distrusted_until = now + self.DISTRUST
+            self.reset()
+
+
+class OverlayReader:
+    """RS Companion read on a thread of its own, every POLL_INTERVAL, so a slow answer never holds up the notes:
+    each read (or why it failed) with when it was asked, taken by the follower's steps."""
+
+    def __init__(self, client: OverlayClient, clock: Callable[[], float] = time.monotonic,
+                 interval: float = POLL_INTERVAL) -> None:
+        self._client, self._clock, self._interval = client, clock, interval
+        self._got: deque[tuple[float, GameState | OverlayError]] = deque(maxlen=4)
+        self._lock = threading.Lock()
+        self._quit = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Reading (once started, it goes on till stop)."""
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="rs-keylights overlay", daemon=True)
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._quit.set()
+
+    def take(self) -> list[tuple[float, GameState | OverlayError]]:
+        """The reads since last taken, oldest first."""
+        with self._lock:
+            got = list(self._got)
+            self._got.clear()
+        return got
+
+    def _run(self) -> None:
+        while not self._quit.is_set():
+            asked = self._clock()
+            try:
+                got: GameState | OverlayError = self._client.read()
+            except OverlayError as exc:
+                got = exc
+            with self._lock:
+                self._got.append((asked, got))
+            self._quit.wait(max(self._interval - (self._clock() - asked), 0.0))
+
+
 class IndexProtocol(Protocol):
     def find(self, persistent_id: str) -> ArrangementRef | None:
         ...
@@ -231,6 +372,8 @@ class Follower:
         fastest_flash: float = MIN_PERIOD,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        game_time: GameTime | None = None,
+        overlay_thread: bool = False,
     ):
         self.client = client
         self.index = index
@@ -249,6 +392,12 @@ class Follower:
         self._clock = clock
         self._sleep = sleep
         self._song_clock = SongClock()
+        self._game_time = game_time  # the game's own time (riffloop's), if it has the mod: where the song is
+        self._game_clock = GameClock()
+        self._companion_timer: float | None = None  # (RS Companion's timer as last read)
+        self._next_game_time = 0.0
+        self._game_misses = 0
+        self._reader = OverlayReader(client, clock) if overlay_thread else None  # (RS Companion on its own thread)
         self._arrangement_id = ""
         self._player: Player | None = None
         self.current: ArrangementRef | None = None  # the arrangement being followed
@@ -260,8 +409,22 @@ class Follower:
         self._playing = False
 
     def position(self, now: float) -> float | None:
-        """The song position, while the song plays."""
-        return self._song_clock.position(now) if self._player is not None else None
+        """The song position, while the song plays: the game's own (riffloop's), while it's read; else as RS
+        Companion's timer has it."""
+        if self._player is None:
+            return None
+        if self._game_clock.trusted(now):
+            return self._game_clock.position(now)
+        return self._song_clock.position(now)
+
+    def _rate(self, now: float) -> float:
+        return self._game_clock.rate if self._game_clock.trusted(now) else self._song_clock.rate
+
+    def close(self) -> None:
+        """Stops reading RS Companion (its thread), and everything off."""
+        if self._reader is not None:
+            self._reader.stop()
+        self.stop()
 
     def stop(self) -> None:
         """Turns everything off (until the next step)."""
@@ -306,17 +469,37 @@ class Follower:
     def set_parts(self, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
         """Other voices (None: silent) or parts, also for the song playing: it goes on with them from where it
         is, without reading the arrangement again."""
+        self.use_parts(self.prepare_parts(voices_for, parts_for), voices_for, parts_for)
+
+    def prepare_parts(self, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> Prepared | None:
+        """What the song playing would go on with, with other voices or parts: planned, and its player made (tens of
+        milliseconds), changing nothing yet, so it can be done while the song's steps go on (use_parts takes it
+        then, at once); None without a song playing."""
+        current, player = self.current, self._player
+        if player is None or current is None:
+            return None
+        planned = self._plan(current, voices_for, parts_for)
+        if _sound_of(planned) == _sound_of(self._planned):
+            return Prepared(current, None, [], None)  # (the same: what plays goes on as it is)
+        extras = list(self._extras_for(current)) if self._extras_for else []
+        return Prepared(current, planned, extras,
+                        player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=extras))
+
+    def use_parts(self, prepared: Prepared | None, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
+        """Other voices or parts from now, with what prepare_parts made of them (made for another song, or another
+        player meanwhile: made again here)."""
         self._voices_for, self._parts_for = voices_for, parts_for
         if self._player is None or self.current is None:
             return
-        planned = self._plan(self.current)
-        if _sound_of(planned) == _sound_of(self._planned):
+        if prepared is None or prepared.current is not self.current:
+            prepared = self.prepare_parts(voices_for, parts_for)
+        if prepared is None or prepared.planned is None or prepared.player is None:
             return
-        player = self._player_with(planned)
-        player.retime(rate=self._player.rate)
+        self._planned, self._extras = prepared.planned, prepared.extras
+        prepared.player.retime(rate=self._player.rate)
         self._player.stop()
-        self._player = player  # the next step seeks it to where the song is
-        self._status(f"{self.current.title} ({self.current.name}): {self._describe(planned) or 'lights only'}")
+        self._player = prepared.player  # the next step seeks it to where the song is
+        self._status(f"{self.current.title} ({self.current.name}): {self._describe(prepared.planned) or 'lights only'}")
 
     def run(self) -> None:
         while True:
@@ -324,10 +507,16 @@ class Follower:
             self._sleep(TICK)
 
     def step(self, now: float) -> None:
-        if now >= self._next_poll:
+        if self._reader is not None:  # (RS Companion's reads, as they've come)
+            self._reader.start()
+            for asked, got in self._reader.take():
+                self._polled(got, asked)
+        elif now >= self._next_poll:
             self._next_poll = now + POLL_INTERVAL
             self._poll(now)
-        position = self._song_clock.position(now) if self._player is not None else None
+        if self._game_time is not None and self._player is not None and now >= self._next_game_time:
+            self._ask_game_time(now)
+        position = self.position(now)
         if self._show is not None:
             self._show.step(self.keyboard, now, self._player, None if position is None else position + self.offset)
             if self._show.done:
@@ -341,21 +530,48 @@ class Follower:
                 self._record({"t": now, "stopped": True})
             return
         if not self._playing:
-            self._record({"t": now, "playing": round(position, 3), "rate": self._song_clock.rate})
-        self._player.retime(rate=self._song_clock.rate)  # Riff Repeater's speed: the keys flash for it
+            self._record({"t": now, "playing": round(position, 3), "rate": self._rate(now),
+                          "from": "game" if self._game_clock.trusted(now) else "companion"})
+        self._player.retime(rate=self._rate(now))  # Riff Repeater's speed: the keys flash for it
         self._player.advance(position + self.offset)
         self._playing = True
 
+    def _ask_game_time(self, now: float) -> None:
+        """The game's own time read (riffloop's); unanswered a few times (no game, or a mod without it), asked
+        again a while later."""
+        assert self._game_time is not None
+        got = self._game_time()
+        if got is None:
+            self._game_misses += 1
+            again = GAME_TIME_BACK_OFF if self._game_misses >= GAME_TIME_MISSES else GAME_TIME_EVERY
+            self._next_game_time = now + again
+            return
+        self._game_misses = 0
+        self._next_game_time = now + GAME_TIME_EVERY
+        timer, screen = got
+        if timer is None:  # (no song's playback seen: RS Companion's timer, till it is)
+            self._game_clock.reset()
+            return
+        self._game_clock.update(timer, now, paused=bool(screen and screen.endswith("_Pause")))
+
     def _poll(self, now: float) -> None:
         try:
-            state = self.client.read()
+            got: GameState | OverlayError = self.client.read()
         except OverlayError as exc:
+            got = exc
+        self._polled(got, now)
+
+    def _polled(self, got: GameState | OverlayError, now: float) -> None:
+        """RS Companion's state (or why it couldn't be read), as it was asked at now."""
+        if isinstance(got, OverlayError):
+            exc = got
             self._record({"t": now, "error": str(exc)})
             if self._connected is not False:
                 self._status("Waiting for RS Companion's overlay API (Settings > Stream overlays)")
                 self._connected = False
             self._unload()
             return
+        state = got
         if not self._connected:
             self._status("Connected to RS Companion")
             self._connected = True
@@ -371,6 +587,9 @@ class Follower:
             if arrangement_id:
                 self._player = self._open(arrangement_id, state.song_key)
         if self._player is not None and state.timer > 0:
+            if state.timer != self._companion_timer:  # (a timer just read: the game's own time checked against it)
+                self._game_clock.check(state.timer, now)
+            self._companion_timer = state.timer
             self._song_clock.update(state.timer, now)
 
     def _open(self, arrangement_id: str, song_key: str) -> Player | None:
@@ -403,9 +622,13 @@ class Follower:
         can be a moment behind them, a remote's taps applying once they stop); none while nothing's played."""
         return self._plan(self.current) if self.current is not None and self._planned else []
 
-    def _plan(self, current: ArrangementRef) -> list[PlannedPart]:
-        """The parts to play while this arrangement is played, read when first needed."""
-        chosen = self._parts_for(current) if self._parts_for else [(current, 4)]
+    def _plan(self, current: ArrangementRef, voices_for: VoicesFor | None | bool = False,
+              parts_for: PartsFor | None | bool = False) -> list[PlannedPart]:
+        """The parts to play while this arrangement is played, read when first needed (with voices and parts other
+        than the ones it has, if they're given)."""
+        voices = self._voices_for if voices_for is False else voices_for
+        parts_of = self._parts_for if parts_for is False else parts_for
+        chosen = parts_of(current) if callable(parts_of) else [(current, 4)]
         parts = []
         for ref, lights in chosen:
             arrangement = self._loaded.get(ref.persistent_id)
@@ -416,7 +639,7 @@ class Follower:
                     self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
                     continue
             parts.append(Part(ref, arrangement, lights))
-        return plan(parts, self._voices_for, strict=False, pooled=self.pooled_lights,
+        return plan(parts, voices if callable(voices) else None, strict=False, pooled=self.pooled_lights,
                     first=current)  # (one that doesn't fit the keyboard's channels: just lit)
 
     def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
@@ -474,6 +697,7 @@ class Follower:
         self._playing = False
         self._arrangement_id = ""
         self._song_clock.reset()
+        self._game_clock.reset()
 
 
 def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, int, object]]:

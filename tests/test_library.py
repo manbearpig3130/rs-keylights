@@ -54,6 +54,8 @@ def test_index_finds_searches_and_caches(tmp_path):
     assert index.find("abc123").sng.endswith("amonpurs_lead.sng")
     assert {r.part for r in index.search("amon amarth")} == {"lead", "bass"}
     assert [r.title for r in index.search("other_m")] == ["Alice in Chains - Rooster"]
+    lead = index.find("abc123")
+    assert {r.part for r in index.of_song(lead)} == {"lead", "bass"}  # (its song's, without looking through all)
 
     again = SongIndex(root, cache)
     assert len(again) == 3

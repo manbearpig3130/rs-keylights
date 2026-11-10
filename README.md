@@ -414,6 +414,13 @@ under it (R its root, ♭3, 5...), blue as one of the key's scale (from its toni
 key. The key is the one found from the song's notes, or one nearly as likely when the chords say so (the chord it's
 on longest, starts or ends on).
 
+**The page's layout** (✎ in the header): each card gets a bar to move it (drag ⠿, or ▲ ▼) and remove it (✕), and
+a bar over them adds cards: more than one **Fretboard**, **Tab** or **Keys** if you like (a tab of the bass beside
+the lead's, say), each with its own part (Auto: the game's arrangement following, else the one playing; or one
+picked, kept for every song that has it), its own bars a row or seconds ahead; Drums and Theory once, or not at all.
+The settings column's cards move and go away the same way (back from the bar). **Reset layout** puts it as it was.
+It's kept in the browser, so a phone keeps its own.
+
 How it's made: the song's audio taken from its archive and decoded, its drums separated from the rest (the Demucs
 model rearmed-mods' Song Stems runs on the Neural Engine), transcribed with [ADTOF](https://github.com/MZehren/ADTOF)
 (its [PyTorch port](https://github.com/xavriley/ADTOF-pytorch): kick, snare, tom, hi-hat, cymbal), then refined: each
@@ -497,6 +504,16 @@ The game's own habits, as a trace (`follow --trace`) showed them: when you pause
 step is very short, so the keys go dark at that update instead of waiting for the timer to stay
 still. Riff Repeater rewinds the timer quickly to the section's start, and the keys stay dark while
 it does. After you pick a new speed, three updates in a row at the new speed are enough to measure it.
+
+**With the riffloop mod, the game's own time.** When RS Re-ARMed has rearmed-sidekicks' riffloop mod (with its
+`time` command), following asks the game itself where the song is, 50 times a second: its playback's own time,
+answered over a local socket in well under a millisecond. The keys and the parts playing along go by that (within a
+frame of the game's), with Riff Repeater's speed measured from it, the pause screen going dark at once, and its rewind
+dark while it goes back; RS Companion then only says which song and arrangement are playing. Its time is checked
+against RS Companion's timer (another song's playback, far from it, is set aside), and without the mod (or before the
+game's playback is found, a second or so into a song outside Riff Repeater) it's RS Companion's timer as above.
+RS Companion is read on a thread of its own either way, so its answers (about 100 KB, album art and all, now and
+then tens of milliseconds) never hold up the notes. A trace (`--trace`) says which it played by ("from").
 
 **Riff Repeater below about 65% speed needs a fixed RS Companion.** RS Companion 1.4.2 checks that
 the song is still playing by watching the game's play record advance at normal speed; slower, it

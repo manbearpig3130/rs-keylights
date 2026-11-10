@@ -43,6 +43,7 @@ class FakeRiffLoop:
         self.riff_accelerator = None  # (its Accelerator, as the game has it)
         self.riff_speed = None  # (Riff Repeater's, as the game has it; None: a mod that doesn't say)
         self.music_level = 80.0  # (the game's Music volume; None: a mod without it)
+        self.game_time = None  # (the game's own song time and screen, as its time command says; None: no answer)
 
     def loop(self, a, b):
         self.sent.append(("loop", a, b))
@@ -53,6 +54,9 @@ class FakeRiffLoop:
         self.sent.append(("off",))
         self.range = None
         return GameLoop(True, False, None)
+
+    def time(self, wait=None):
+        return self.game_time  # (not kept in sent: asked many times a second)
 
     def status(self):
         return GameLoop(True, False, self.range, None, self.screen, 0, self.riff_speed, self.riff_accelerator, self.music_level)
