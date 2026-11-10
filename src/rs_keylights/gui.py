@@ -602,6 +602,60 @@ class Gui:
                 "muted": [[round(n.time, 3), [[s, f] for s, f in zip(n.strings, n.frets)]] for n in a.muted],
                 "bars": [round(t, 3) for t in bars], "length": round(a.length, 3)}
 
+    def roll(self, sid: str, part: str | None = None) -> dict[str, Any]:
+        """What the keyboard plays of a song, for the page's keys card (its notes falling onto the keys): the parts
+        playing as planned (following this song, the game's arrangement's plan; playing it, the song's; else its
+        parts as chosen: what plays takes them a moment later), or one arrangement alone (its part, or its persistent ID) as it would light 4 keys. Each
+        note on a key (moved into the keys' range, as its lights and sound are): its start, its end (as it rings),
+        its key, its part (an index of parts) and whether it lights (1) or only sounds (0)."""
+        loaded = self._load(sid)
+        with self._lock:
+            session = self._session
+        planned: list[PlannedPart] | None = None
+        pooled = bool(self.settings["most_lights"])
+        if part:
+            one = next(((r, a) for r, a in loaded if part in (r.part, r.persistent_id)), None)
+            if one is None:
+                raise GuiError(f"No part {part} in this song")
+            planned, pooled = plan([Part(one[0], one[1], 4)], None), False
+        elif isinstance(session, Following) and session.running:  # (as chosen now: what plays takes the choices a
+            # moment later, a remote's taps once they stop)
+            followed = session.follower.plan_now()
+            if followed and song_id(followed[0].part.ref) == sid:
+                planned = followed
+        if planned is None:  # (playing it, or not: its parts as chosen now)
+            parts = [Part(ref, a, chosen["lights"]) for (ref, a), chosen in zip(loaded, self._song_parts(sid, loaded))
+                     if chosen["play"]]
+            planned = plan(parts, None, pooled=pooled)
+        keys = KeyRange()
+
+        def fold(key: int) -> int:  # (into the keys' range, an octave at a time)
+            while key < keys.lowest:
+                key += 12
+            while key > keys.highest:
+                key -= 12
+            return key
+
+        notes: list[list[float | int]] = []
+        for i, pp in enumerate(planned):
+            for light in pp.lights:
+                if light.extra:
+                    continue
+                lit = set(light.keys) if pp.part.lights else set()
+                ends: dict[int, float] = {key: light.off for key in light.keys}
+                for j, pitch in enumerate(light.pitches):
+                    key = fold(pitch + pp.shift)
+                    ring = light.rings[j] if j < len(light.rings) else light.off
+                    ends[key] = max(ends.get(key, light.off), ring if key not in lit else light.off)
+                for key, end in sorted(ends.items()):
+                    notes.append([round(light.on, 3), round(max(end, light.on + 0.05), 3), key, i, int(key in lit)])
+        notes.sort(key=lambda n: (n[0], n[2]))
+        return {"parts": [{"part": pp.part.ref.part, "name": pp.part.ref.name or pp.part.ref.part,
+                           "kind": kind(pp.part.ref), "lights": pp.part.lights, "priority": pp.priority}
+                          for pp in planned],
+                "notes": notes, "lowest": keys.lowest, "highest": keys.highest, "most_lit": keys.max_lit,
+                "pooled": pooled and len(planned) > 1}
+
     def _song_parts(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> list[dict[str, Any]]:
         """A song's parts as chosen to play: unless chosen otherwise, as default_lights has them."""
         saved = self.song_settings.get(sid, {}).get("parts", {})
@@ -2604,6 +2658,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.library())
             elif url.path == "/api/song":
                 self._json(200, gui.song(parse_qs(url.query).get("id", [""])[0]))
+            elif url.path == "/api/roll":
+                query = parse_qs(url.query)
+                self._json(200, gui.roll(query.get("id", [""])[0], query.get("part", [None])[0] or None))
             elif url.path == "/api/fretboard":
                 query = parse_qs(url.query)
                 self._json(200, gui.fretboard(query.get("id", [""])[0], query.get("part", [None])[0]))

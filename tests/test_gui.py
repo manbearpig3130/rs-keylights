@@ -1131,3 +1131,30 @@ def test_following_riff_repeaters_speed_is_the_games_whoever_set_it(server):
     assert gui.remote_info()["riff"]["accelerator"] is True
     assert call(server, "/api/riff", {"accelerator": False})[1]["accelerator"] is False
     assert gui.remote_info()["riff"]["accelerator"] is False
+
+
+def test_the_keys_card_has_what_the_keyboard_plays_on_its_keys(server):
+    sid = first_song(server)
+    status, roll = call(server, f"/api/roll?id={urllib.request.quote(sid)}")
+    assert status == 200 and (roll["lowest"], roll["highest"], roll["most_lit"]) == (36, 96, 4)
+    assert [(p["part"], p["kind"], p["lights"]) for p in roll["parts"]] == [("lead", "lead", 2), ("rhythm", "rhythm", 2)]
+    assert roll["notes"] and all(36 <= key <= 96 and end > start for start, end, key, _part, _lit in roll["notes"])
+    assert {part for *_rest, part, _lit in roll["notes"]} == {0, 1} and any(lit for *_rest, lit in roll["notes"])
+    assert [n[0] for n in roll["notes"]] == sorted(n[0] for n in roll["notes"])  # (in time)
+    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": False}}})  # (as chosen: the lead)
+    assert [p["part"] for p in call(server, f"/api/roll?id={urllib.request.quote(sid)}")[1]["parts"]] == ["lead"]
+    _, alone = call(server, f"/api/roll?id={urllib.request.quote(sid)}&part=rhythm")  # (one alone, muted or not)
+    assert [(p["part"], p["lights"]) for p in alone["parts"]] == [("rhythm", 4)] and not alone["pooled"]
+    assert call(server, f"/api/roll?id={urllib.request.quote(sid)}&part=bass")[0] == 400
+
+
+def test_the_keys_card_shows_a_change_before_the_song_playing_takes_it(server):
+    sid = first_song(server)
+    call(server, "/api/play", {"song": sid, "start": 1})
+    server.gui.set_song({"song": sid, "parts": {"rhythm": {"play": False}}}, later=30)  # (a Launchkey's tap: the
+    # song playing takes it once the taps stop)
+    _, roll = call(server, f"/api/roll?id={urllib.request.quote(sid)}")
+    assert [p["part"] for p in roll["parts"]] == ["lead"]  # (as chosen now, not as it still plays)
+    server.gui.set_song({"song": sid, "parts": {"lead": {"lights": 0}}}, later=30)
+    _, roll = call(server, f"/api/roll?id={urllib.request.quote(sid)}")
+    assert roll["parts"][0]["lights"] == 0 and not any(lit for *_rest, lit in roll["notes"])

@@ -396,6 +396,11 @@ class Follower:
         self._status(f"{ref.title} ({ref.name}){notes}" + (f"; {described}" if described else ""))
         return self._player_with(planned)
 
+    def plan_now(self) -> list[PlannedPart]:
+        """The parts as they'd be planned now for the arrangement played (the choices as they are: the ones in play
+        can be a moment behind them, a remote's taps applying once they stop); none while nothing's played."""
+        return self._plan(self.current) if self.current is not None and self._planned else []
+
     def _plan(self, current: ArrangementRef) -> list[PlannedPart]:
         """The parts to play while this arrangement is played, read when first needed."""
         chosen = self._parts_for(current) if self._parts_for else [(current, 4)]
