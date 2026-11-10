@@ -95,6 +95,41 @@ def song_id(ref: ArrangementRef) -> str:
     return f"{ref.archive}#{ref.song_key}"
 
 
+def kept_id(sid: str, game_dir: Path) -> str:
+    """A song's id as the files keep it: its archive in the game folder by its place there (dlc/x_m.psarc#Key), so
+    its choices go with the game folder wherever that is; else as it is."""
+    archive, _, key = sid.rpartition("#")
+    try:
+        return f"{Path(archive).relative_to(game_dir).as_posix()}#{key}" if archive else sid
+    except ValueError:
+        return sid
+
+
+def place_in_game(archive: str) -> str | None:
+    """An archive's place in its game folder, from its path (songs.psarc, or dlc/...); None if it isn't in one."""
+    path = Path(archive)
+    if not path.is_absolute():
+        return path.as_posix()
+    if path.name.lower() == "songs.psarc":
+        return "songs.psarc"
+    folders = [part.lower() for part in path.parts[:-1]]
+    return Path(*path.parts[folders.index("dlc"):]).as_posix() if "dlc" in folders else None
+
+
+def found_id(kept: str, game_dir: Path, by_key: Callable[[], dict[str, str]]) -> str:
+    """The id of a song the files keep (kept_id's, or a whole path from an earlier game folder, such as one on a drive
+    since given up), in this game folder; a song whose archive isn't there by the only song with its key (by_key: key
+    -> id, for keys only one song has), as a song added while the game ran is copied in under another name."""
+    archive, _, key = kept.rpartition("#")
+    place = place_in_game(archive) if archive else None
+    if place is None:
+        return kept
+    path = game_dir / place
+    if not path.is_file() and key in by_key():
+        return by_key()[key]
+    return f"{path}#{key}"
+
+
 def part_order(ref: ArrangementRef) -> tuple[int, str]:
     return (PART_ORDER.index(ref.part) if ref.part in PART_ORDER else len(PART_ORDER), ref.part)
 
@@ -389,13 +424,29 @@ class Gui:
         self.play_version = 0
         self._play_saved = False
         self.songs_file = self.settings_file.with_name("songs.json")
+        self._by_key: dict[str, str] | None = None  # (song key -> id, for the keys only one song has)
+        # The game's song list sorted by artist, as last seen following (song keys in its order): where songs with the
+        # same sort names (two copies of a song) go, as the game has them in the order it loaded them, not by a name.
+        # Taken as the page starts (the library keeps its order while it runs: the Launchkey browses it by place)
+        self.game_order_file = self.settings_file.with_name("game-order.json")
+        try:
+            order = json.loads(self.game_order_file.read_text())
+        except (OSError, ValueError):
+            order = []
+        self._game_order_seen: list[str] = [k for k in order if isinstance(k, str)] if isinstance(order, list) else []
+        self._game_order = {key: i for i, key in enumerate(self._game_order_seen)}
         self._lan_key: str | None = None
         try:
             songs = json.loads(self.songs_file.read_text())
         except (OSError, ValueError):
             songs = None
+        moved = False  # (kept as whole paths, by an earlier version: kept again by their place in the game folder)
         if isinstance(songs, dict):
-            self.song_settings = {sid: value for sid, value in songs.items() if isinstance(value, dict)}
+            for kept, value in songs.items():
+                if isinstance(value, dict):
+                    sid = self._found_id(kept)
+                    moved |= kept_id(sid, index.game_dir) != kept
+                    self.song_settings.setdefault(sid, value)
         try:
             saved = json.loads(self.settings_file.read_text())
         except (OSError, ValueError):
@@ -406,6 +457,10 @@ class Gui:
                     self.play_options, self._play_saved = _changed_options(self.play_options, saved["play"]), True
                 except GuiError:
                     pass
+                kept = self.play_options["song"]
+                if kept:
+                    self.play_options["song"] = self._found_id(kept)
+                    moved |= kept_id(self.play_options["song"], index.game_dir) != kept
             self.settings.update({k: saved[k] for k in self.settings if k in saved})
             try:
                 self.settings["volumes"] = _volumes(self.settings["volumes"])
@@ -441,6 +496,22 @@ class Gui:
         self._kept = dict(self.settings)  # what the file keeps: not the command line's overrides
         self.settings.update(overrides or {})  # from the command line: for this run, not saved
         self.pedal.use_backup(_backup(self.settings["pedal_backup"]))
+        if moved:
+            self._save_songs()
+            if self._play_saved:
+                self._save()
+
+    def _found_id(self, kept: str) -> str:
+        """found_id in the index's game folder (the songs by key worked out once, if a song needs them)."""
+        return found_id(kept, self.index.game_dir, self._songs_by_key)
+
+    def _songs_by_key(self) -> dict[str, str]:
+        if self._by_key is None:
+            ids: dict[str, set[str]] = {}
+            for ref in self.index.arrangements():
+                ids.setdefault(ref.song_key, set()).add(song_id(ref))
+            self._by_key = {key: next(iter(found)) for key, found in ids.items() if len(found) == 1}
+        return self._by_key
 
     # Library and songs
 
@@ -461,6 +532,8 @@ class Gui:
                 "id": sid,
                 "artist": named.artist,
                 "song": named.song or named.song_key,
+                "sort": named.sort_key,
+                "letter": _initial(named.artist_sort or named.artist),
                 "file": Path(named.archive).name,
                 "parts": [r.name or r.part for r in sorted(refs, key=part_order)],
                 "album": named.album,
@@ -469,7 +542,8 @@ class Gui:
                 "tempo": round(named.tempo),
                 "tuning": tuning_name(guitar.tuning, guitar.capo),
             })
-        out.sort(key=lambda s: (s["artist"].casefold(), s["song"].casefold(), s["file"]))
+        last = len(self._game_order)  # (as the game's song list, sorted by artist)
+        out.sort(key=lambda s: (s["sort"], self._game_order.get(s["id"].rsplit("#", 1)[-1], last), s["file"]))
         library = {"game_dir": str(self.index.game_dir), "songs": out}
         with self._lock:
             self._library = library
@@ -714,7 +788,31 @@ class Gui:
                     break
                 keys += said[1]
             self._game_keys = keys
+            if len(keys) == count:
+                self._keep_game_order(keys)
         return self._game_keys
+
+    def _keep_game_order(self, keys: list[str]) -> None:
+        """The game's list order kept for the next start, when it's sorted by artist (every song after the one before
+        by their sort names; songs with the same ones in its own order) and it has changed."""
+        if keys == self._game_order_seen:
+            return
+        named: dict[str, set[str]] = {}
+        for song in self.library()["songs"]:
+            named.setdefault(song["id"].rsplit("#", 1)[-1], set()).add(song["sort"])
+        sorts = {key: next(iter(found)) for key, found in named.items() if len(found) == 1}
+        # (A few out of order are copies of a song with the same key, or arrangement ids, the game showing one copy
+        # and the library maybe another; sorted some other way in the game, by song or year, half of them are.)
+        if sum(a in sorts and b in sorts and sorts[a] > sorts[b] for a, b in zip(keys, keys[1:])) * 100 > len(keys):
+            return
+        self._game_order_seen = list(keys)
+        try:
+            self.game_order_file.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.game_order_file.with_suffix(".tmp")
+            temp.write_text(json.dumps(keys) + "\n")
+            temp.replace(self.game_order_file)
+        except OSError:
+            pass
 
     def _browse_game(self, row: float, count: int, key: str) -> dict[str, Any]:
         """The library's place on the game's song with a key (a row of its song list, maybe between two, as a slow
@@ -788,10 +886,10 @@ class Gui:
         its (the library's artists for its keys)."""
         said = self.game_songs()
         if said is not None:
-            artists = {song["id"].split("#", 1)[-1]: song["artist"] for song in self.library()["songs"]}
+            letters_of = {song["id"].split("#", 1)[-1]: song["letter"] for song in self.library()["songs"]}
 
             def by_letter(start: float, keys: list[str]) -> float:
-                letters = [_initial(artists.get(key, key)) for key in keys]
+                letters = [letters_of.get(key) or _initial(key) for key in keys]
                 firsts = [i for i in range(len(keys)) if i == 0 or letters[i] != letters[i - 1]]
                 index = round(start)
                 for _step in range(abs(steps)):
@@ -802,7 +900,7 @@ class Gui:
         listed = self.library()["songs"]
         if not listed:
             return None
-        initials = [_initial(song["artist"]) for song in listed]
+        initials = [song["letter"] for song in listed]
         starts = [i for i in range(len(listed)) if i == 0 or initials[i] != initials[i - 1]]
         with self._lock:
             if self._browse is None:
@@ -2134,7 +2232,8 @@ class Gui:
             if self._follow_saved:
                 data["follow"] = self.follow_settings
             if self._play_saved:
-                data["play"] = self.play_options
+                song = self.play_options["song"]
+                data["play"] = {**self.play_options, "song": kept_id(song, self.index.game_dir) if song else song}
             if self._lan_key:
                 data["lan_key"] = self._lan_key
             self.settings_file.parent.mkdir(parents=True, exist_ok=True)
@@ -2146,7 +2245,8 @@ class Gui:
         with self._lock:
             self.songs_file.parent.mkdir(parents=True, exist_ok=True)
             temp = self.songs_file.with_suffix(".tmp")
-            temp.write_text(json.dumps(self.song_settings, indent=1) + "\n")
+            kept = {kept_id(sid, self.index.game_dir): value for sid, value in self.song_settings.items()}
+            temp.write_text(json.dumps(kept, indent=1) + "\n")
             temp.replace(self.songs_file)
 
     def _light_timing(self) -> tuple[float, float]:

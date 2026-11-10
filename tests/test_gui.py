@@ -231,6 +231,82 @@ def test_a_songs_choices_are_kept_on_the_mac_for_every_page(server, tmp_path):
     assert again.play_options_info()["speed"] == 0.5 and again.play_options_info()["song"] == sid
 
 
+def test_a_songs_choices_are_kept_by_its_place_in_the_game_folder_and_follow_it(tmp_path):
+    def game(name, files):
+        dlc = tmp_path / name / "dlc"
+        dlc.mkdir(parents=True)
+        for file, key in files:
+            (dlc / file).write_bytes(song_archive(key, {"lead": (f"L{key}", Song(levels={0: [N(1.0)]}))}))
+        index = SongIndex(tmp_path / name, tmp_path / f"{name}.json")
+        index.refresh()
+        return index
+
+    # Kept by an earlier version, by whole paths on a drive since given up; one song now has another name (copied in
+    # while the game ran), and one isn't there at all
+    old = "/Volumes/DRIVE/SteamLibrary/steamapps/common/Rocksmith2014/dlc"
+    (tmp_path / "songs.json").write_text(json.dumps({
+        f"{old}/a_m.psarc#A": {"start": 1}, f"{old}/b_m.psarc#B": {"start": 2}, f"{old}/gone_m.psarc#Gone": {"start": 3},
+        "/elsewhere/c_m.psarc#C": {"start": 4}}))
+    (tmp_path / "gui.json").write_text(json.dumps({"play": {"song": f"{old}/a_m.psarc#A"}}))
+    index = game("game", [("a_m.psarc", "A"), ("b renamed_m.psarc", "B")])
+    here = tmp_path / "game" / "dlc"
+    gui = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    assert gui.song(f"{here}/a_m.psarc#A")["start"] == 1 and gui.song(f"{here}/b renamed_m.psarc#B")["start"] == 2
+    assert gui.play_options["song"] == f"{here}/a_m.psarc#A"
+    # The files keep them by their place in the game folder now (the rest as they were: nothing's lost)
+    assert json.loads((tmp_path / "songs.json").read_text()) == {
+        "dlc/a_m.psarc#A": {"start": 1}, "dlc/b renamed_m.psarc#B": {"start": 2}, "dlc/gone_m.psarc#Gone": {"start": 3},
+        "/elsewhere/c_m.psarc#C": {"start": 4}}
+    assert json.loads((tmp_path / "gui.json").read_text())["play"]["song"] == "dlc/a_m.psarc#A"
+
+    # The game folder moved: they're found there
+    for file in ("songs.json", "gui.json"):
+        (tmp_path / "moved").mkdir(exist_ok=True)
+        (tmp_path / "moved" / file).write_text((tmp_path / file).read_text())
+    index = game("other", [("a_m.psarc", "A")])
+    gui = Gui(index, settings_file=tmp_path / "moved" / "gui.json", list_ports=list, other_follow=lambda: False)
+    assert gui.song(f"{tmp_path / 'other' / 'dlc'}/a_m.psarc#A")["start"] == 1
+    assert gui.play_options["song"] == f"{tmp_path / 'other' / 'dlc'}/a_m.psarc#A"
+
+
+def test_the_library_is_in_the_games_order_sorted_by_artist(tmp_path):
+    # (artist, its sort name, song, its sort name), as some songs have them: in the order the game lists them
+    games = [("Amon Amarth ", "Amon Amarth ", "Shield Wall", "Shield Wall"),
+             ("Amon Amarth", "Amon Amarth", "The Hero", "Hero"),
+             ("Amon Amarth", "Amon Amarth", "Raven's Flight", "Raven's Flight"),
+             ("Arctic Monkeys", "Arc", "Do I Wanna Know", "Do"),
+             ("Arcade", "Arcade", "Double Dragon", "Double Dragon"),
+             ("Dire Straits", "Dire Straits", "Sultans Of Swing", "Sultans Of Swing"),
+             ("Dire Straits", "DIRE", "Brothers in Arms", "BROT"),
+             ("Rob Zombie", "R", "Dragula", "D"),
+             ("R.E.M.", "R.E.M.", "Everybody Hurts", "Everybody Hurts"),
+             ("The Rolling Stones", "R", "Honky Tonk Women", "H"),
+             ("Wolfmother", "", "Woman", ""),  # (no sort names: its names)
+             ("Wolfmother", "", "Woman", "")]  # (two copies of a song: as the game last had them)
+    dlc = tmp_path / "game" / "dlc"
+    dlc.mkdir(parents=True)
+    for i, (artist, artist_sort, song, song_sort) in enumerate(reversed(games)):
+        (dlc / f"s{i}_m.psarc").write_bytes(song_archive(f"S{i}", {"lead": (f"L{i}", Song(levels={0: [N(1.0)]}))},
+                                                         {"ArtistNameSort": artist_sort, "SongNameSort": song_sort},
+                                                         song=song, artist=artist))
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    index.refresh()
+
+    def library():
+        gui = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+        return gui, [song["id"].rsplit("#", 1)[-1] for song in gui.library()["songs"]]
+
+    gui, keys = library()
+    assert [song["song"] for song in gui.library()["songs"]] == [song for _a, _s, song, _ss in games]
+    assert [song["letter"] for song in gui.library()["songs"]] == list("aaaaaddrrrww")  # (knob 8's: by sort names)
+    assert keys[-2:] == ["S0", "S1"]  # (the copies: by file, until the game's order is known)
+    game = [*keys[:-2], "S1", "S0"]
+    gui._keep_game_order(game[::-1])  # (the game's list sorted another way: not kept)
+    assert library()[1] == keys
+    gui._keep_game_order(game)  # (seen following: kept for the next start)
+    assert library()[1] == game
+
+
 def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_take(server, tmp_path):
     names = ("lead", "rhythm", "bass", "combo", "lead2")
     (tmp_path / "game" / "dlc" / "five_m.psarc").write_bytes(song_archive(

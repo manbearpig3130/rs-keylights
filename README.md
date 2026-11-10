@@ -219,7 +219,9 @@ where it is.
 
 Everything chosen is kept on the Mac, so every page (and the Launchkey) shows and changes the same: each
 song's parts, lit keys, tones and start (where the slider is, not playing) in `songs.json`, the rest in `gui.json` (both in
-`~/Library/Application Support/rs-keylights/`). Without `--lan` the server answers
+`~/Library/Application Support/rs-keylights/`). A song is kept by its file's place in the game folder (`dlc/x_m.psarc`),
+so its choices stay with it when the game folder moves (choices kept by an earlier version, by the whole path, are found
+in the new folder too), and by its song key when its file has another name there. Without `--lan` the server answers
 only on 127.0.0.1, to pages it served. `--port` changes its port, `--no-browser` doesn't open the page, and
 `--midi-port`/`--channel` before `gui` override the saved keyboard settings for that run.
 

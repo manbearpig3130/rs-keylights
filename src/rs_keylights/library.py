@@ -13,7 +13,7 @@ from .sng import Arrangement, SongTone, decrypt, parse
 # reports), with an index of the game's archives that is cached between runs and updated for new
 # or changed archives.
 
-INDEX_VERSION = 2  # 2: with the songs' album, year, length, tempo, tuning and capo
+INDEX_VERSION = 3  # 2: with the songs' album, year, length, tempo, tuning and capo; 3: and their sort names
 SNG_PREFIX = "songs/bin/macos/"
 MANIFEST_PREFIX = "manifests/"
 NO_NOTES = ("vocals", "jvocals", "showlights")  # parts without notes to play
@@ -34,6 +34,15 @@ class ArrangementRef:
     tempo: float = 0.0  # average beats per minute
     tuning: tuple[int, ...] = ()  # semitones per string, low to high
     capo: int = 0
+    artist_sort: str = ""  # the names the game sorts by (ArtistNameSort, SongNameSort: "The Hero" is "Hero")
+    song_sort: str = ""
+
+    @property
+    def sort_key(self) -> str:
+        """Where the game's song list has it, sorted by artist: its artist's and song's sort names, joined by a dot
+        (so "Dire Straits" comes before "Dire": a space before the dot), case aside; the names when it hasn't them.
+        In the game's order exactly, checked against its whole list (2,057 songs)."""
+        return f"{self.artist_sort or self.artist}.{self.song_sort or self.song or self.song_key}".lower()
 
     @property
     def title(self) -> str:
@@ -141,6 +150,8 @@ def read_arrangements(path: Path) -> list[ArrangementRef]:
                         tuning=tuple(_number(tuning.get(f"string{i}"), int) for i in range(6))
                         if isinstance(tuning, dict) else (),
                         capo=_number(attributes.get("CapoFret"), int),
+                        artist_sort=str(attributes.get("ArtistNameSort") or ""),
+                        song_sort=str(attributes.get("SongNameSort") or ""),
                     ))
         return refs
 
