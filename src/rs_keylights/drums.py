@@ -6,6 +6,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import time
 import wave
 from dataclasses import dataclass
 from importlib.resources import files
@@ -299,12 +300,30 @@ def song_audio(ref: ArrangementRef, game_dir: Path) -> bytes:
     raise DrumsError(f"No audio found for this song (its sound bank, {_song_bank(ref)}, isn't in the game's files)")
 
 
+# How far along making a part is (0 to 1): each step's share. Separating says how far it is (the frames it's done);
+# transcribing doesn't, so it's reckoned from the song's length (TRANSCRIBING a second of it: ~10 s for 4:48)
+DECODED, SEPARATED, TRANSCRIBED = 0.03, 0.68, 0.98
+TRANSCRIBING = 0.04  # seconds a second of song, about
+PROGRESS_EVERY = 0.25  # seconds between looks at how far a step is
+
+
+def _ready(pcm: Path) -> float | None:
+    """How much of the song the separator's done (0 to 1), from its .pcm's header (frames ready of the total)."""
+    try:
+        with open(pcm, "rb") as f:
+            head = f.read(36)
+        total, ready = struct.unpack_from("<I", head, 24)[0], struct.unpack_from("<I", head, 32)[0]
+    except (OSError, struct.error):
+        return None
+    return min(ready / total, 1.0) if total else None
+
+
 def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Path | None = None,
          stems_home: Path | None = None, say: Callable[[str], None] = lambda _text: None,
-         cache: Path | None = None) -> list[Hit]:
+         cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None) -> list[Hit]:
     """A song's drum part made (a minute or so) and kept: its audio from its archive, decoded and its drums separated
     (drums-setup.sh's rs-stems-drums, with Song Stems' model), transcribed (ADTOF, in drums-setup.sh's Python),
-    refined and snapped to beats (the chart's)."""
+    refined and snapped to beats (the chart's). How far along it is goes to progress (0 to 1) as it goes."""
     import numpy as np
     tools = tools or tools_dir()
     stems_home = stems_home or Path.home() / "Library" / "Application Support" / "RS Re-ARMed" / "stems"
@@ -320,16 +339,34 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
         (work / "song.wem").write_bytes(song_audio(ref, game_dir))
         env = {**os.environ, "RS_STEMS_CACHE": str(tools), "RS_STEMS_HOME": str(stems_home)}
 
-        def run(args: list[str], what: str) -> None:
-            done = subprocess.run(args, env=env, capture_output=True, text=True)
-            if done.returncode != 0:
-                raise DrumsError(f"{what} failed: {(done.stderr or done.stdout).strip()[-300:]}")
+        def run(args: list[str], what: str, along: Callable[[float], float | None] | None = None) -> None:
+            """A tool run (along: how far it is, from the time it's taken, as it goes: for progress)."""
+            with tempfile.TemporaryFile("w+") as out:
+                started = time.monotonic()
+                tool = subprocess.Popen(args, env=env, stdout=out, stderr=subprocess.STDOUT, text=True)
+                while True:
+                    try:
+                        code = tool.wait(PROGRESS_EVERY)
+                        break
+                    except subprocess.TimeoutExpired:
+                        far = along(time.monotonic() - started) if along is not None else None
+                        if far is not None:
+                            progress(far)
+                if code != 0:
+                    out.seek(0)
+                    raise DrumsError(f"{what} failed: {out.read().strip()[-300:]}")
 
+        def between(start: float, end: float, done: float | None) -> float | None:
+            return None if done is None else start + (end - start) * min(max(done, 0.0), 1.0)
+
+        progress(0.0)
         say("decoding its audio")
         run([str(helper), "decode", str(work / "song.wem"), str(work / "song.wav")], "Decoding the song")
+        progress(DECODED)
         say("separating its drums")
         run([str(helper), "separate", str(work / "song.wem"), "1", "drums", str(work / "rest.pcm")],
-            "Separating the drums")
+            "Separating the drums", lambda _took: between(DECODED, SEPARATED, _ready(work / "rest.pcm")))
+        progress(SEPARATED)
         with wave.open(str(work / "song.wav")) as w:
             rate, channels = w.getframerate(), w.getnchannels()
             mix = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, channels)
@@ -346,11 +383,15 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
             w.writeframes(drums.tobytes())
         say("transcribing them")
         worker = files("rs_keylights").joinpath("drums_activations.py")
-        run([str(python), "-I", str(worker), str(work / "drums.wav"), str(work / "act.npy")], "Transcribing")
+        expected = max(len(drums) / rate * TRANSCRIBING, 1.0)  # (it doesn't say: reckoned, never quite there)
+        run([str(python), "-I", str(worker), str(work / "drums.wav"), str(work / "act.npy")], "Transcribing",
+            lambda took: between(SEPARATED, TRANSCRIBED, 0.95 * min(took / expected, 1.0)))
+        progress(TRANSCRIBED)
         strengths = np.load(work / "act.npy").astype(np.float32)
         mono = drums.astype(np.float32).mean(axis=1) / 32768.0
         hits = snap(refine(pick(strengths), mono, rate), beats)
     keep(ref, hits, cache)
+    progress(1.0)
     return hits
 
 

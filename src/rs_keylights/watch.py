@@ -1357,6 +1357,9 @@ class Watch:
             shows, lines = "loop", (*lines[:3], self._loop_said(loop))
         elif self._picture_of == "chords" and song is not None:
             shows, lines = "chords", (*lines[:3], self._chords_said(song))
+        elif song is not None and (making := self._drums_making(song)) is not None:  # (its drum part being made: how
+            # far, in the key's notes' place)
+            lines = (*lines[:3], f"Making drums {making}%")
         time = f"{_time(position)} / {_time(length)}" if done is not None and position is not None and length else None
         at = self._song_at(info) if song is not None else None
         chord, tag = self._chord(song, at) if song is not None else (None, None)
@@ -1365,6 +1368,14 @@ class Watch:
                  badge, muted),
                 lambda: song_picture(*lines, done=done, sign=sign, handle=handle, speed=speed, beside=time,
                                      muted=muted, loop=marks, corner=chord, tag=tag, badge=badge))
+
+    @staticmethod
+    def _drums_making(song: dict[str, Any]) -> int | None:
+        """How far the song's drum part is being made (a percentage); None if it isn't being made."""
+        drummed = next((a for a in song.get("arrangements") or () if a.get("kind") == "drums"), None)
+        if drummed is None or not drummed.get("making"):
+            return None
+        return round((drummed.get("progress") or 0.0) * 100)
 
     def _tone_badge(self, song: dict[str, Any], at: float | None) -> str | None:
         """The tone the song's on where it is, as the arrangement whose chords show switches tone (shortened, for
@@ -1396,6 +1407,8 @@ class Watch:
             said = self._loop_said(info.get("loop") or {})
         elif shown == "chords":  # (knob 7)
             said = self._chords_said(song)
+        elif (making := self._drums_making(song)) is not None and said != "● = go here":  # (in the section's place)
+            said = f"Making drums {making}%"
         handle, marks = shown in ("position", "section"), self._loop_marks(info)
         before, line = lyrics[i - 1].text if i > 0 else "", lyrics[i].text
         after = lyrics[i + 1].text if i + 1 < len(lyrics) else ""

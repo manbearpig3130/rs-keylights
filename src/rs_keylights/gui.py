@@ -101,6 +101,10 @@ def kept_id(sid: str, game_dir: Path) -> str:
     """A song's id as the files keep it: its archive in the game folder by its place there (dlc/x_m.psarc#Key), so
     its choices go with the game folder wherever that is; else as it is."""
     archive, _, key = sid.rpartition("#")
+    folder = f"{str(game_dir).rstrip('/')}/"
+    if archive.startswith(folder) and "/../" not in archive and "/./" not in archive:  # (the quick way: a save has
+        # every song's)
+        return f"{archive[len(folder):]}#{key}"
     try:
         return f"{Path(archive).relative_to(game_dir).as_posix()}#{key}" if archive else sid
     except ValueError:
@@ -238,7 +242,8 @@ def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
             raise GuiError("Choose a MIDI output for the part")
         program = chosen.get("program")
         out[part] = {"port": str(chosen["port"]).strip(),
-                     "channel": int(_number(chosen.get("channel", 1), "channel", 1, 16)),
+                     "channel": int(_number(chosen.get("channel", drums.DRUM_CHANNEL if part == "drums" else 1),
+                                            "channel", 1, 16)),
                      "mono": bool(chosen.get("mono", True)),
                      "program": None if program in (None, "") else int(_number(program, "program", 0, 127)),
                      "octave": int(_number(chosen.get("octave", 0), "octave", -2, 2))}
@@ -248,6 +253,25 @@ def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
             out[part]["map"] = chosen.get("map", "gm")
             out[part]["kit"] = _circuit_kit(chosen.get("kit") or (table.get(part) or {}).get("kit") or {})
     return out
+
+
+def _recalled(table: dict[str, Any], change: Any, known: Any) -> tuple[Any, dict[str, dict[str, Any]]]:
+    """A change to the MIDI devices sounding each kind of part, with what each device had for it before: a device
+    chosen by itself ({"port": ...} alone) has its channel, its drums' notes and kit and so on back as they were
+    (else the defaults); and each part's settings remembered for its device (chosen, or put back on the keyboard),
+    for the next time it's chosen. (known: by part, then device.)"""
+    remembered = {part: dict(ports) for part, ports in (known if isinstance(known, dict) else {}).items()
+                  if part in (*KINDS, "drums") and isinstance(ports, dict)}
+    if not isinstance(change, dict):
+        return change, remembered
+    filled = dict(change)
+    for part, chosen in change.items():
+        was = table.get(part)
+        if isinstance(was, dict) and was.get("port"):
+            remembered.setdefault(str(part), {})[was["port"]] = was
+        if isinstance(chosen, dict) and set(chosen) == {"port"}:  # (just the device: as it was)
+            filled[part] = {**remembered.get(str(part), {}).get(str(chosen["port"]).strip(), {}), "port": chosen["port"]}
+    return filled, remembered
 
 
 def _circuit_kit(change: Any) -> dict[str, list[int | None]]:
@@ -448,6 +472,7 @@ class Gui:
         self._keys_thread: threading.Thread | None = None
         self._replays: dict[str, Callable[[], None]] = {}  # the parts to play again once a remote's changes pause
         self._replay_timer: threading.Timer | None = None
+        self._fit_before: dict[str, Any] = {}  # songs a remote's turning: their choices last checked to fit (None: none)
         self._warm: list[str] = []  # songs whose album art to get ready next, in the background
         self._warm_ready = threading.Condition()
         self._warm_thread: threading.Thread | None = None
@@ -467,7 +492,7 @@ class Gui:
                                          "launchkey": True, "keys_sound": True, "keys_lights": True, "ring": True,
                                          "overlap_ms": 120, "listen": False, "listen_device": GUITAR_INPUT,
                                          "tone_changes": True, "tone_map": dict(TONE_KINDS), "techniques": True,
-                                         "outputs": {}, "most_lights": False, "beat_lights": False,
+                                         "outputs": {}, "outputs_known": {}, "most_lights": False, "beat_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
                                          "pedal_favourites": list(PEDAL_FAVOURITES)}
@@ -728,7 +753,8 @@ class Gui:
         hits = drums.kept(ref)
         making = self._making.get(sid, {})
         return {**self._drum_settings(sid), "made": hits is not None, "hits": len(hits) if hits else 0,
-                "making": making.get("step"), "error": making.get("error"), "tools": drums.setup_done()}
+                "making": making.get("step"), "progress": making.get("progress") if making.get("step") else None,
+                "error": making.get("error"), "tools": drums.setup_done()}
 
     def _with_drums(self, sid: str, arrangements: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """A remote's arrangements of a song, with its drum part as one more: after them, in DRUMS_PLACE_MOST at
@@ -744,6 +770,7 @@ class Gui:
         entry = {"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": made and chosen["play"],
                  "lights": 0, "tones": {}, "chords": (), "tone_changes": (), "notes": (), "output": None,
                  "volume": chosen["volume"], "made": made, "making": bool(self._making.get(sid, {}).get("step")),
+                 "progress": self._making.get(sid, {}).get("progress") if self._making.get(sid, {}).get("step") else None,
                  "error": self._making.get(sid, {}).get("error")}
         place = min(len(arrangements), DRUMS_PLACE_MOST)
         return [*arrangements[:place], entry, *arrangements[place:]]
@@ -859,17 +886,20 @@ class Gui:
         with self._lock:
             if self._making.get(sid, {}).get("step"):
                 return  # (being made)
-            self._making[sid] = {"step": "starting", "error": None}
+            self._making[sid] = {"step": "starting", "error": None, "progress": 0.0}
             self.play_version += 1  # (every page shows it's being made, however it was asked for)
         ref = loaded[0][0]
         beats = next((a.beats for _r, a in loaded if a.beats), ())
 
         def step(text: str) -> None:
-            self._making[sid] = {"step": text, "error": None}
+            self._making[sid] = {**self._making.get(sid, {}), "step": text, "error": None}
+
+        def far(done: float) -> None:  # (how far it is: the page's bar, and the Launchkey's screen)
+            self._making[sid] = {**self._making.get(sid, {}), "progress": round(done, 3)}
 
         def run() -> None:
             try:
-                drums.make(ref, beats, self.index.game_dir, say=step)
+                drums.make(ref, beats, self.index.game_dir, say=step, progress=far)
             except Exception as exc:  # (a tool missing, or failing: said on the page)
                 self._making[sid] = {"step": None, "error": str(exc)}
                 with self._lock:
@@ -898,7 +928,7 @@ class Gui:
                         "tones": {k: own[k] for k in PART_FIELDS if own.get(k) not in (None, "")}})
         return out
 
-    def set_song(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
+    def set_song(self, body: dict[str, Any], later: float = 0.0, answer: bool = True) -> dict[str, Any]:
         """Changes to a song's parts (play, lights, and tone fields as following's) or its start, checked and
         kept; the song goes on with them if it's playing: at once, or once changes stop coming for later
         seconds (a remote's taps and turns)."""
@@ -933,6 +963,13 @@ class Gui:
                 kept["start"] = _number(body["start"], "start", 0, 24 * 3600)
             was = self.song_settings.get(sid)
             self.song_settings[sid] = kept
+            self.play_version += 1
+            replays = any(field != "start" for field in body if field != "song")
+            if replays and later > 0:  # (a remote's turns, coming quickly: each kept as it comes, and checked, saved
+                # and played once they stop, as the last that fit if they don't; each step's planning would lag it)
+                self._fit_before.setdefault(sid, was)
+                self._replay("song", lambda: self._fitted_play_on(sid), later)
+                return self.song(sid) if answer else {}
             if len(on) > 1:  # (the parts' sounds fit the keyboard's channels: else as it was)
                 try:
                     self._plan(sid)
@@ -942,11 +979,25 @@ class Gui:
                     else:
                         self.song_settings[sid] = was
                     raise GuiError(str(exc)) from exc
-            self.play_version += 1
             self._save_songs()
-            if any(field != "start" for field in body if field != "song"):
+            if replays:
                 self._replay("song", lambda: self._play_on(sid), later)
-        return self.song(sid)
+        return self.song(sid) if answer else {}
+
+    def _fitted_play_on(self, sid: str) -> None:
+        """(Holding _lock.) A remote's turns stopped: the song's parts as they're chosen now if their sounds fit the
+        keyboard's channels (else as they were last that did), kept, and the song goes on with them."""
+        was = self._fit_before.pop(sid, None)
+        try:
+            self._plan(sid)
+        except ValueError:
+            if was is None:
+                self.song_settings.pop(sid, None)
+            else:
+                self.song_settings[sid] = was
+            self.play_version += 1
+        self._save_songs()
+        self._play_on(sid)
 
     def set_volumes(self, changes: dict[int, Any]) -> dict[str, Any]:
         """The volumes of songs' arrangements by their place in their song (0: the first; 0 to 127, NORMAL_VOLUME
@@ -2138,7 +2189,7 @@ class Gui:
                     body.setdefault("arrangements", {})[arrangement] = tones
             self.set_follow(body, later)
         else:
-            self.set_song({"song": song["id"], "parts": changes}, later)
+            self.set_song({"song": song["id"], "parts": changes}, later, answer=False)  # (a remote: no answer)
 
     def toggle_sound(self) -> bool:
         """Sound on or off (off: just the lights), playing or following; whether it's on now."""
@@ -2489,7 +2540,11 @@ class Gui:
         listen_device = str(body.get("listen_device", self.settings["listen_device"]) or GUITAR_INPUT)
         backup = str(body.get("pedal_backup", self.settings["pedal_backup"]) or "").strip()
         favourites = _favourites(body.get("pedal_favourites", self.settings["pedal_favourites"]))
-        outputs = _outputs(self.settings["outputs"], body.get("outputs") or {})
+        asked, known = _recalled(self.settings["outputs"], body.get("outputs") or {},
+                                 self.settings.get("outputs_known"))
+        outputs = _outputs(self.settings["outputs"], asked)
+        for part, chosen in outputs.items():  # (and as they are now: remembered for their devices)
+            known.setdefault(part, {})[chosen["port"]] = chosen
         tone_map = _tone_map(self.settings["tone_map"], body.get("tone_map") or {})
         if not port:
             raise GuiError("Choose the keyboard's MIDI output")
@@ -2498,6 +2553,7 @@ class Gui:
                    self.settings["most_lights"])
         changed = dict(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash, launchkey=launchkey,
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
+                       outputs_known=known,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, pedal_backup=backup,
                        pedal_favourites=favourites, most_lights=most_lights)
         if backup != self.settings["pedal_backup"]:

@@ -204,7 +204,7 @@ def test_settings_are_kept(server, tmp_path):
     assert json.loads((tmp_path / "gui.json").read_text()) == {
         "midi_port": "CASIO USB-MIDI", "channel": 11, "lights_early_ms": 15, "fastest_flash_ms": 70, "launchkey": True,
         "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
-        "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {},
+        "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {}, "outputs_known": {},
         "most_lights": False, "beat_lights": False,
         "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187]}
@@ -762,6 +762,29 @@ def test_a_remotes_keys_play_the_keyboard_and_light_first(server):
     call(server, "/api/stop", {})
 
 
+def test_a_remotes_turns_are_checked_and_saved_once_they_stop_and_go_back_to_the_last_that_fit(server, monkeypatch):
+    gui, sid = server.gui, first_song(server)
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    planned = []
+    real_plan = gui._plan
+    monkeypatch.setattr(gui, "_plan", lambda s: planned.append(s) or real_plan(s))
+    saved = gui.songs_file.read_text() if gui.songs_file.exists() else ""
+    for tone in (30, 31, 32):  # a knob turning through the lead's tones
+        gui.change_part("lead", {"tone": tone}, later=0.2)
+    lead = next(p for p in gui.song(sid)["parts"] if p["part"] == "lead")
+    assert lead["tones"]["tone"] == 32 and not planned  # kept at once (the page shows it), not planned each step
+    assert (gui.songs_file.read_text() if gui.songs_file.exists() else "") == saved  # nor saved
+    assert wait_for(lambda: planned, bool)  # once they stop: checked, saved and played
+    assert wait_for(lambda: gui.songs_file.exists() and '"tone": 32' in gui.songs_file.read_text(), bool)
+
+    def no_fit(s):
+        raise ValueError("The parts' sounds need more channels than the keyboard has")
+    monkeypatch.setattr(gui, "_plan", no_fit)
+    gui.change_part("lead", {"tone": 40}, later=0.2)  # turned to tones that don't fit: back to the last that did
+    assert wait_for(lambda: next(p for p in gui.song(sid)["parts"] if p["part"] == "lead")["tones"]["tone"] == 32, bool)
+    call(server, "/api/stop", {})
+
+
 def test_a_remotes_changes_are_kept_at_once_and_the_song_takes_them_once_they_stop(server):
     gui, sid = server.gui, first_song(server)
     call(server, "/api/play", {"song": sid, "start": 1.0})
@@ -1165,7 +1188,7 @@ def test_a_songs_drum_part_plays_along_on_the_drum_channel_and_making_one_says_w
     sid = first_song(server)
     gui = server.gui
     _, song = call(server, f"/api/song?id={urllib.request.quote(sid)}")
-    assert song["drums"] == {"play": False, "volume": 100, "made": False, "hits": 0, "making": None, "error": None,
+    assert song["drums"] == {"play": False, "volume": 100, "made": False, "hits": 0, "making": None, "progress": None, "error": None,
                              "tools": False}
     ref = gui._load(sid)[0][0]
     drums.keep(ref, [drums.Hit(1.5, drums.KICK, 110), drums.Hit(1.75, drums.SNARE, 90)])
@@ -1268,4 +1291,15 @@ def test_the_drums_on_a_circuit_have_a_kit_its_drums_and_samples_and_a_drum_stru
     assert part["device"] == "Circuit" and part["notes"]["43"] == 65 and part["kit"]["43"] == [4, 21]
     assert gui.hit_drum({"note": drums.TOMS[0]}) == {"played": 65}
     assert circuit.sent[-2:] == [[0xB9, 50, 20], [0x99, 65, 100]]  # (Drum 4's patch select: sample 21; then it)
+    circuit_drums = gui.settings["outputs"]["drums"]
+    gui.set_settings({"outputs": {"drums": None}})  # the keyboard's drums, then the Circuit chosen again by itself:
+    assert "drums" not in gui.settings["outputs"]
+    gui.set_settings({"outputs": {"drums": {"port": "Circuit"}}})
+    assert gui.settings["outputs"]["drums"] == circuit_drums  # (its notes, channel and kit as they were)
+    gui.set_settings({"outputs": {"drums": {"port": "Other"}}})  # (a device it hasn't had: the defaults)
+    assert gui.settings["outputs"]["drums"]["map"] == "gm" and gui.settings["outputs"]["drums"]["channel"] == 10
     gui.close()
+    again = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    again.set_settings({"outputs": {"drums": {"port": "Circuit"}}})  # (remembered after a restart too)
+    assert again.settings["outputs"]["drums"] == circuit_drums
+    again.close()

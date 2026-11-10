@@ -1748,3 +1748,17 @@ def test_the_screen_is_drawn_at_most_every_picture_gap_the_newest_then():
     clock.now += PICTURE_GAP
     watch.step()
     assert screens(launchkey)[-1] == watch._screen(clock.now)[1]().data()  # (where it stopped, shown)
+
+
+def test_a_drum_part_being_made_shows_how_far_on_the_songs_screen():
+    watch, gui, launchkey, clock = watching("play")
+    drums = {"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": False, "lights": 0, "tones": {},
+             "volume": 100, "made": False, "making": True, "progress": 0.416}
+    gui.song["arrangements"].append(drums)
+    gui.info["song"] = gui.song
+    watch.step()
+    assert "Making drums 42%" in watch._screen(clock.now)[0][0]  # (in the key's notes' place)
+    drums.update(making=False, made=True, progress=None)  # (made: the key's notes again)
+    clock.now = 0.5
+    watch.step()
+    assert not any("Making drums" in str(x) for x in watch._screen(clock.now)[0][0])

@@ -118,6 +118,10 @@
   #parts { display: grid; gap: 8px; margin: 12px 0; }
   .part-block { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
   .part-block.off .part-tones, .part-block.off .part-lit { opacity: .5; }
+  .making { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .making .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .making .bar span { display: block; height: 100%; background: var(--live); }
+  .making output { font-variant-numeric: tabular-nums; min-width: 3.5em; text-align: right; }
   .part-head { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
   .part-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .part-name .on-air { font-size: 12px; }
@@ -1771,6 +1775,14 @@ function drumsBlock(s) {
   make.addEventListener("click", (e) => { e.preventDefault(); send({make: true}); });
   head.append(make);
   block.append(head);
+  if (d.making) {  // (how far it is: the separating as it goes, the rest reckoned)
+    const done = Math.round((d.progress || 0) * 100);
+    const making = document.createElement("div");
+    making.className = "making muted small";
+    making.innerHTML = `<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${done}">` +
+      `<span style="width: ${done}%"></span></div><output>${done}%</output>`;
+    block.append(making);
+  }
   if (d.error || !d.tools) {
     const note = document.createElement("div");
     note.className = "muted small";
@@ -1786,7 +1798,7 @@ function drumsBlock(s) {
         selected = again;
         renderSong();
       }
-    }, 2000);
+    }, 1000);
   }
   return block;
 }
@@ -2486,11 +2498,12 @@ function showOutputs(s) {
       "hi-hats; cymbals), on its channel 10";
     notes.innerHTML = '<option value="gm">General MIDI drums</option><option value="circuit">Circuit: 4 drums</option>';
     notes.value = chosen && chosen.map ? chosen.map : "gm";
-    const send = () => act(async () => {
-      await api("/api/settings", {outputs: {[part]: port.value ?
+    // (another device chosen: just it, and it has back what it had for this part, its drums' notes and kit too)
+    const send = (event) => act(async () => {
+      await api("/api/settings", {outputs: {[part]: !port.value ? null : event.target === port ? {port: port.value} :
         {port: port.value, channel: Number(channel.value) || 1, mono: monoBox.checked,
          program: program.value ? Number(program.value) - 1 : null, octave: Number(octave.value),
-         ...(part === "drums" ? {map: notes.value} : {})} : null}});
+         ...(part === "drums" ? {map: notes.value} : {})}}});
       showOutputs(await api("/api/settings"));
     });
     for (const control of [port, channel, monoBox, program, octave, notes]) control.addEventListener("change", send);
