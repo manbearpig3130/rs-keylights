@@ -527,7 +527,9 @@
         <input type="checkbox" id="pedalFollows"> Switch with the song's tones</label></div>
       <div class="row"><label title="The presets the Launchkey's pad above the guitar's goes through, in turn (the first, on none of them)">Favourites
         <input id="pedalFavourites" placeholder="51, 187"></label></div>
-      <div class="row"><label title="A backup the DNAfx editor saved, for the presets' names (empty: the newest in Music, Documents, Desktop or Downloads)">Names from
+      <div class="row"><button type="button" id="pedalNamesRead" title="The presets' names as the pedal has them now (read from it as the page starts, and as song presets are written to it)">Read names from the pedal</button>
+        <span id="pedalNamesSaid" class="muted small"></span></div>
+      <div class="row"><label title="Until they're read from the pedal: the names from a backup the DNAfx editor saved (empty: the newest in Music, Documents, Desktop or Downloads)">Or from
         <input id="pedalBackup" placeholder="the newest backup (.bhb)"></label></div>
       <div id="pedalStatus" class="muted small"></div>
     </div>
@@ -3542,13 +3544,9 @@ async function loadSettings() {
   const inputs = s.inputs.includes(s.listen_device) ? s.inputs : [s.listen_device, ...s.inputs];
   $("listenDevice").innerHTML = inputs.map((name) => `<option>${esc(name)}</option>`).join("");
   $("listenDevice").value = s.listen_device;
-  $("pedalSlot").innerHTML = '<option value="">Not known</option>' + s.pedal_names.map((name, i) =>
-    `<option value="${i + 1}">${String(i + 1).padStart(3, "0")} ${esc(name)}</option>`).join("");
   $("pedalBackup").value = s.pedal_backup;
-  pedalNames = s.pedal_names;
   pedalFavourites = s.pedal_favourites;
-  if (pedalTonesData) pedalTonesBuild(pedalTonesData);
-  if (pedalRules) pedalRulesBuild(pedalRules);
+  setPedalNames(s.pedal_names);
   $("pedalFavourites").value = s.pedal_favourites.join(", ");
   $("pedalBackup").placeholder = s.pedal_backup_used || "the newest backup (.bhb)";
   showPedal(state && state.pedal);
@@ -3670,8 +3668,43 @@ function showListening(l) {
 }
 
 // The guitar's pedal: the preset it's on (as far as it's known), and the one Back goes to (or why it can't switch)
+// The presets' names: read from the pedal (as the page starts, and as song presets are written to it: the state's
+// pedal names, when they changed, says to ask again), else the DNAfx editor's backup's. GET/POST /api/pedal/names
+let pedalNamesSeen = null;
+function setPedalNames(names) {
+  pedalNames = names;
+  const select = $("pedalSlot"), value = select.value;
+  select.innerHTML = '<option value="">Not known</option>' + names.map((name, i) =>
+    `<option value="${i + 1}">${String(i + 1).padStart(3, "0")} ${esc(name)}</option>`).join("");
+  select.value = value;
+  if (pedalTonesData) pedalTonesBuild(pedalTonesData);
+  if (pedalRules) pedalRulesBuild(pedalRules);
+}
+function showNamesSaid(p) {
+  $("pedalNamesSaid").textContent = p.names_error ? `Not read: ${p.names_error}` :
+    p.names ? `Read ${new Date(p.names * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}` :
+    "From the editor's backup";
+}
+$("pedalNamesRead").addEventListener("click", () => act(async () => {
+  $("pedalNamesRead").disabled = true;
+  $("pedalNamesSaid").textContent = "Reading…";
+  try {
+    const d = await api("/api/pedal/names", {});
+    pedalNamesSeen = d.version;
+    setPedalNames(d.names);
+  } finally {
+    $("pedalNamesRead").disabled = false;
+  }
+}));
+
 function showPedal(p) {
   if (!p) return;
+  showNamesSaid(p);
+  if (pedalNamesSeen === null) pedalNamesSeen = p.names;
+  else if (p.names !== pedalNamesSeen) {  // (read again, or presets written to it: its names fetched)
+    pedalNamesSeen = p.names;
+    api("/api/pedal/names").then((d) => setPedalNames(d.names)).catch(() => {});
+  }
   const tone = p.tone ? `${p.tone.key}|${p.tone.pedal}|${p.tone.own}` : "";
   if (tone !== pedalToneSeen) {  // (the tone playing, or its preset, changed: on the Launchkey, say)
     const changed = pedalToneSeen && tone && pedalToneSeen.split("|")[0] === tone.split("|")[0];

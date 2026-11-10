@@ -1051,9 +1051,14 @@ def test_the_pedal_switches_from_the_page_its_presets_named_by_a_backup(server, 
     _, settings = call(server, "/api/settings", {"pedal_backup": str(path)})
     assert settings["pedal_backup_used"] == str(path) and len(settings["pedal_names"]) == 200
     assert settings["pedal_names"][48:50] == ["5050 CL", "5050 DS"]
-    assert call(server, "/api/state")[1]["pedal"] == {"slot": None, "name": "", "previous": None, "previous_name": "",
-                                                      "error": None, "favourites": [51, 187], "hold": False,
-                                                      "tone": None}  # (not following)
+    said = call(server, "/api/state")[1]["pedal"]
+    assert said.pop("names") == 0.0 and said.pop("names_error") in (None, "no pedal in tests")  # (not read from it)
+    assert said == {"slot": None, "name": "", "previous": None, "previous_name": "", "error": None,
+                    "favourites": [51, 187], "hold": False, "tone": None}  # (not following)
+    status, names = call(server, "/api/pedal/names")
+    assert status == 200 and names["names"][48] == "5050 CL" and names["version"] == 0.0  # (the backup's)
+    status, said = call(server, "/api/pedal/names", {})
+    assert status == 400 and "no pedal in tests" in said["error"]
     from rs_keylights import pedal as pedal_module  # (the hold file: dnafx-preset's listener keeps the tone)
     assert call(server, "/api/pedal", {"hold": True})[1]["hold"] is True and pedal_module.HOLD_FILE.exists()
     assert call(server, "/api/pedal", {"hold": False})[1]["hold"] is False and not pedal_module.HOLD_FILE.exists()

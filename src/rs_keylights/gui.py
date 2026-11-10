@@ -435,6 +435,8 @@ class Gui:
         self._synth_factory = synth_factory  # other MIDI devices sounding parts (outputs), opened once they're used
         self._synths: dict[str, Synth] = {}
         self.pedal = pedal_factory()  # the guitar's pedal, its presets switched from the Launchkey and the page
+        self._names_error: str | None = None  # (why the presets' names couldn't be read from it, last time)
+        threading.Thread(target=self._read_pedal_names, name="rs-keylights pedal names", daemon=True).start()
         self.pedal_tones = pedal_tones_factory(self.pedal.name)  # and its preset for each of a song's tones
         # Following, the loop is Rocksmith's: its Riff Repeater loops it (RS Re-ARMed's riffloop mod), for the song
         # it was set for (another followed, or following stopped: Riff Repeater's own again)
@@ -2415,7 +2417,25 @@ class Gui:
         slot, previous = pedal.slot, pedal.previous
         return {"slot": slot, "name": pedal.name(slot), "previous": previous, "previous_name": pedal.name(previous),
                 "error": pedal.error, "favourites": list(self.settings["pedal_favourites"]), "hold": pedal.held,
-                "tone": self._tone_playing()}
+                "tone": self._tone_playing(), "names": pedal.names_version, "names_error": self._names_error}
+
+    def _read_pedal_names(self) -> None:
+        try:
+            self.pedal.refresh_names()
+            self._names_error = None
+        except PedalError as exc:
+            self._names_error = str(exc)
+
+    def pedal_names(self, read: bool = False) -> dict[str, Any]:
+        """The presets' names (read from the pedal again first: a few seconds), and when they last changed (0: from
+        the DNAfx editor's backup, not read from the pedal yet)."""
+        if read:
+            self._read_pedal_names()
+            if self._names_error:
+                raise GuiError(f"Couldn't read the pedal's names: {self._names_error}")
+        names = self.pedal.names()
+        return {"names": [names.get(slot, "") for slot in range(1, PEDAL_SLOTS + 1)],
+                "version": self.pedal.names_version, "error": self._names_error}
 
     def _followed_now(self) -> tuple[ArrangementRef | None, float | None]:
         """Following, the arrangement the game plays and where it is (None, None: not following)."""
@@ -3268,6 +3288,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/songtones":
                 query = parse_qs(url.query)
                 self._json(200, gui.song_pedal_tones(query.get("id", [""])[0], query.get("part", [None])[0] or None))
+            elif url.path == "/api/pedal/names":
+                self._json(200, gui.pedal_names())
             elif url.path == "/api/pedal/rules":
                 self._json(200, gui.pedal_rules())
             elif url.path == "/api/plays":
@@ -3350,6 +3372,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/volumes": lambda: gui.set_volumes(body.get("volumes") or {}),
             "/api/loop": lambda: gui.set_loop(body),
             "/api/pedal": lambda: gui.set_pedal(body),
+            "/api/pedal/names": lambda: gui.pedal_names(read=True),
             "/api/songtones": lambda: gui.set_song_pedal_tones(body),
             "/api/pedal/rules": lambda: gui.set_pedal_rules(body),
             "/api/riff": lambda: gui.set_game_riff(body),

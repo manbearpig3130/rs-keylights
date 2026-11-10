@@ -10,9 +10,11 @@ import wave
 from pathlib import Path
 from typing import Sequence
 
-from . import drums
+from . import dnafxtone, drums, midiexport, pcsongs
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
 from .gui import DEFAULT_GUI_PORT, part_order, song_export
+from .pedal import remember_names
+from .pedalwriter import PedalWriter
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, Keyboard, KeyboardError
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, HOP, LOWEST, RATE, Detector
@@ -20,7 +22,7 @@ from .library import NO_NOTES, ArrangementRef, SongIndex, read_arrangements
 from .player import play
 from .psarc import ArchiveError
 from .riffloop import RiffLoop
-from .tonemessages import SOURCE, ToneSender, virtual_source
+from .tonemessages import SOURCE, ToneSender, read_rig, virtual_source
 from .parts import Part, plan, player_for
 from .sng import SngError, note_name
 from .sound import BASS_TONE, DEFAULT_SPLIT, GUITAR_TONE, KEYBOARD_CHANNELS, SoundChoice, parse_note
@@ -102,6 +104,25 @@ def build_parser() -> argparse.ArgumentParser:
                            "tools/drums-setup.sh decode it)")
     midi.set_defaults(handler=run_midi)
 
+    dnafx = commands.add_parser("dnafx-tone", help="save a song's tones as presets for a DNAfx GiT Core (.phb files, "
+                                                    "for its editor to import): the gear both have as the same model")
+    dnafx.add_argument("song", help="a .psarc file, or part of a song's name, artist or file name")
+    dnafx.add_argument("-o", "--output", type=Path, default=Path("."), metavar="DIR", help="where (default: here)")
+    dnafx.add_argument("--to-pedal", type=int, nargs="?", const=dnafxtone.SONG_SLOTS[0], metavar="SLOT",
+                       help=f"write them to the pedal too, from this slot on (default {dnafxtone.SONG_SLOTS[0]}), in "
+                            f"the slots for song presets ({dnafxtone.SONG_SLOTS[0]} to {dnafxtone.SONG_SLOTS[-1]}) only; "
+                            "what's there first saved in ~/Music/DNAfx backups, each read back to check")
+    dnafx.set_defaults(handler=run_dnafx_tone)
+
+    pc = commands.add_parser("pc-songs", help="make the PC's song archives (*_p.psarc) of songs with no Mac archive "
+                                              "Mac ones, in the game's dlc/from-pc, for the Mac game and the page "
+                                              "(those made already kept; quick when nothing's new)")
+    pc.add_argument("--from", dest="folders", type=Path, action="append", metavar="DIR",
+                    help="a folder with PC archives (and its folders); default: the Steam game's dlc RS Re-ARMed's "
+                         "copy is made from, and the game's own dlc")
+    pc.add_argument("--dry-run", action="store_true", help="just say what it would make and remove")
+    pc.set_defaults(handler=run_pc_songs)
+
     index = commands.add_parser("index", help="update the index of the game's songs")
     index.set_defaults(handler=run_index)
 
@@ -110,6 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
                            "(for dnafx-preset listen --midi-source \"Rocksmith Tones\"), from the game itself: no RS "
                            "Companion needed, its presets.json and settings used if they're there")
     song_tones.add_argument("--source", default=SOURCE, help=f"the MIDI source's name (default: {SOURCE})")
+    song_tones.add_argument("--no-pedal", action="store_true",
+                            help="don't write the tones whose amps a DNAfx GiT has as presets on it as each song loads "
+                                 f"(in slots {dnafxtone.SONG_SLOTS[0]} to {dnafxtone.SONG_SLOTS[-1]}, for dnafx-preset's "
+                                 "listener to switch to)")
     song_tones.set_defaults(handler=run_song_tones)
 
     gui = commands.add_parser("gui", help="a page in the browser to pick songs, parts and tones, and play or follow")
@@ -291,7 +316,7 @@ def run_song_tones(args: argparse.Namespace) -> int:
         signal.signal(stop, quit_)
     say(f"{len(index)} arrangements. Sending the song tones on the MIDI source '{args.source}'. Ctrl-C stops.")
     try:
-        ToneSender(RiffLoop(), index, out, status=say).run()
+        ToneSender(RiffLoop(), index, out, status=say, pedal=None if args.no_pedal else PedalWriter(status=say)).run()
     except KeyboardInterrupt:
         pass
     finally:
@@ -597,6 +622,95 @@ def _make_drums(refs: list[ArrangementRef], again: bool, game: Path) -> int:
         counts[drums.NAMES.get(hit.note, str(hit.note))] = counts.get(drums.NAMES.get(hit.note, str(hit.note)), 0) + 1
     print(f"{len(hits)} hits in {time.monotonic() - started:.0f} s: " + ", ".join(f"{n} {name}" for name, n in counts.items()))
     return 0
+
+
+def run_dnafx_tone(args: argparse.Namespace) -> int:
+    refs = find_song(args)
+    if refs is None:
+        return 1
+    playable = [r for r in refs if r.part not in NO_NOTES]
+    if not playable:
+        print("rs-keylights: no guitar or bass parts", file=sys.stderr)
+        return 1
+    rig = read_rig(Path(playable[0].archive), Path(playable[0].sng).stem)
+    named = next((r for r in refs if r.artist), refs[0])
+    out = args.output.expanduser()
+    out.mkdir(parents=True, exist_ok=True)
+    done: set[str] = set()
+    skipped: list[str] = []
+    made: list[tuple[str, dnafxtone.Converted]] = []
+    names: set[str] = set()  # (this song's presets' names: each its own; one there already is made again)
+    for arrangement in rig.arrangements:
+        for tone in arrangement.tones:
+            if not tone.key or tone.key in done:
+                continue
+            done.add(tone.key)
+            amp = tone.gear.get("Amp")
+            if arrangement.path.lower() == "bass" or amp is None or amp.key not in dnafxtone.TWIN_AMPS:
+                skipped.append(f"{tone.key} ({amp.key.split('Amp_')[-1] if amp else 'no amp'})")
+                continue
+            converted = dnafxtone.convert(tone)
+            short = dnafxtone.short_name(tone.key, names)
+            names.add(short)
+            converted.preset["fileInfo"]["preset_name"] = short
+            made.append((short, converted))
+            path = out / f"{short}.phb"
+            path.write_text(json.dumps(converted.preset, indent=4))
+            print(f"{path.name}: {named.title}, {tone.key} ({arrangement.path}): "
+                  f"{'faithful' if converted.faithful else 'approximate'}")
+            for said, items in (("same", converted.exact), ("nearest", converted.near), ("left out", converted.dropped)):
+                if items:
+                    print(f"  {said}: " + "; ".join(items))
+    if skipped:
+        print("Not made (a bass's, or an amp the DNAfx has no twin of): " + ", ".join(skipped))
+    if args.to_pedal is not None and made:
+        return _to_pedal(made, args.to_pedal)
+    return 0
+
+
+def _to_pedal(made: list[tuple[str, dnafxtone.Converted]], first: int) -> int:
+    """Presets written to the pedal from a slot on, what was in those slots saved first, each read back to check."""
+    from dnafx_preset.cli import build_client, build_parser as dnafx_parser
+    last = first + len(made) - 1
+    if first not in dnafxtone.SONG_SLOTS or last not in dnafxtone.SONG_SLOTS:
+        print(f"rs-keylights: {len(made)} presets from slot {first} need slots {first} to {last}; song presets go in "
+              f"{dnafxtone.SONG_SLOTS[0]} to {dnafxtone.SONG_SLOTS[-1]} only (the others are kept)", file=sys.stderr)
+        return 1
+    client = build_client(dnafx_parser().parse_args(["show", "1"]))
+    PedalWriter().forget()  # (song-tones writes its presets there again: what they have now isn't its)
+    before = {p.slot: p for p in client.read_presets()}
+    if len(before) != 200:
+        print("rs-keylights: the pedal didn't send its presets: nothing written", file=sys.stderr)
+        return 1
+    saved = Path.home() / "Music" / "DNAfx backups" / time.strftime("%Y-%m-%d %H%M%S")
+    saved.mkdir(parents=True, exist_ok=True)
+    for slot in range(first, last + 1):
+        (saved / f"{slot:03d}-{before[slot].name or 'unnamed'}.bin").write_bytes(before[slot].to_bytes())
+    wrote = []
+    for slot, (short, converted) in enumerate(made, first):
+        preset = dnafxtone.pedal_preset(converted, slot, short)
+        client.upload(preset)
+        wrote.append(preset)
+        remember_names({slot: short})
+        print(f"slot {slot}: {short} (was {before[slot].name or 'unnamed'})")
+    after = {p.slot: p for p in client.read_presets()}
+    wrong = [p.slot for p in wrote if p.slot not in after or after[p.slot].to_bytes() != p.to_bytes()]
+    print(f"Read back: {'all as written' if not wrong else f'slots {wrong} NOT as written'}; what was there is in {saved}")
+    return 1 if wrong else 0
+
+
+def run_pc_songs(args: argparse.Namespace) -> int:
+    index = open_index(args)
+    report = pcsongs.sync(index.game_dir, index, args.folders, args.dry_run, say=lambda text: print(f"  {text}"))
+    would = "to make" if args.dry_run else "made"
+    print(f"{len(report.made)} {would}, {report.kept} made before, {len(report.have_mac)} with a Mac archive already"
+          + (f", {len(report.older)} older PC copies of a song" if report.older else "")
+          + (f", {len(report.removed)} {'to remove' if args.dry_run else 'removed'}" if report.removed else ""))
+    if report.apps_changed:
+        print(f"{report.apps_changed} given the free AppID {pcsongs.FREE_APP}: the game doesn't list theirs")
+    for failed in report.failed:
+        print(f"rs-keylights: {failed}", file=sys.stderr)
+    return 1 if report.failed else 0
 
 
 def run_midi(args: argparse.Namespace) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -12,7 +13,8 @@ from typing import Callable
 
 # The guitar's pedal, a Harley Benton DNAfx GiT (the Core too): its presets switched over USB by dnafx-preset
 # (~/git/dnafx-preset, installed with: uv pip install --python .venv/bin/python -e ~/git/dnafx-preset), and their
-# names from a backup the DNAfx editor saved (a .bhb file). dnafx-preset's own listener (RS Re-ARMed's sidekick,
+# names read from the pedal itself (kept in NAMES_CACHE, which writing presets to it updates too; else from a backup
+# the DNAfx editor saved, a .bhb file). dnafx-preset's own listener (RS Re-ARMed's sidekick,
 # following the song's tones: song-tones', or RS Companion's) switches it too: its log says to what.
 
 SLOTS = 200
@@ -28,6 +30,57 @@ SWITCH_TIMEOUT = 3.0  # seconds it gets
 # While this file's there, dnafx-preset's listener keeps the tone as it is, not switching with the song's tones (its
 # --hold-file); once it's gone, it switches to the tone it held back
 HOLD_FILE = Path.home() / ".config" / "dnafx-preset" / "hold"
+# The presets' names as read from the pedal (dnafx-preset names), and as written to it since (rs-keylights' song presets)
+NAMES_CACHE = Path.home() / "Library" / "Caches" / "rs-keylights" / "dnafx-names.json"
+NAMES = (sys.executable, "-m", "dnafx_preset", "names")
+NAMES_TIMEOUT = 15.0  # seconds reading them gets (about 3.5 s: the 200 presets)
+
+
+def read_pedal_names() -> dict[int, str]:
+    """The presets' names read from the pedal (dnafx-preset, in a process of its own: hidapi, as for switching), and
+    kept in NAMES_CACHE. PedalError if it can't be read."""
+    child = subprocess.Popen(list(NAMES), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        out, err = child.communicate(timeout=NAMES_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        child.kill()
+        raise PedalError("The pedal didn't send its presets' names") from exc
+    try:
+        names = {int(slot): str(name) for slot, name in json.loads(out).items()}
+    except (ValueError, AttributeError) as exc:
+        if "No module named dnafx_preset" in err:
+            raise PedalError(NEEDS) from exc
+        said = (err or out).strip().splitlines()
+        raise PedalError(said[-1].removeprefix("Error: ") if said else "dnafx-preset failed") from exc
+    if len(names) != SLOTS:
+        raise PedalError(f"The pedal sent {len(names)} presets' names, not {SLOTS}")
+    remember_names(names, every=True)
+    return names
+
+
+def remember_names(names: dict[int, str], every: bool = False) -> None:
+    """Presets' names as the pedal has them now (every: all of them, read from it; else some just written to it)."""
+    kept: dict[str, str] = {}
+    if not every:
+        try:
+            kept = dict(json.loads(NAMES_CACHE.read_text()).get("names", {}))
+        except (OSError, ValueError, AttributeError):
+            return  # (not read from the pedal yet: a few names alone aren't kept)
+    kept.update({str(slot): name for slot, name in names.items()})
+    NAMES_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    temp = NAMES_CACHE.with_suffix(".tmp")
+    temp.write_text(json.dumps({"read": time.time(), "names": kept}))
+    temp.replace(NAMES_CACHE)
+
+
+def cached_names() -> tuple[float, dict[int, str]] | None:
+    """The names kept from the pedal, and when they changed (their file's time); None: not read from it yet."""
+    try:
+        changed = NAMES_CACHE.stat().st_mtime
+        names = {int(slot): str(name) for slot, name in json.loads(NAMES_CACHE.read_text()).get("names", {}).items()}
+    except (OSError, ValueError, AttributeError):
+        return None
+    return (changed, names) if names else None
 
 
 class PedalError(RuntimeError):
@@ -112,6 +165,7 @@ class Pedal:
         self._timer: threading.Timer | None = None
         self._sending = threading.Lock()  # (one switch at a time)
         self._backup, self._names = backup, None  # (read once they're wanted)
+        self._cached: tuple[float, dict[int, str]] | None = None  # (the pedal's own, as last read from their file)
         self._slot: int | None = None  # the one it's on, or going to
         self._on: int | None = None  # the one it was last switched to
         self._previous: int | None = None  # and the one before
@@ -222,7 +276,33 @@ class Pedal:
             self._slot, self._at = slot, changed
             self._switched(slot)
 
+    @property
+    def names_version(self) -> float:
+        """When the names last changed (their file's time, read from the pedal); 0: the backup's."""
+        cached = cached_names()
+        return cached[0] if cached else 0.0
+
+    def refresh_names(self) -> dict[int, str]:
+        """The names read from the pedal again (a few seconds). PedalError if it can't be read."""
+        names = read_pedal_names()
+        with self._lock:
+            self._cached = (self.names_version, names)
+        return names
+
     def _read_names(self) -> dict[int, str]:
+        try:
+            changed = NAMES_CACHE.stat().st_mtime
+        except OSError:
+            changed = None
+        if changed is not None:  # (read from the pedal: those, read again only when their file changes)
+            with self._lock:
+                if self._cached is not None and self._cached[0] == changed:
+                    return self._cached[1]
+            cached = cached_names()
+            if cached is not None:
+                with self._lock:
+                    self._cached = cached
+                return cached[1]
         with self._lock:
             if self._names is None:
                 if self._backup is None:

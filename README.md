@@ -461,6 +461,45 @@ note nearest its time, each miss the earliest note not counted yet, up to a seco
 once its note's gone by. The game scores the notes at your level, which can be fewer than the chart's hardest; a note
 it doesn't count isn't listed either way.
 
+### Rocksmith's tones on a DNAfx
+
+`rs-keylights dnafx-tone SONG` makes presets for a Harley Benton DNAfx GiT Core from a song's tones, for the tones
+whose amps the DNAfx has: Rocksmith's Marshall JCM800, Plexi and Orange Rockerverb are its J800, PLX100 and ROCK VRB,
+and HG100 ("a custom high-gain amp") its PV 5050, the nearest; Marshall 1960 and Orange cabinets its 1960 412 and
+CITRUS, with EL34s (6L6s for the 5150) and the same mic. The amp's knobs are Rocksmith's (the JCM800's gain made as
+distorted by ear: 65 is the DNAfx's 100); reverbs, delays, modulation and a 5-band EQ the DNAfx's nearest; a noise
+gate (NOISE KILLER, 16) from a gain of 80; the expression pedal on the amp's gain. Drives, wahs and studio EQs are
+left out, and said. Each tone a `.phb` for the DNAfx editor (8 letters, as it takes them), and with `--to-pedal`
+written to the pedal too, from slot 194 on.
+
+**As a song loads**, `song-tones` (the sidekick) writes its arrangement's tones that way to slots 194 to 199, before
+it sends the song's tone message, which then says each tone's slot: dnafx-preset's listener switches to them as the
+song plays. A preset that's there already isn't written again (`~/Library/Application Support/rs-keylights/
+pedal-song-presets.json` remembers them); the slots' presets before the first write are saved in
+`~/Music/DNAfx backups`. No other slot is written. `song-tones --no-pedal` turns it off.
+
+### PC songs in the Mac game
+
+`rs-keylights pc-songs` makes the PC's song archives (`*_p.psarc`) Mac ones, for the songs that have no Mac archive:
+they show in RS Re-ARMed's song list and on the page like any other. It looks in the Steam game's `dlc` folder that
+RS Re-ARMed's copy is made from, and in the game's own `dlc` (`--from DIR` for others), and puts what it makes in the
+game's `dlc/from-pc/`, which RS Re-ARMed's updates leave alone.
+
+- **No duplicates.** A PC archive is skipped when any other archive has its song: the same arrangements (their
+  persistent IDs), or the same artist and title. Of two PC archives of one song, the newer is used. One made before
+  is removed when its PC archive's gone, or a Mac archive of its song turns up.
+- **What changes.** A song's PC and Mac archives hold the same files, the audio byte for byte: only the folders'
+  names (`songs/bin/generic` and `audio/windows`, against `songs/bin/macos` and `audio/mac`), the `.nt` graph that
+  names them and the platform (`dx9`, against `macos`), and the charts, encrypted with a key for each platform. So the
+  folders are renamed, the graph changed, and each chart encrypted again with the Mac's key (and checked: decrypted,
+  the same as the PC's); the rest is copied block for block. Its AppID is kept if the game lists it (Rocksmith's own,
+  or one RS Re-ARMed's copy has), else it gets the free one custom songs carry (248750), or the game wouldn't load it.
+- **Quick.** A run reads only the archives that are new or changed since the last (`dlc/from-pc/.from-pc.json`
+  remembers the rest): a few seconds. `--dry-run` says what it would make and remove.
+
+To have it run as the game starts, add it to RS Re-ARMed's `sidekicks.conf` (rearmed-sidekicks): new PC songs show
+the next time the game starts.
+
 ### A song in a DAW
 
 **MIDI file** under the song's title saves it as a MIDI file for Logic or GarageBand (`Artist - Title.mid`), or

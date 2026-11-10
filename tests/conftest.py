@@ -16,6 +16,11 @@ def no_real_pedal(monkeypatch, tmp_path):
     monkeypatch.setattr(pedal, "find_backup", lambda home=None: None)
     monkeypatch.setattr(pedal, "dnafx_switcher", lambda: switched.append)
     monkeypatch.setattr(pedal, "HOLD_FILE", tmp_path / "dnafx-preset-hold")  # (not this Mac's listener's)
+    monkeypatch.setattr(pedal, "NAMES_CACHE", tmp_path / "dnafx-names.json")  # (nor its names, nor the pedal's)
+
+    def no_names():
+        raise pedal.PedalError("no pedal in tests")
+    monkeypatch.setattr(pedal, "read_pedal_names", no_names)
     return switched
 
 
@@ -31,7 +36,20 @@ def no_real_pedal_tones(monkeypatch, tmp_path):
     monkeypatch.delenv("DNAFX_CONFIG", raising=False)
 
 
-from rs_keylights import drums, plays  # noqa: E402
+from rs_keylights import drums, library, pedalwriter, plays  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_real_pedal_presets(monkeypatch, tmp_path):
+    """No test reads or writes what this Mac remembers of the DNAfx's song slots, or its backups."""
+    monkeypatch.setattr(pedalwriter, "STATE", tmp_path / "pedal-song-presets.json")
+    monkeypatch.setattr(pedalwriter, "BACKUPS", tmp_path / "DNAfx backups")
+
+
+@pytest.fixture(autouse=True)
+def no_real_index(monkeypatch, tmp_path):
+    """No test writes this Mac's index of the game's songs (a command's, opened with its default cache)."""
+    monkeypatch.setattr(library, "default_cache", lambda: tmp_path / "default-index.json")
 
 
 @pytest.fixture(autouse=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
@@ -136,6 +136,7 @@ class Tone:
     category: str
     reason: str  # why the category (presets.json's: "tags CLEAN", "song override"...)
     effects: Mapping[str, Effect] = field(default_factory=dict)
+    pedal: int | None = None  # the DNAfx slot with a preset made for it (pedalwriter), if any
 
 
 @dataclass(frozen=True)
@@ -162,8 +163,9 @@ class SongTones:
             "v": 2, "kind": "song-tones", "song": self.song, "artist": self.artist, "arrangement": self.arrangement,
             "style": self.style, "styles": list(self.styles),
             "tones": [{"program": self.first_program + i, "key": t.key, "category": t.category,
-                       "effects": {name: _effect(name, e) for name, e in t.effects.items()}}
-                      for i, t in enumerate(self.tones)],
+                       "effects": {name: _effect(name, e) for name, e in t.effects.items()},
+                       **({"pedal": t.pedal} if t.pedal is not None else {})}  # (rs-keylights' own: dnafx-preset's
+                      for i, t in enumerate(self.tones)],                       # listener switches to it)
         }
         for name, value, places in (("heaviness", self.heaviness, 2), ("tempo", self.tempo, 1),
                                     ("low_string", self.low_string, 2)):
@@ -223,8 +225,9 @@ class ToneSender:
 
     def __init__(self, game: GameClock, index: SongIndexProtocol, out: MidiOut, folder: Path = COMPANION_DATA,
                  status: Callable[[str], None] = print, clock: Callable[[], float] = time.monotonic,
-                 read: Callable[[Path, str], SongRig] = read_rig):
+                 read: Callable[[Path, str], SongRig] = read_rig, pedal: Any = None):
         self.game, self.index, self.out, self.folder = game, index, out, folder
+        self.pedal = pedal  # (a PedalWriter: the tones' presets written on the DNAfx as each song loads; None: not)
         self.status, self.clock, self._read = status, clock, read
         self.presets = Presets(folder)
         self.settings = Settings.read(folder / "rscompanion.json")
@@ -306,13 +309,17 @@ class ToneSender:
         if self.song is None:
             self.status(f"{self.arrangement}: not in its song's files")
             return
+        if self.pedal is not None:  # (written before the message: the listener switches to them as it comes)
+            slots = self.pedal.write(self.rig, self.arrangement, [t.key for t in self.song.tones])
+            if slots:
+                self.song = replace(self.song, tones=tuple(replace(t, pedal=slots.get(t.key)) for t in self.song.tones))
         message = self.song.sysex()
         self.out.send_message(message)
         took = f", {(self.clock() - started) * 1000:.0f} ms" if started is not None else ""
         self.status(f"Song: {self.song.song} by {self.song.artist}, {self.song.arrangement} (SysEx {len(message)} bytes"
                     f"{took}) {self.song.summary()}")
         for t in self.song.tones:
-            self.status(f"  {t.key}: {t.category} ({t.reason})")
+            self.status(f"  {t.key}: {t.category} ({t.reason})" + (f", its preset in slot {t.pedal}" if t.pedal else ""))
 
     def _play(self, key: str) -> None:
         if self.song is None:
