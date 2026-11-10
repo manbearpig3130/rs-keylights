@@ -31,7 +31,7 @@ from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
 from . import drums, theory
-from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlannedPart, VoicesFor, channels_needed, drum_track, plan, player_for
+from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
 from .player import Track
 from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
@@ -472,6 +472,7 @@ class Gui:
         self._keys_thread: threading.Thread | None = None
         self._replays: dict[str, Callable[[], None]] = {}  # the parts to play again once a remote's changes pause
         self._replay_timer: threading.Timer | None = None
+        self._made = PlanCache()  # (the parts' lights and tracks as made: a change remakes just the part changed)
         self._theories: dict[tuple[str, str | None], dict[str, Any]] = {}  # songs' theory (theory()), once worked out
         self._fit_before: dict[str, Any] = {}  # songs a remote's turning: their choices last checked to fit (None: none)
         self._warm: list[str] = []  # songs whose album art to get ready next, in the background
@@ -826,7 +827,7 @@ class Gui:
         notes, patches = _drum_voicing(output) if output and synth else ({}, {})
         voices = DrumVoices(channel=output["channel"] if output and synth else drums.DRUM_CHANNEL, notes=notes,
                             patches=patches, volume=chosen["volume"])
-        return [drum_track(hits, voices, synth)]
+        return [self._made.drums(hits, voices, synth)]
 
     def set_drums(self, body: dict[str, Any]) -> dict[str, Any]:
         """A song's drum part played or not ("play"), how loud ("volume", 0 to 127), or made ("make": again, if it
@@ -1363,7 +1364,8 @@ class Gui:
         if not isinstance(session, Playback) or not session.running or not self._playing or self._playing["id"] != sid:
             return
         planned, length = self._plan(sid)
-        session.replace(player_for(planned, session.keyboard, *self._light_timing(), extra=self._drum_tracks(sid)),
+        session.replace(player_for(planned, session.keyboard, *self._light_timing(), extra=self._drum_tracks(sid),
+                                  cache=self._made),
                         length)
         self._playing, self._planned_now = self._describe(sid, planned), planned
 
@@ -1496,7 +1498,8 @@ class Gui:
             voices = replace(choice.voices(ref, channels), volume=volume[ref.part])
             return self._routed(replace(voices, tone_map=()) if ref.part in fixed else voices, ref)
 
-        planned = plan(parts, voices_for if choice else None, pooled=bool(self.settings["most_lights"]))
+        planned = plan(parts, voices_for if choice else None, pooled=bool(self.settings["most_lights"]),
+                       cache=self._made)
         length = max([a.length for _r, a in loaded] + [l.off for pp in planned for l in pp.lights[-1:]])
         return planned, length
 
@@ -1524,7 +1527,8 @@ class Gui:
                 keyboard = self._open_keyboard()
                 try:
                     playback = Playback(player_for(planned, keyboard, *self._light_timing(),
-                                                   extra=self._drum_tracks(sid)), keyboard, length, start, speed)
+                                                   extra=self._drum_tracks(sid), cache=self._made),
+                                        keyboard, length, start, speed)
                 except Exception:
                     keyboard.close()
                     raise

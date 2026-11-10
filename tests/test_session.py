@@ -9,7 +9,7 @@ from rs_keylights.keyboard import Keyboard
 from rs_keylights.library import read_arrangements
 from rs_keylights.player import Player, Track
 from rs_keylights.lights import Light
-from rs_keylights.parts import Part, plan
+from rs_keylights.parts import Part, PlanCache, plan, player_for
 from rs_keylights.session import LOOP_LEAD_IN, Playback
 from rs_keylights.sound import SoundChoice
 from rs_keylights.tones import tone
@@ -80,6 +80,31 @@ def test_plan_pooled_gives_the_lit_parts_every_key_and_the_one_played_first(tmp_
     pooled = plan(parts, None, pooled=True, first=refs["rhythm"])
     assert [len(p.lights[0].keys) for p in pooled[:2]] == [4, 4] and [p.pooled for p in pooled] == [True, True, False]
     assert [p.priority for p in pooled] == [1, 0, 2]  # (the rhythm's played: first, then the song's order)
+
+
+def test_a_change_to_one_part_remakes_just_its_lights_and_track_and_plays_the_same(tmp_path):
+    path = tmp_path / "a_m.psarc"
+    song = Song(levels={0: [N(t * 0.25, string=t % 6, fret=t % 5, sustain=0.2 * (t % 3)) for t in range(40)]})
+    path.write_bytes(song_archive("a", {"lead": ("L", song), "rhythm": ("R", song)}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    loaded = {name: refs[name].load() for name in refs}
+    choice = SoundChoice({}, {}, {}, {}, False)
+    cache = PlanCache()
+
+    def parts(lead_keys):
+        return [Part(refs["lead"], loaded["lead"], lead_keys), Part(refs["rhythm"], loaded["rhythm"], 2)]
+    first = plan(parts(2), choice.voices, cache=cache)
+    toggled = plan(parts(0), choice.voices, cache=cache)
+    assert toggled[1].lights is first[1].lights and toggled[0].lights is not first[0].lights
+    assert [p.lights for p in toggled] == [p.lights for p in plan(parts(0), choice.voices)]  # (as made afresh)
+    k, _out = keyboard()
+    made = player_for(first, k, cache=cache)
+    again = player_for(toggled, k, cache=cache)
+    assert again.tracks[1] is made.tracks[1]
+    fresh = player_for(toggled, k)
+    assert again._actions == fresh._actions and again.display == fresh.display
+    moved = player_for(toggled[1:], k, cache=cache)  # (the rhythm's track, now the first: its actions its own)
+    assert moved._actions == player_for(toggled[1:], k)._actions
 
 
 def test_plan_gives_each_part_the_channels_its_voices_need_so_five_or_more_can_play(tmp_path):

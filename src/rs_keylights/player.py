@@ -4,7 +4,7 @@ import math
 import time
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import Callable, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from .lights import MIN_PERIOD, KeyLight, Light, merge_keys
 
@@ -86,8 +86,11 @@ class Player:
     rings (a note sounding twice at once stops once both are done)."""
 
     def __init__(self, tracks: Sequence[Track], keys: KeysProtocol, rate: float = 1.0, lead: float = 0.0,
-                 min_period: float = MIN_PERIOD, most_keys: int | None = None):
+                 min_period: float = MIN_PERIOD, most_keys: int | None = None,
+                 cache: dict[int, tuple[Track, Any]] | None = None):
         self.tracks = list(tracks)
+        self._cache = cache  # each track's sounds, controls and actions, as made for it before (parts.PlanCache's:
+        # by the track, the same object when the part's unchanged)
         self.most_keys = most_keys  # the lit tracks' keys pooled: at most this many at once, by their priority (None:
         # each track's own lights)
         self.keys = keys
@@ -105,33 +108,53 @@ class Player:
         self.display: list[KeyLight] = merge_keys([t.lights for t in lit], self.rate, self.lead, self.min_period,
                                                   self.most_keys, [t.priority for t in lit])
         self._display_ons = [k.on for k in self.display]
-        self._sounds = [sorted([*t.lights, *t.extras], key=lambda light: light.on) for t in self.tracks]  # (what
-        # each part sounds: its lights and their extras)
-        self._ons = [[light.on for light in sounds] for sounds in self._sounds]
-        self._longest = [max((self._sound_end(t, light) - light.on for light in sounds), default=0.0)
-                         for t, sounds in zip(self.tracks, self._sounds)]  # (how far back a seek looks for notes
-        # still sounding)
-        self._controls = [self._controls_of(t, sounds) for t, sounds in zip(self.tracks, self._sounds)]
+        made = [self._made(ti, t) for ti, t in enumerate(self.tracks)]
+        self._sounds = [m[0] for m in made]  # (what each part sounds: its lights and their extras)
+        self._ons = [m[1] for m in made]
+        self._longest = [m[2] for m in made]  # (how far back a seek looks for notes still sounding)
+        self._controls = [m[3] for m in made]
         # (time, 0 for off / 1 for a tone change / 2 for a control (bend, vibrato) / 3 for on, KEY or a track, index,
         # the places of the pitches ending): at the same time offs come first, then tones and controls. A light (or
-        # a pitch) that ends as it starts would have its off before its on, so it isn't played.
-        self._actions = sorted(
-            [(time, kind, KEY, i, ()) for i, k in enumerate(self.display) for time, kind in ((k.off, 0), (k.on, 3))]
-            + [(change[0], 1, ti, ci, ()) for ti, t in enumerate(self.tracks) if t.voices is not None
-               for ci, change in enumerate(t.changes) if change[0] > -math.inf]
-            + [(control[0], 2, ti, ci, ()) for ti, controls in enumerate(self._controls)
-               for ci, control in enumerate(controls)]
-            + [
-                action
-                for ti, t in enumerate(self.tracks)
-                if t.voices is not None
-                for li, light in enumerate(self._sounds[ti])
-                if self._sound_end(t, light) > light.on
-                for action in [(light.on, 3, ti, li, ()), *self._offs(t, ti, li)]
-            ]
-        )
+        # a pitch) that ends as it starts would have its off before its on, so it isn't played. (Each track's are
+        # in order already: sorting them all together merges them.)
+        actions = sorted((time, kind, KEY, i, ()) for i, k in enumerate(self.display)
+                         for time, kind in ((k.off, 0), (k.on, 3)))
+        for m in made:
+            actions += m[4]
+        actions.sort()
+        self._actions = actions
         self._times = [action[0] for action in self._actions]
         self._next = 0
+
+    def _made(self, ti: int, t: Track) -> tuple[list[Light], list[float], float, list[Any], list[Any]]:
+        """A track's sounds (in order), when they start, the longest, its controls, and its actions (in order: tone
+        changes, controls, notes on and off), as its ti'th; as made for it before, if it was (as another's: its
+        actions made its)."""
+        got = self._cache.get(id(t)) if self._cache is not None else None
+        if got is not None and got[0] is t:
+            was_ti, made = got[1]
+            if was_ti == ti:
+                return made
+            return (*made[:4], [(a[0], a[1], ti, a[3], a[4]) for a in made[4]])  # type: ignore[return-value]
+        sounds = sorted([*t.lights, *t.extras], key=lambda light: light.on)
+        ons = [light.on for light in sounds]
+        longest = max((self._sound_end(t, light) - light.on for light in sounds), default=0.0)
+        controls = self._controls_of(t, sounds)
+        actions: list[Any] = []
+        if t.voices is not None:
+            actions += [(change[0], 1, ti, ci, ()) for ci, change in enumerate(t.changes) if change[0] > -math.inf]
+            actions += [(control[0], 2, ti, ci, ()) for ci, control in enumerate(controls)]
+            for li, light in enumerate(sounds):
+                if self._sound_end(t, light) > light.on:
+                    actions.append((light.on, 3, ti, li, ()))
+                    actions += self._offs_of(t, ti, li, light)
+        actions.sort()
+        made = (sounds, ons, longest, controls, actions)
+        if self._cache is not None:
+            if len(self._cache) >= 64:
+                self._cache.clear()
+            self._cache[id(t)] = (t, (ti, made))
+        return made
 
     def retime(self, rate: float | None = None, lead: float | None = None, min_period: float | None = None) -> None:
         """Another playback speed, lead or fastest flash: the keys' timeline is made again, going on from
@@ -206,9 +229,9 @@ class Player:
     def done(self) -> bool:
         return self._next >= len(self._actions)
 
-    def _offs(self, track: Track, ti: int, li: int) -> list[tuple[float, int, int, int, tuple[int, ...]]]:
+    def _offs_of(self, track: Track, ti: int, li: int, light: Light) -> list[tuple[float, int, int, int,
+                                                                                  tuple[int, ...]]]:
         """A light's notes' offs: one for each time some of its pitches end (the places of those)."""
-        light = self._sounds[ti][li]
         by_end: dict[float, list[int]] = {}
         for k, end in enumerate(self._ends(track, light)):
             if end > light.on:

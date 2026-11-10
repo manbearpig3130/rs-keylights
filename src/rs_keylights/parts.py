@@ -52,8 +52,57 @@ CHANNELS_USED_UP = (f"The keyboard's {len(KEYBOARD_CHANNELS)} channels are used 
                     "fewer palm-mute and low-note tones of their own, or move one to another MIDI device")
 
 
+class PlanCache:
+    """Parts' lights and tracks as they were last made (for the same notes and choices), kept so a change to one
+    part (a light toggled, a tone turned) remakes just that one: the others' are the same objects as before (and
+    a player's lists for them too, Player's). The latest MOST of each are kept."""
+
+    MOST = 64
+
+    def __init__(self) -> None:
+        self._lights: dict[tuple[int, int, int, float], tuple[Arrangement, list[Light]]] = {}
+        self._tracks: dict[tuple[int, int, bool, int], list[tuple[PlannedPart, Track]]] = {}
+        self._drums: dict[tuple[int, int], list[tuple[Sequence[Hit], DrumVoices, Track]]] = {}
+        self.player: dict[int, tuple[Track, Any]] = {}  # (Player's, by its track)
+
+    def lights(self, arrangement: Arrangement, keys: KeyRange, shift: int, overlap: float) -> list[Light]:
+        key = (id(arrangement), keys.max_lit, shift, overlap)
+        got = self._lights.get(key)
+        if got is not None and got[0] is arrangement:
+            return got[1]
+        lights = schedule(arrangement.notes, keys, shift, arrangement.shapes, overlap)
+        self._keep(self._lights)[key] = (arrangement, lights)
+        return lights
+
+    def track(self, p: PlannedPart) -> Track:
+        key = (id(p.lights), id(p.part.arrangement), bool(p.part.lights), p.priority)
+        for was, track in self._tracks.get(key, ()):
+            if was.lights is p.lights and was.part.arrangement is p.part.arrangement and was.voices == p.voices \
+                    and was.part.ref.bass == p.part.ref.bass:
+                return track
+        track = _track(p)
+        self._keep(self._tracks).setdefault(key, []).append((p, track))
+        return track
+
+    def drums(self, hits: Sequence[Hit], voices: DrumVoices, sound: Any) -> Track:
+        key = (id(hits), id(sound))
+        for was_hits, was_voices, track in self._drums.get(key, ()):
+            if was_hits is hits and was_voices == voices and track.sound is sound:
+                was_voices.sent.clear()  # (its drums' sounds chosen again, as a new one's would be)
+                return track
+        track = drum_track(hits, voices, sound)
+        self._keep(self._drums).setdefault(key, []).append((hits, voices, track))
+        return track
+
+    def _keep(self, store: dict[Any, Any]) -> dict[Any, Any]:
+        """The store, emptied first when it's full."""
+        if len(store) >= self.MOST:
+            store.clear()
+        return store
+
+
 def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True, pooled: bool = False,
-         first: ArrangementRef | None = None) -> list[PlannedPart]:
+         first: ArrangementRef | None = None, cache: PlanCache | None = None) -> list[PlannedPart]:
     """Lights and voices for each part. The lit parts' keys share an octave shift, so they line up; each part's
     sound is moved by its own (its notes' octaves: the same however many keys it lights); each part on
     the keyboard sounds on channels of its own, as many as its voices need, in turn from KEYBOARD_CHANNELS (one
@@ -82,8 +131,9 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
                 mute = channels[-1] if wanted.mute is not None and channels else main
                 voices = voices_for(part.ref, (main, low, mute)).for_arrangement(own)
         most = MOST_LIT if pooled and part.lights else part.lights or MOST_LIT
-        lights = schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes,
-                          voices.overlap if voices is not None else 0.0)
+        overlap = voices.overlap if voices is not None else 0.0
+        lights = cache.lights(part.arrangement, KeyRange(max_lit=most), shift, overlap) if cache is not None else \
+            schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes, overlap)
         planned.append(PlannedPart(part, shift, lights, voices, channels, pooled and bool(part.lights),
                                    ranked.index(i)))
     return planned
@@ -137,7 +187,7 @@ def drum_track(hits: Sequence[Hit], voices: DrumVoices, sound: Any = None) -> Tr
 
 
 def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float = LIGHTS_EARLY,
-               min_period: float = MIN_PERIOD, extra: Sequence[Track] = ()) -> Player:
+               min_period: float = MIN_PERIOD, extra: Sequence[Track] = (), cache: PlanCache | None = None) -> Player:
     """Sets the parts' tones on the keyboard and makes their player (lead: seconds the keys light early;
     min_period: repeats closer than this flash on every other note), with extra tracks of their own (a drum part)."""
     for track in extra:
@@ -152,8 +202,9 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
             p.voices.output.program(p.voices.main.channel, p.voices.program)
         for voice in p.voices.all():
             sound.set_voice(voice.channel, voice.tone.program, voice.tone.bank, volume=p.voices.volume)
-    return Player([*(_track(p) for p in planned), *extra], keyboard, lead=lead, min_period=min_period,
-                  most_keys=MOST_LIT)  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
+    tracks = [cache.track(p) if cache is not None else _track(p) for p in planned]
+    return Player([*tracks, *extra], keyboard, lead=lead, min_period=min_period, most_keys=MOST_LIT,
+                  cache=cache.player if cache is not None else None)  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
 
 
 def _track(p: PlannedPart) -> Track:

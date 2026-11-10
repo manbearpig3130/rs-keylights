@@ -14,7 +14,7 @@ from .keyboard import Keyboard
 from .library import ArrangementRef
 from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
-from .parts import Part, PlannedPart, VoicesFor, plan, player_for
+from .parts import Part, PlanCache, PlannedPart, VoicesFor, plan, player_for
 from .player import Player, Track
 from .sng import Arrangement, note_name
 from .tones import Tone
@@ -385,6 +385,7 @@ class Follower:
         self._parts_for = parts_for  # None: just the arrangement played, on every key
         self._extras_for: Callable[[ArrangementRef], Sequence[Track]] | None = None  # tracks besides the parts (drums)
         self._extras: list[Track] = []  # (and those playing)
+        self._made = PlanCache()  # (the parts' lights and tracks as made: a change remakes just the part changed)
         self.lights_early = lights_early  # seconds the keys light before the notes
         self.fastest_flash = fastest_flash  # a key's repeats closer than this flash on every other note
         self.pooled_lights = False  # the lit parts share the 4 lit keys a moment at a time, the one played first
@@ -483,7 +484,8 @@ class Follower:
             return Prepared(current, None, [], None)  # (the same: what plays goes on as it is)
         extras = list(self._extras_for(current)) if self._extras_for else []
         return Prepared(current, planned, extras,
-                        player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=extras))
+                        player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=extras,
+                                   cache=self._made))
 
     def use_parts(self, prepared: Prepared | None, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
         """Other voices or parts from now, with what prepare_parts made of them (made for another song, or another
@@ -640,7 +642,7 @@ class Follower:
                     continue
             parts.append(Part(ref, arrangement, lights))
         return plan(parts, voices if callable(voices) else None, strict=False, pooled=self.pooled_lights,
-                    first=current)  # (one that doesn't fit the keyboard's channels: just lit)
+                    first=current, cache=self._made)  # (one that doesn't fit the keyboard's channels: just lit)
 
     def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
         """Tracks to play besides the parts, for the arrangement played (its song's drum part), or none; the song
@@ -658,7 +660,8 @@ class Follower:
     def _player_with(self, planned: list[PlannedPart]) -> Player:
         self._planned = planned
         self._extras = list(self._extras_for(self.current)) if self._extras_for and self.current is not None else []
-        return player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=self._extras)
+        return player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=self._extras,
+                          cache=self._made)
 
     def _describe(self, planned: list[PlannedPart]) -> str:
         """How the parts play; for the arrangement played alone on every key, just its voices."""
@@ -694,6 +697,7 @@ class Follower:
         self._player = None
         self.current = None
         self._loaded, self._planned = {}, []
+        self._made = PlanCache()
         self._playing = False
         self._arrangement_id = ""
         self._song_clock.reset()
