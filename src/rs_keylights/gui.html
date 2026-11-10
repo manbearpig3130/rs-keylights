@@ -132,6 +132,8 @@
   .song-tones { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
   .tone-chip { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-variant-numeric: tabular-nums; }
   .tone-chip.unknown { color: var(--muted); border-style: dashed; }
+  .follow-tones { display: inline-flex; gap: 4px; align-items: center; margin-left: 4px; color: var(--text); }
+  .song-tones.fixed .tone-chip { opacity: .45; }
   .tone-chip.now { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   #toneKinds.off { opacity: .5; }
   .loopline { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -1407,7 +1409,10 @@ function partBlock(o) {
                field("Below", split));
   const more = document.createElement("div");
   more.append(tones);
-  if (o.songTones && o.songTones.length) more.append(songTonesRow(o.songTones));
+  if (o.songTones && o.songTones.length) {
+    more.append(songTonesRow(o.songTones, o.tones.follow_tones !== false,
+                             (on) => o.change("follow_tones", on ? null : false)));
+  }
   const open = (on) => {
     more.hidden = !on;
     fold.setAttribute("aria-expanded", String(on));
@@ -1422,12 +1427,23 @@ function partBlock(o) {
 }
 
 // The tones a song switches between in a part (from its start, its first): each change's time and kind, the one
-// it's on lit up while it plays or is followed (showSongTones)
-function songTonesRow(changes) {
+// it's on lit up while it plays or is followed (showSongTones); and whether the part's tone follows them (follows,
+// switched with follow(on): off, it stays as chosen above)
+function songTonesRow(changes, follows, follow) {
   const row = document.createElement("div");
-  row.className = "song-tones";
+  row.className = "song-tones" + (follows ? "" : " fixed");
   row.title = "The song's tone changes: in the Tone changes card, the keyboard tone for each kind";
   row.append("Song's tones:");
+  const box = document.createElement("label");
+  box.className = "follow-tones";
+  const check = document.createElement("input");
+  check.type = "checkbox";
+  check.checked = follows;
+  check.disabled = !$("toneChanges").checked;
+  box.title = check.disabled ? "Tone changes are off for every song (the Tone changes card)" :
+    "Switch this part's tone as the song's does; off, it keeps the tone chosen above (or its default)";
+  check.addEventListener("change", () => follow(check.checked));
+  box.append(check, "Follow");
   for (const change of changes) {
     const chip = document.createElement("span");
     chip.className = "tone-chip" + (change.known ? "" : " unknown");
@@ -1436,6 +1452,7 @@ function songTonesRow(changes) {
     if (!change.known) chip.title = "Not a kind of tone it knows: the part's tone stays as it is";
     row.append(chip);
   }
+  row.append(box);
   return row;
 }
 
@@ -2123,6 +2140,7 @@ $("overlap").addEventListener("change", () => act(() => api("/api/settings", set
 $("toneChanges").addEventListener("change", () => act(async () => {
   await api("/api/settings", {tone_changes: $("toneChanges").checked});
   $("toneKinds").classList.toggle("off", !$("toneChanges").checked);
+  for (const check of document.querySelectorAll("#parts .follow-tones input")) check.disabled = !$("toneChanges").checked;
 }));
 $("saveSettings").addEventListener("click", () => act(saveSettings));
 $("keysSound").addEventListener("change", () => changeKeys({sound: $("keysSound").checked}));

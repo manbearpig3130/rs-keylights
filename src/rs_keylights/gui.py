@@ -55,6 +55,7 @@ DEFAULT_GUI_PORT = 8040
 PART_ORDER = ("lead", "rhythm", "combo", "bass")
 KINDS = ("lead", "rhythm", "bass")  # each has default tones, for parts without their own
 TONE_FIELDS = ("tone", "mute_tone", "low_tone")  # a set of tones: these tone numbers, and split (a note)
+PART_FIELDS = (*TONE_FIELDS, "split", "follow_tones")  # and whether its tone follows the song's (False: it stays)
 SAME_TONE = 0  # palm mutes or low notes with the tone the rest has (over a default for them)
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
@@ -276,7 +277,7 @@ def _volumes(volumes: Any) -> list[int]:
 def _changed_tones(tones: dict[str, Any], change: Any) -> dict[str, Any]:
     if not isinstance(change, dict):
         raise GuiError("Expected tones")
-    merged = {**tones, **{k: v for k, v in change.items() if k in (*TONE_FIELDS, "split")}}
+    merged = {**tones, **{k: v for k, v in change.items() if k in PART_FIELDS}}
     out: dict[str, Any] = {}
     for field in TONE_FIELDS:
         if field != "tone" and merged.get(field) in (SAME_TONE, str(SAME_TONE)) and merged.get(field) is not False:
@@ -289,6 +290,8 @@ def _changed_tones(tones: dict[str, Any], change: Any) -> dict[str, Any]:
     if split:
         _split(split)
         out["split"] = split
+    if merged.get("follow_tones") is False:  # (kept only off: else it follows them as Tone changes has it)
+        out["follow_tones"] = False
     return out
 
 
@@ -534,7 +537,7 @@ class Gui:
             own = saved.get(ref.part, {})
             out.append({"part": ref.part, "name": ref.name or ref.part, "kind": kind(ref),
                         "play": bool(own.get("play", defaults[i] > 0)), "lights": int(own.get("lights", defaults[i])),
-                        "tones": {k: own[k] for k in (*TONE_FIELDS, "split") if own.get(k) not in (None, "")}})
+                        "tones": {k: own[k] for k in PART_FIELDS if own.get(k) not in (None, "")}})
         return out
 
     def set_song(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
@@ -555,7 +558,7 @@ class Gui:
                 if not isinstance(fields, dict):
                     raise GuiError("Expected a part's choices")
                 part = parts[name]
-                tones = _changed_tones({k: part[k] for k in (*TONE_FIELDS, "split") if k in part}, fields)
+                tones = _changed_tones({k: part[k] for k in PART_FIELDS if k in part}, fields)
                 play = bool(fields["play"]) if "play" in fields else part["play"]
                 lights = int(_number(fields["lights"], "lit keys", 0, 4)) if "lights" in fields else part["lights"]
                 parts[name] = {"play": play, "lights": lights, **tones}
@@ -978,6 +981,7 @@ class Gui:
         mute: dict[str | None, Tone | None] = {}
         split: dict[str | None, int | None] = {}
         volume: dict[str, int] = {}
+        fixed: set[str] = set()  # parts whose tone stays as chosen when the song's switches
         parts = []
         for slot, chosen in enumerate(self._song_parts(sid, loaded)):
             if not chosen["play"]:
@@ -992,6 +996,8 @@ class Gui:
 
             main[name], low[name], mute[name] = _tone(pick("tone")), _tone(pick("low_tone")), _tone(pick("mute_tone"))
             split[name], volume[name] = _split(pick("split")), self._volume(slot)
+            if pick("follow_tones") is False:
+                fixed.add(name)
         if not silent and parts:
             self._check_sound_channel()
         choice = None if silent else SoundChoice(main, low, mute, split, bool(self.play_options["real_pitch"]),
@@ -1001,7 +1007,8 @@ class Gui:
 
         def voices_for(ref: ArrangementRef, channels: tuple[int, int, int]) -> Voices:
             assert choice is not None
-            return self._routed(replace(choice.voices(ref, channels), volume=volume[ref.part]), ref)
+            voices = replace(choice.voices(ref, channels), volume=volume[ref.part])
+            return self._routed(replace(voices, tone_map=()) if ref.part in fixed else voices, ref)
 
         planned = plan(parts, voices_for if choice else None, pooled=bool(self.settings["most_lights"]))
         length = max([a.length for _r, a in loaded] + [l.off for pp in planned for l in pp.lights[-1:]])
@@ -1277,7 +1284,8 @@ class Gui:
             followed = info["song"]
             if followed is not None:  # (each arrangement's chords and tone changes too)
                 chords = self._chords(followed["id"], lambda ref: ref.persistent_id)
-                changes = self._tone_changes(followed["id"], lambda ref: ref.persistent_id)
+                changes = self._tone_changes(followed["id"], lambda ref: ref.persistent_id,
+                                             lambda ref: self.follow_settings["arrangements"].get(ref.persistent_id, {}))
                 notes = self._notes(followed["id"], lambda ref: ref.persistent_id)
                 followed = {**followed, "lyrics": self._lyrics(followed["id"]),
                             "arrangements": [{**a, "chords": chords.get(a["id"], ()),
@@ -1309,7 +1317,8 @@ class Gui:
                 details = None
             if details is not None:
                 chords = self._chords(sid, lambda ref: ref.part)
-                changes = self._tone_changes(sid, lambda ref: ref.part)
+                changes = self._tone_changes(sid, lambda ref: ref.part,
+                                             lambda ref: self.song_settings.get(sid, {}).get("parts", {}).get(ref.part, {}))
                 notes = self._notes(sid, lambda ref: ref.part)
                 song = {"id": sid, "title": details["title"], "key": details["key"], "played": None,
                         "sections": details["sections"], "lyrics": self._lyrics(sid),
@@ -1344,11 +1353,12 @@ class Gui:
         except (GuiError, OSError, ValueError):
             return {}
 
-    def _tone_changes(self, sid: str, key: Callable[[ArrangementRef], str]) -> dict[str, tuple[tuple[float, str], ...]]:
+    def _tone_changes(self, sid: str, key: Callable[[ArrangementRef], str],
+                      own: Callable[[ArrangementRef], dict[str, Any]]) -> dict[str, tuple[tuple[float, str], ...]]:
         """A song's arrangements' tone changes the keyboard follows, by their key (the part, or its persistent ID):
         from the start (-inf) the kind of tone it starts with ("its own tone" if that isn't known), then when it
         switches, and what to (a kind of tone, or "its own tone"); none without changes, or while they're not
-        followed."""
+        followed (at all, or by the arrangement: its own choices, own)."""
         tones = self._tones_for_kinds()
         if not tones:
             return {}
@@ -1358,6 +1368,8 @@ class Gui:
             return {}
         out = {}
         for ref, a in loaded:
+            if own(ref).get("follow_tones") is False:
+                continue
             changes = [(at, kind or "its own tone") for at, kind in kind_changes(a, ref.bass)
                        if kind is None or kind in tones]
             if changes and a.base_tone is not None:
@@ -1663,7 +1675,7 @@ class Gui:
             body: dict[str, Any] = {}
             for arrangement, fields in changes.items():
                 along = {k: v for k, v in fields.items() if k in ("play", "lights")}
-                tones = {k: v for k, v in fields.items() if k in (*TONE_FIELDS, "split")}
+                tones = {k: v for k, v in fields.items() if k in PART_FIELDS}
                 if along:
                     body.setdefault("parts", {song["played"]: {}})[song["played"]][arrangement] = along
                 if tones:
@@ -1829,6 +1841,8 @@ class Gui:
                                  settings["real_pitch"], ring=bool(self.settings["ring"]),
                                  tone_map=self._tones_for_kinds(), techniques=bool(self.settings["techniques"]),
                                  overlap=self.settings["overlap_ms"] / 1000).voices(ref, channels)
+            if pick("follow_tones") is False:
+                voices = replace(voices, tone_map=())
             return self._routed(replace(voices, volume=self._volume(self._slot(ref))), ref)
 
         return voices_for

@@ -336,10 +336,14 @@ def test_follow_settings_are_kept_and_checked(server, tmp_path):
     _, info = call(server, "/api/follow/settings", {"lead": {"split": ""}, "arrangements": {"R": {"mute_tone": None}}})
     assert info["lead"] == {"tone": 178}
     assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {}
+    _, info = call(server, "/api/follow/settings", {"arrangements": {"R": {"follow_tones": False}}})  # (its tone stays)
+    assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {"R": {"follow_tones": False}}
+    _, info = call(server, "/api/follow/settings", {"arrangements": {"R": {"follow_tones": None}}})
+    assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {}
     for bad in ({"rhythm": {"tone": 999}}, {"bass": {"split": "H2"}}, {"offset_ms": 5000},
                 {"arrangements": {"../x": {}}}, {"arrangements": []}, {"bass": "loud"}):
         assert call(server, "/api/follow/settings", bad)[0] == 400, bad
-    assert call(server, "/api/follow")[1]["version"] == 2  # none of those changed anything
+    assert call(server, "/api/follow")[1]["version"] == 4  # none of those changed anything
     again = Gui(server.gui.index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
     assert (again.follow_info()["offset_ms"], again.follow_info()["lead"]) == (20, {"tone": 178})  # kept
     call(server, "/api/settings", {"channel": 11})
@@ -831,6 +835,14 @@ def test_a_songs_tone_changes_switch_its_parts_tone(tmp_path):
         (9.0, (tone(30).program, tone(30).bank))]  # (distortion: 297 GM DISTORTION GT)
     gui.set_settings({"tone_map": {"distortion": 80}})  # another tone for distortion: at once
     assert wait_for(lambda: gui._session.player.tracks[0].changes[1][2], lambda program: program == tone(80).program)
+    gui.set_song({"song": sid, "parts": {"lead": {"follow_tones": False}}})  # not by this part: its own tone stays
+    assert wait_for(lambda: not gui._session.player.tracks[0].changes, bool)
+    assert gui._session.player.tracks[0].voices.main.tone == tone(30)
+    assert gui.song(sid)["parts"][0]["tones"] == {"tone": 30, "follow_tones": False}
+    assert gui.remote_info()["song"]["arrangements"][0]["tone_changes"] == ()
+    gui.set_song({"song": sid, "parts": {"lead": {"follow_tones": None}}})  # followed again
+    assert wait_for(lambda: gui._session.player.tracks[0].changes, bool)
+    assert gui.song(sid)["parts"][0]["tones"] == {"tone": 30}
     gui.set_settings({"tone_changes": False})  # not followed
     assert wait_for(lambda: not gui._session.player.tracks[0].changes, bool)
     assert gui.remote_info()["song"]["arrangements"][0]["tone_changes"] == ()
