@@ -451,6 +451,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+drums = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
 listen = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -464,13 +468,14 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=42" },
+    { name = "numpy", marker = "extra == 'drums'", specifier = ">=1.26" },
     { name = "numpy", marker = "extra == 'listen'", specifier = ">=1.26" },
     { name = "pyright", marker = "extra == 'test'", specifier = ">=1.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "python-rtmidi", specifier = ">=1.5.8" },
     { name = "sounddevice", marker = "extra == 'listen'", specifier = ">=0.4.6" },
 ]
-provides-extras = ["test", "listen"]
+provides-extras = ["test", "drums", "listen"]
 
 [[package]]
 name = "sounddevice"
