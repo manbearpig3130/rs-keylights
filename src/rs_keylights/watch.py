@@ -267,6 +267,9 @@ class GuiProtocol(Protocol):
     def pedal_name(self, slot: int | None) -> str:
         ...
 
+    def keep_pedal_tone(self, slot: int | None = None) -> str:
+        ...
+
     def set_game_riff(self, body: dict[str, Any]) -> dict[str, Any]:
         ...
 
@@ -842,6 +845,11 @@ class Watch:
             if self._try(lambda: held.append(self.gui.set_pedal({"hold": hold})["hold"])):
                 self._said_by_pad(now, "Pedal: holding this tone" if held[0] else "Pedal: following the song's tones")
 
+    def _pedal_shown(self, now: float) -> bool:
+        """The pedal's picture on the screen, with a song tone playing (following): Record keeps its preset for it."""
+        return (self._picture_of == "pedal" and now < self._picture_until
+                and bool(((self._info or {}).get("pedal") or {}).get("tone")))
+
     def _turn_pedal(self, steps: int, jump: bool, info: dict[str, Any], now: float) -> None:
         """Knob 6: the pedal's presets, one at a time (jump: knob 8, PEDAL_JUMP at a time; round from the last to
         the first), the screen showing the one it's on; the pedal switches to it once the knob rests."""
@@ -858,6 +866,14 @@ class Watch:
         if number == PLAY:  # the song's picture shows it playing or paused
             self.gui.remote_play()
             self._back_to_the_song()
+        elif number == RECORD and self._pedal_shown(now):  # the pedal's preset kept for the tone playing (its
+            # song's own; on it already: back to automatic)
+            pedal = (self._info or {}).get("pedal") or {}
+            slot = self._pending.get(("pedal", "slot")) or pedal.get("slot")
+            said: list[str] = []
+            if self._try(lambda: said.append(self.gui.keep_pedal_tone(slot))):
+                self._show_for_a_while("pedal", now)
+                self._say(now, line=said[0])
         elif number in GAME_KEYS and following:  # Rocksmith's menus: up, down, Escape, Enter
             self.gui.game_key(GAME_KEYS[number])
         elif number == SIDE_BUTTONS[0]:  # (Rocksmith's Escape, following)
@@ -1292,7 +1308,8 @@ class Watch:
             pedal = info.get("pedal") or {}
             slot = self._pending.get(("pedal", "slot")) or pedal.get("slot")
             name, favourites, error = self.gui.pedal_name(slot), pedal.get("favourites") or (), pedal.get("error")
-            said = (_pedal_trouble(error) if error else
+            playing = pedal.get("tone") or {}
+            said = (_pedal_trouble(error) if error else _pedal_tone_said(playing, slot) if playing else
                     "Pad: " + " / ".join(f"{favourite:03d}" for favourite in favourites) if favourites else "")
             return ("pedal", slot, name, said, muted), lambda: pedal_picture(slot, name, said, muted)
         if self._picture_of == "keys":
@@ -1777,6 +1794,15 @@ def _riff_trouble(game: dict[str, Any] | None) -> str | None:
     if not game.get("hook"):
         return "Game: needs RS Re-ARMed 1.2+"
     return None
+
+
+def _pedal_tone_said(tone: dict[str, Any], slot: int | None) -> str:
+    """Following, what Record does on the pedal's picture: keeps the preset shown for the tone playing (its song's
+    own), or takes the tone's own back (on it); on the tone's own preset, the tone's name."""
+    short = str(tone.get("short") or "")[:12]
+    if slot is not None and slot == tone.get("pedal"):
+        return f"Rec: {short} automatic" if tone.get("own") else f"{short}: its preset"
+    return f"Rec: keep for {short}"
 
 
 def _pedal_trouble(error: str) -> str:

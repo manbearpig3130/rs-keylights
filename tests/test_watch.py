@@ -9,7 +9,8 @@ from rs_keylights.lyrics import lyric_lines
 from rs_keylights.sng import Chord, Syllable
 from rs_keylights.tones import tone
 from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, NOT_FOLLOWING_KEYS, PAD_WAIT,
-                                PEDAL_WAIT, PICTURE_GAP, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch)
+                                PEDAL_WAIT, PICTURE_GAP, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch,
+                                _pedal_tone_said)
 
 
 class FakeGui:
@@ -89,6 +90,13 @@ class FakeGui:
 
     def pedal_name(self, slot):
         return {49: "5050 CL", 50: "5050 DS", 1: "US Clean", 200: "My love"}.get(slot, f"P{slot}")
+
+    def keep_pedal_tone(self, slot=None):  # (following: the tone playing's own preset, or back to automatic)
+        tone = self.pedal["tone"]
+        back = tone["own"] and tone["pedal"] == slot
+        self.pedal = {**self.pedal, "tone": {**tone, "own": not back, "pedal": 51 if back else slot}}
+        self.kept = [*getattr(self, "kept", []), slot]
+        return "dist: automatic" if back else f"dist: {slot:03d} kept"
 
     def set_loop(self, body):  # (on beats every half second)
         self.loop_calls.append(dict(body))
@@ -1515,6 +1523,35 @@ def test_the_guitars_pads_go_through_its_favourites_and_hold_its_tone():
     clock.now = 4.0
     watch.step()
     assert note(watch) == ("Pedal: no favourites", None) and len(gui.pedal_calls) == 6  # (none more)
+
+
+def test_following_record_keeps_the_pedals_preset_shown_for_the_tone_playing():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"] = gui.song
+    gui.info["mode"] = "follow"
+    gui.pedal = {**gui.pedal, "tone": {"key": "s_dist", "short": "dist", "pedal": 51, "own": False}}
+    watch.step()
+    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]  # knob 6: a preset to try
+    clock.now = 0.5
+    watch.step()
+    assert screens(launchkey)[-1] == pedal_picture(50, "5050 DS", "Rec: keep for dist").data()
+    launchkey.queued = [Button(RECORD)]  # kept for the tone playing, not the game's Enter
+    clock.now = 1.0
+    watch.step()
+    assert gui.kept == [50] and note(watch) == ("dist: 050 kept", None)
+    assert "enter" not in gui.game_keys
+    assert _pedal_tone_said(gui.pedal["tone"], 50) == "Rec: dist automatic"  # (under what's said, on the screen)
+    assert _pedal_tone_said({"short": "dist", "pedal": 51, "own": False}, 51) == "dist: its preset"
+    launchkey.queued = [Button(RECORD)]  # again: back to automatic
+    clock.now = 1.5
+    watch.step()
+    assert gui.kept == [50, 50] and note(watch) == ("dist: automatic", None)
+    clock.now = 10.0  # (the pedal's picture gone: Record is the game's Enter again)
+    watch.step()
+    launchkey.queued = [Button(RECORD)]
+    clock.now = 10.5
+    watch.step()
+    assert gui.kept == [50, 50]
 
 
 def test_the_guitar_column_is_dark_playing_the_song_and_in_the_mixer():

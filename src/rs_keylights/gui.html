@@ -90,6 +90,8 @@
   .song-head { display: flex; gap: 12px; align-items: flex-start; }
   .song-art { width: 56px; height: 56px; flex: none; }
   .song-lines { min-width: 0; flex: 1; }
+  .song-export { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .song-export button { font-size: 12px; padding: 2px 8px; }
   .song-head h2 { font-size: 18px; }
   /* An arrangement's tones fold away (its line: name, lit keys, volume, mute), opened by its Tones button */
   .part-fold { padding: 1px 8px; font-size: 12px; color: var(--muted); }
@@ -250,6 +252,24 @@
   .roll-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .fret-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
+  /* Pedal tones (a song's tones, the pedal's preset for each) and their rules */
+  .pt-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  .pt-table td { padding: 5px 6px; }
+  .pt-table tr.now td { background: var(--soft); }
+  .pt-table tr.now td:first-child { box-shadow: inset 3px 0 var(--accent); }
+  .pt-tone b { font-weight: 600; }
+  .pt-tone .small, .pt-rule { color: var(--muted); font-size: 12px; }
+  .pt-own { font-weight: 600; border-color: var(--accent); }
+  .pt-pick { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .pt-pick select { max-width: 230px; }
+  .pt-pick button { padding: 3px 8px; font-size: 12px; }
+  .pr-section { margin-top: 10px; }
+  .pr-section > div:first-child { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .pr-row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 3px 0; }
+  .pr-row .pr-name { min-width: 90px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pr-row select.pr-slot { max-width: 190px; }
+  .pr-row input { width: 120px; }
+  .pr-row button { padding: 2px 8px; }
   .fret-head h3 { margin: 0; flex: 1 1 220px; min-width: 0; }
   :root { --th-chord: var(--rhythm); --th-scale: var(--bass); --th-outside: var(--lead); }
   .theory-now { display: flex; align-items: center; gap: 16px; margin: 4px 0 10px; }
@@ -293,6 +313,20 @@
   .lyrics-line.waiting::before { content: ""; position: absolute; left: 0; top: -3px; height: 3px; border-radius: 2px;
     width: calc(var(--wait, 0) * 96px); background: var(--live); opacity: 0.7; }  /* (the gap before it, counted down) */
   .lyrics-view.seekable .lyrics-line { cursor: pointer; }
+  #playsRun { max-width: 60%; }
+  .plays-sum { font-size: 14px; margin: 6px 0 2px; }
+  .plays-sum b { font-size: 18px; }
+  .plays-sections { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; margin: 10px 0;
+    font-size: 13px; }
+  .plays-bar { height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--warn) 45%, var(--panel)); overflow: hidden; }
+  .plays-bar > i { display: block; height: 100%; background: var(--live); }
+  .plays-sections .n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+  .plays-missed { max-height: 280px; overflow-y: auto; font-size: 13px; border-top: 1px solid var(--line); padding-top: 6px; }
+  .plays-miss { display: grid; grid-template-columns: 3.2em 7em 1fr auto; gap: 8px; padding: 3px 4px; border-radius: 4px; }
+  .plays-missed.seekable .plays-miss { cursor: pointer; }
+  .plays-missed.seekable .plays-miss:hover { background: var(--soft); }
+  .plays-miss .t, .plays-miss .x { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .plays-miss .sec { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lyrics-view.seekable .lyrics-line:hover { color: var(--text); opacity: 1; }
   .fret-chord { font-weight: 700; font-size: 16px; color: var(--live); }
   .swatch.now { background: var(--live); }
@@ -358,6 +392,11 @@
         <div class="song-lines">
           <h2><span id="title"></span><span id="activeBadge" class="badge" hidden>● active</span></h2>
           <div><span id="artist"></span> <span id="file" class="muted"></span></div>
+          <div class="song-export">
+            <button type="button" id="exportMidi" title="Every part, the tempo map (the record's: a tempo a beat), the sections as markers, chords and tones as text, the lyrics and their melody, and the drum part if it's made: for Logic or GarageBand">MIDI file</button>
+            <button type="button" id="exportAudio" title="The song's audio as a WAV, lined up with the MIDI file: put both in at the start">Song audio</button>
+            <span id="exportNote" class="small muted"></span>
+          </div>
         </div>
         <div id="songKey"></div>
       </div>
@@ -387,6 +426,35 @@
     </div>
     <div id="lyricsView" class="lyrics-view"><div id="lyricsLines" class="lyrics-lines"></div></div>
     <div id="lyricsNone" class="small" hidden>No lyrics: this song has no vocals part.</div>
+  </section>
+
+  <section id="playsCard" class="card" hidden>
+    <div class="fret-head">
+      <h3>Hits and misses</h3>
+      <select id="playsRun" title="Your runs of this song, the newest first"></select>
+    </div>
+    <div id="playsSum" class="plays-sum"></div>
+    <div id="playsSections" class="plays-sections"></div>
+    <div id="playsMissed" class="plays-missed"></div>
+    <div id="playsNone" class="small">Play this song in Rocksmith, and what you hit and missed shows here as you play
+      (the game's own counts, read by RS Re-ARMed's riffloop mod, matched to the chart's notes).</div>
+  </section>
+
+  <section id="pedalTonesCard" class="card" hidden>
+    <div class="fret-head">
+      <h3>Pedal tones</h3>
+      <select id="ptPart" aria-label="Whose tones" title="Whose tones (each part has its own)"></select>
+      <label class="small muted" title="The song's style (RS Companion's label, by how heavy it is): dnafx-preset's style rules go by it">Style
+        <select id="ptStyle"></select></label>
+    </div>
+    <div id="ptNote" class="note small" hidden></div>
+    <table class="pt-table"><tbody id="ptRows"></tbody></table>
+    <div id="ptNone" class="small muted" hidden></div>
+    <div class="muted small" style="margin-top:6px">Each of the song's tones, the one playing lit: its category (RS
+      Companion's mapping) and the guitar pedal's preset for it (dnafx-preset's tone map), each Auto by the rules for
+      every song (Pedal tone rules), or this song's own. The pedal follows a change within a second or two. Try
+      switches the pedal to a tone's preset; Keep gives the tone the preset the pedal's on. On the Launchkey,
+      following: hold the tone, try presets with knob 6, and Record keeps the one shown for the tone playing.</div>
   </section>
 
   <section id="theoryCard" class="card" hidden>
@@ -462,6 +530,25 @@
       <div class="row"><label title="A backup the DNAfx editor saved, for the presets' names (empty: the newest in Music, Documents, Desktop or Downloads)">Names from
         <input id="pedalBackup" placeholder="the newest backup (.bhb)"></label></div>
       <div id="pedalStatus" class="muted small"></div>
+    </div>
+
+    <div class="card" id="pedalRulesCard">
+      <h3>Pedal tone rules</h3>
+      <div class="muted small">The guitar pedal's presets for every song's tones (dnafx-preset's tone map, <code id="prFile"></code>):
+        the first that fits a tone wins, a song's own (Pedal tones), then its artist's, its effect's, its style's,
+        its category's.</div>
+      <div id="prNote" class="note small" hidden></div>
+      <div class="pr-section"><div>Categories</div><div id="prCategories"></div></div>
+      <div class="pr-section"><div>Artists</div><div id="prArtists"></div></div>
+      <div class="pr-section"><div title="A tone's modulation (chorus, flanger...), any modulation, or a delay">Effects</div><div id="prEffects"></div></div>
+      <div class="pr-section"><div title="The song's style: RS Companion's label, by how heavy it is">Styles</div><div id="prStyles"></div></div>
+      <div class="pr-section"><div title="Set on the Pedal tones card (or the Launchkey's Record)">Songs</div><div id="prSongs"></div></div>
+      <details class="pr-section"><summary class="small muted">RS Companion: categories and styles</summary>
+        <div class="muted small">How tones get their categories and songs their styles (RS Companion's presets.json, <code id="prPresets"></code>).</div>
+        <div class="pr-section"><div title="An artist's tones of a category as another">Artists' categories</div><div id="prRemaps"></div></div>
+        <div class="pr-section"><div title="A song (by its key) or an artist always this style">Song and artist styles</div><div id="prSongStyles"></div></div>
+        <div class="pr-section"><div title="A song's style by how heavy it is (0 to 1): the last it reaches">Styles by heaviness</div><div id="prHeaviness"></div></div>
+      </details>
     </div>
 
     <div class="card" id="outputsCard">
@@ -1695,6 +1782,90 @@ function lyricsFrame() {
 for (const name of ["wheel", "touchmove"]) {
   $("lyricsView").addEventListener(name, () => { lyricsHeld = performance.now() + LYRICS.HOLD; }, {passive: true});
 }
+// Hits and misses: the runs of the song played in the game (the game's counts, matched to its notes), the newest
+// first: one's hits and misses, each section's, and the notes missed (a click goes there, as a lyric line does).
+// Asked again as the game counts more (the state's plays changes), a second apart at most. GET /api/plays
+let playsData = null, playsWanted = "", playsRun = "", playsSeen = null, playsTimer = null;
+function renderPlaysCard(s) {
+  const card = $("playsCard");
+  card.hidden = !s;
+  if (card.hidden || card.closest("#parked")) return;
+  $("playsMissed").classList.toggle("seekable", !followedSong());
+  if (playsWanted === s.id) return;
+  playsWanted = s.id;
+  playsRun = "";
+  playsData = null;
+  playsBuild(null);
+  loadPlays();
+}
+
+function loadPlays() {
+  const s = selected;
+  if (!s || playsWanted !== s.id) return;
+  api(`/api/plays?id=${encodeURIComponent(s.id)}&run=${encodeURIComponent(playsRun)}`)
+    .then((d) => { if (playsWanted === s.id) { playsData = d; playsBuild(d); } })
+    .catch(() => {});
+}
+
+function playsCounted(count) {  // (the state's: something new counted, the newest run shown again)
+  if (playsSeen !== null && count !== playsSeen && playsWanted && !playsRun && !playsTimer)
+    playsTimer = setTimeout(() => { playsTimer = null; loadPlays(); }, 1000);
+  playsSeen = count;
+}
+
+function playsWhen(seconds) {
+  const d = new Date(seconds * 1000), today = new Date().toDateString() === d.toDateString();
+  return (today ? "Today " : d.toLocaleDateString(undefined, {month: "short", day: "numeric"}) + " ") +
+    d.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit"});
+}
+
+function playsBuild(d) {
+  const run = d && d.run;
+  $("playsNone").hidden = !!run;
+  $("playsRun").hidden = !run;
+  $("playsRun").replaceChildren(...(d ? d.runs : []).map((r) => {
+    const o = document.createElement("option"), all = r.hits + r.misses;
+    o.value = r.id;
+    o.textContent = `${playsWhen(r.started)} · ${r.part} · ${all ? Math.round(100 * r.hits / all) + "%" : "–"}`;
+    o.selected = run && r.id === run.id;
+    return o;
+  }));
+  if (!run) {
+    $("playsSum").textContent = "";
+    $("playsSections").replaceChildren();
+    $("playsMissed").replaceChildren();
+    return;
+  }
+  const extra = [run.passes > 1 ? `${run.passes} passes` : "", run.unmatched ? `${run.unmatched} not matched to a note` : ""]
+    .filter(Boolean).join(" · ");
+  $("playsSum").innerHTML = `<b>${run.accuracy ?? "–"}%</b> · ${run.hits} hit · ${run.misses} missed` +
+    (extra ? ` <span class="small muted">· ${esc(extra)}</span>` : "");
+  const rows = [];
+  for (const [name, _start, hits, misses] of run.sections) {
+    const all = hits + misses;
+    rows.push(`<span>${esc(name)}</span><span class="plays-bar"><i style="width:${all ? 100 * hits / all : 0}%"></i></span>` +
+      `<span class="n">${hits}/${all}</span>`);
+  }
+  $("playsSections").innerHTML = rows.join("");
+  $("playsMissed").innerHTML = run.missed.length ? run.missed.map(([at, section, said, misses, hits], i) =>
+    `<div class="plays-miss" data-i="${i}"><span class="t">${fmt(at)}</span><span class="sec">${esc(section)}</span>` +
+    `<span>${esc(said)}</span><span class="x">${misses + hits > 1 ? `missed ${misses} of ${misses + hits}` : ""}</span></div>`).join("")
+    : `<div class="small">Nothing missed.</div>`;
+}
+
+$("playsRun").addEventListener("change", () => {
+  const first = playsData && playsData.runs[0];
+  playsRun = first && $("playsRun").value === first.id ? "" : $("playsRun").value;  // (the newest: it follows on)
+  loadPlays();
+});
+$("playsMissed").addEventListener("click", (e) => {
+  const row = e.target.closest(".plays-miss");
+  if (!row || !playsData || !playsData.run || followedSong()) return;
+  const position = Math.max(0, playsData.run.missed[Number(row.dataset.i)][0] - 2);  // (a moment before it)
+  if (playingThis()) act(() => api("/api/seek", {position}));
+  else act(() => changeSong({start: position}));
+});
+
 $("lyricsLines").addEventListener("click", (e) => {
   const line = e.target.closest(".lyrics-line");
   if (!line || !lyricsData || followedSong()) return;
@@ -1703,6 +1874,308 @@ $("lyricsLines").addEventListener("click", (e) => {
   if (playingThis()) act(() => api("/api/seek", {position}));
   else act(() => changeSong({start: position}));
 });
+
+// Pedal tones: a song's tones (an arrangement's: the one the game plays, following it), each with its category (RS
+// Companion's mapping) and the guitar pedal's preset for it (dnafx-preset's tone map), Auto or the song's own, the one
+// playing lit; and the rules for every song (the settings column's Pedal tone rules).
+// GET/POST /api/songtones, /api/pedal/rules
+const CATEGORY_NAMES = ["Clean", "Crunch", "Heavy", "Lead"];
+let pedalNames = [], pedalFavourites = [], pedalToneSeen = "";
+let pedalTonesData = null, pedalTonesWanted = "", pedalTonesPicked = "", pedalTonesShown = -2, pedalRules = null;
+const preset = (slot) => slot ? `${String(slot).padStart(3, "0")} ${pedalNames[slot - 1] || ""}`.trim() : "none";
+
+// A preset's dropdown: first a choice of no preset of its own (auto: what the rules give), the favourites, then all
+function presetOptions(first) {
+  const all = pedalNames.map((_name, i) => `<option value="${i + 1}">${esc(preset(i + 1))}</option>`).join("");
+  const favourites = pedalFavourites.filter((n) => n >= 1 && n <= pedalNames.length)
+    .map((n) => `<option value="${n}">${esc(preset(n))}</option>`).join("");
+  return (first ? `<option value="">${esc(first)}</option>` : "") +
+    (favourites ? `<optgroup label="Favourites">${favourites}</optgroup>` : "") + `<optgroup label="All">${all}</optgroup>`;
+}
+
+function renderPedalTonesCard(s) {
+  const card = $("pedalTonesCard");
+  card.hidden = !s;
+  if (card.hidden || card.closest("#parked")) return;
+  const f = followedSong();
+  const wanted = `${s.id}|${pedalTonesPicked || (f ? "played:" + f.played : "")}`;
+  if (pedalTonesWanted === wanted) return;
+  pedalTonesWanted = wanted;
+  loadPedalTones();
+}
+
+function loadPedalTones() {
+  const s = selected, wanted = pedalTonesWanted;
+  if (!s) return;
+  api(`/api/songtones?id=${encodeURIComponent(s.id)}` + (pedalTonesPicked ? `&part=${encodeURIComponent(pedalTonesPicked)}` : ""))
+    .then((d) => {
+      if (pedalTonesWanted !== wanted) return;
+      pedalTonesBuild(d);
+    }).catch((e) => {
+      if (pedalTonesWanted !== wanted) return;
+      pedalTonesData = null;
+      $("ptRows").replaceChildren();
+      $("ptNone").hidden = false;
+      $("ptNone").textContent = e.message;
+    });
+}
+function refreshPedalTones() {
+  if (selected && pedalTonesWanted) loadPedalTones();
+}
+
+function pedalTonesBuild(d) {
+  pedalTonesData = d;
+  pedalTonesShown = -2;
+  const select = $("ptPart");
+  select.innerHTML = d.parts.map((p) => `<option value="${esc(p.part)}">${esc(p.name)}</option>`).join("");
+  select.value = d.part;
+  select.hidden = d.parts.length < 2;
+  const style = $("ptStyle");
+  style.innerHTML = `<option value="">Auto (${esc(d.auto_style)})</option>` +
+    d.styles.map((name) => `<option>${esc(name)}</option>`).join("");
+  style.value = d.own_style ? d.style : "";
+  style.title = d.heaviness != null ? `How heavy it is: ${d.heaviness.toFixed(2)}` : "";
+  const files = d.files, notes = [];
+  if (!files.listener) notes.push("No dnafx-preset listener in RS Re-ARMed's sidekicks.conf: the presets shown are what it would pick.");
+  else if (!files.tone_map_given) notes.push(`dnafx-preset's listener isn't given a tone map (--config ${files.tone_map}): it goes by categories alone.`);
+  if (!files.presets_found) notes.push(`No RS Companion mapping (${files.presets}): every tone is Clean. Changing a category makes one.`);
+  if (files.problem) notes.push(files.problem);
+  $("ptNote").hidden = !notes.length;
+  $("ptNote").textContent = notes.join(" ");
+  $("ptNone").hidden = !!d.tones.length;
+  $("ptNone").textContent = d.tones.length ? "" : "This part has no tones of its own.";
+  const rows = d.tones.map((t, i) => {
+    const row = document.createElement("tr");
+    row.dataset.i = i;
+    const effects = t.effects.length ? ` · ${t.effects.join(", ")}` : "";
+    row.innerHTML = `
+      <td class="pt-tone" title="${esc(t.key)}: Rocksmith's tone ${esc(t.slot)} (Program Change ${t.program})">
+        <b>${esc(t.short)}</b><div class="small">${esc(t.slot)} · ${fmt(t.seconds)}${esc(effects)}</div></td>
+      <td><select class="pt-category" aria-label="Its category" title="Why: ${esc(t.reason)}">
+        <option value="">Auto (${esc(t.auto_category)})</option>${CATEGORY_NAMES.map((c) => `<option>${c}</option>`).join("")}
+      </select></td>
+      <td><div class="pt-pick">
+        <select class="pt-preset" aria-label="The pedal's preset for it"></select>
+        <button type="button" class="pt-try" title="Switch the pedal to it now">Try</button>
+        <button type="button" class="pt-keep" title="This tone gets the preset the pedal's on, for this song">Keep</button>
+      </div><div class="pt-rule">${t.pedal ? "" : "no preset: "}${esc(t.rule)}</div></td>`;
+    const category = row.querySelector(".pt-category");
+    category.value = t.own_category ? t.category : "";
+    category.classList.toggle("pt-own", t.own_category);
+    const pick = row.querySelector(".pt-preset");
+    pick.innerHTML = presetOptions(`Auto (${t.own_pedal ? "by the rules" : preset(t.pedal)})`);
+    pick.value = t.own_pedal && t.pedal ? String(t.pedal) : "";
+    pick.classList.toggle("pt-own", t.own_pedal);
+    row.querySelector(".pt-try").disabled = !t.pedal;
+    return row;
+  });
+  $("ptRows").replaceChildren(...rows);
+}
+
+function changePedalTone(body) {
+  const d = pedalTonesData;
+  if (!d || !selected) return;
+  act(async () => {
+    pedalTonesBuild(await api("/api/songtones", {id: selected.id, part: d.part, ...body}));
+    loadPedalRules();
+  });
+}
+$("ptRows").addEventListener("change", (e) => {
+  const row = e.target.closest("tr"), d = pedalTonesData;
+  if (!row || !d) return;
+  const tone = d.tones[Number(row.dataset.i)].key;
+  if (e.target.classList.contains("pt-category")) changePedalTone({tone, category: e.target.value || null});
+  if (e.target.classList.contains("pt-preset")) changePedalTone({tone, pedal: e.target.value ? Number(e.target.value) : null});
+});
+$("ptRows").addEventListener("click", (e) => {
+  const row = e.target.closest("tr"), d = pedalTonesData;
+  if (!row || !d) return;
+  const t = d.tones[Number(row.dataset.i)];
+  if (e.target.classList.contains("pt-try") && t.pedal) act(() => api("/api/pedal", {slot: t.pedal}));
+  if (e.target.classList.contains("pt-keep")) {
+    const slot = state && state.pedal && state.pedal.slot;
+    if (!slot) toast("The pedal's preset isn't known: pick one on the Guitar pedal card first");
+    else changePedalTone({tone: t.key, pedal: slot});
+  }
+});
+$("ptPart").addEventListener("change", () => {
+  pedalTonesPicked = $("ptPart").value;
+  if (selected) renderPedalTonesCard(selected);
+});
+$("ptStyle").addEventListener("change", () => changePedalTone({style: $("ptStyle").value || null}));
+
+function pedalTonesFrame() {  // (the tone playing lit)
+  requestAnimationFrame(pedalTonesFrame);
+  const d = pedalTonesData, s = selected;
+  if (!d || !s || $("pedalTonesCard").hidden || !$("pedalTonesCard").offsetParent || !pedalTonesWanted.startsWith(`${s.id}|`)) return;
+  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
+  let i = -1;
+  if (clock) {
+    const since = clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+    const at = clock.position + since;
+    i = d.first;
+    for (const [when, index] of d.changes) {
+      if (when > at) break;
+      if (index >= 0) i = index;
+    }
+  }
+  if (i === pedalTonesShown) return;
+  pedalTonesShown = i;
+  for (const row of $("ptRows").children) row.classList.toggle("now", Number(row.dataset.i) === i);
+}
+
+// The rules for every song
+function loadPedalRules() {
+  api("/api/pedal/rules").then(pedalRulesBuild).catch((e) => {
+    $("prNote").hidden = false;
+    $("prNote").textContent = e.message;
+  });
+}
+
+function changePedalRules(body) {
+  act(async () => {
+    pedalRulesBuild(await api("/api/pedal/rules", body));
+    refreshPedalTones();
+  });
+}
+
+function ruleRow(name, title, slot, rule) {  // a rule: what it's for, its preset (changed at once), ✕ takes it out
+  const row = document.createElement("div");
+  row.className = "pr-row";
+  row.innerHTML = `<span class="pr-name" title="${esc(title)}">${esc(name)}</span><select class="pr-slot"></select>
+    <button type="button" title="Take this rule out">✕</button>`;
+  const select = row.querySelector("select");
+  select.innerHTML = presetOptions(null);
+  select.value = String(slot);
+  select.addEventListener("change", () => changePedalRules({rule, slot: Number(select.value)}));
+  row.querySelector("button").addEventListener("click", () => changePedalRules({rule, slot: null}));
+  return row;
+}
+
+function addRow(fields, make) {  // a new rule: its fields (inputs and selects), then a preset, and Add
+  const row = document.createElement("div");
+  row.className = "pr-row";
+  row.append(...fields);
+  const select = document.createElement("select");
+  select.className = "pr-slot";
+  select.innerHTML = presetOptions("Preset…");
+  const add = document.createElement("button");
+  add.type = "button";
+  add.textContent = "Add";
+  add.addEventListener("click", () => {
+    const rule = make();
+    if (!rule) return;
+    if (!select.value) { toast("Pick its preset"); return; }
+    changePedalRules({rule, slot: Number(select.value)});
+  });
+  row.append(select, add);
+  return row;
+}
+
+function field(kind, options, placeholder) {
+  const el = document.createElement(kind === "input" ? "input" : "select");
+  if (kind === "input") {
+    el.placeholder = placeholder || "";
+  } else {
+    el.innerHTML = (placeholder ? `<option value="">${esc(placeholder)}</option>` : "") +
+      options.map((o) => `<option>${esc(o)}</option>`).join("");
+  }
+  return el;
+}
+
+function pedalRulesBuild(r) {
+  pedalRules = r;
+  $("prFile").textContent = r.files.tone_map;
+  $("prPresets").textContent = r.files.presets;
+  const notes = [];
+  if (r.files.problem) notes.push(`${r.files.tone_map} can't be read: ${r.files.problem}`);
+  if (r.files.listener && !r.files.tone_map_given) notes.push("dnafx-preset's listener in sidekicks.conf isn't given this file (--config): add it there.");
+  $("prNote").hidden = !notes.length;
+  $("prNote").textContent = notes.join(" ");
+  // Categories: one each, its preset or none
+  const categories = Object.fromEntries(r.categories);
+  $("prCategories").replaceChildren(...CATEGORY_NAMES.map((c) => {
+    const row = document.createElement("div");
+    row.className = "pr-row";
+    row.innerHTML = `<span class="pr-name">${c}</span><select class="pr-slot"></select>`;
+    const select = row.querySelector("select");
+    select.innerHTML = presetOptions("None (its program's)");
+    select.value = categories[c] ? String(categories[c]) : "";
+    select.addEventListener("change", () => changePedalRules({rule: ["categories", c], slot: select.value ? Number(select.value) : null}));
+    return row;
+  }));
+  const artist = field("input", [], "Artist"), artistCategory = field("select", CATEGORY_NAMES);
+  if (selected && selected.artist) artist.value = selected.artist;
+  $("prArtists").replaceChildren(...r.artists.map(([name, c, slot]) => ruleRow(`${name}: ${c}`, name, slot, ["artists", name, c])),
+    addRow([artist, artistCategory], () => artist.value.trim() ? ["artists", artist.value.trim(), artistCategory.value] : (toast("Whose?"), null)));
+  const effectCategory = field("select", CATEGORY_NAMES), effect = field("select", r.effect_names);
+  $("prEffects").replaceChildren(...r.effects.map(([c, e, slot]) => ruleRow(`${c} + ${e}`, "", slot, ["effects", c, e])),
+    addRow([effectCategory, effect], () => ["effects", effectCategory.value, effect.value]));
+  const style = field("select", r.style_names), styleCategory = field("select", CATEGORY_NAMES);
+  $("prStyles").replaceChildren(...r.styles.map(([name, c, slot]) => ruleRow(`${name}: ${c}`, "", slot, ["styles", name, c])),
+    addRow([style, styleCategory], () => ["styles", style.value, styleCategory.value]));
+  const songs = r.songs.map(([title, key, slot]) => ruleRow(`${title}: ${key}`, title, slot, ["songs", title, key]));
+  $("prSongs").replaceChildren(...(songs.length ? songs : [Object.assign(document.createElement("div"),
+    {className: "small muted", textContent: "None yet: a song's tone gets its own on the Pedal tones card."})]));
+  // RS Companion's: artists' categories, songs' and artists' styles, the styles by heaviness
+  const c = r.companion;
+  const remapArtist = field("input", [], "Artist"), from = field("select", CATEGORY_NAMES), to = field("select", CATEGORY_NAMES);
+  if (selected && selected.artist) remapArtist.value = selected.artist;
+  const addRemap = document.createElement("button");
+  addRemap.type = "button";
+  addRemap.textContent = "Add";
+  addRemap.addEventListener("click", () => remapArtist.value.trim() ?
+    changePedalRules({artist: remapArtist.value.trim(), from: from.value, to: to.value}) : toast("Whose?"));
+  const remapAdd = document.createElement("div");
+  remapAdd.className = "pr-row";
+  remapAdd.append(remapArtist, from, Object.assign(document.createElement("span"), {textContent: "as"}), to, addRemap);
+  $("prRemaps").replaceChildren(...c.artists.map(([name, source, target]) => {
+    const row = document.createElement("div");
+    row.className = "pr-row";
+    row.innerHTML = `<span class="pr-name">${esc(name)}: ${esc(source)} as ${esc(target)}</span><button type="button" title="Take it out">✕</button>`;
+    row.querySelector("button").addEventListener("click", () => changePedalRules({artist: name, from: source, to: null}));
+    return row;
+  }), remapAdd);
+  const styleName = field("input", [], "Artist or song key"), styleFor = field("select", r.style_names);
+  const addStyle = document.createElement("button");
+  addStyle.type = "button";
+  addStyle.textContent = "Add";
+  addStyle.addEventListener("click", () => styleName.value.trim() ?
+    changePedalRules({style_for: styleName.value.trim(), style: styleFor.value}) : toast("Whose?"));
+  const styleAdd = document.createElement("div");
+  styleAdd.className = "pr-row";
+  styleAdd.append(styleName, styleFor, addStyle);
+  $("prSongStyles").replaceChildren(...c.song_styles.map(([name, value]) => {
+    const row = document.createElement("div");
+    row.className = "pr-row";
+    row.innerHTML = `<span class="pr-name">${esc(name)}: ${esc(value)}</span><button type="button" title="Take it out">✕</button>`;
+    row.querySelector("button").addEventListener("click", () => changePedalRules({style_for: name, style: null}));
+    return row;
+  }), styleAdd);
+  const levels = c.styles.map(([name, start]) => {
+    const row = document.createElement("div");
+    row.className = "pr-row";
+    row.innerHTML = `<input class="pr-style-name" aria-label="Its name"> from <input class="pr-style-from" type="number" min="0" max="1" step="0.05" style="width:70px" aria-label="The heaviness it starts at">
+      <button type="button" title="Take it out">✕</button>`;
+    row.querySelector(".pr-style-name").value = name;
+    row.querySelector(".pr-style-from").value = start;
+    row.querySelector("button").addEventListener("click", () => { row.remove(); saveStyles(); });
+    row.addEventListener("change", saveStyles);
+    return row;
+  });
+  const addLevel = document.createElement("button");
+  addLevel.type = "button";
+  addLevel.textContent = "Add a style";
+  addLevel.addEventListener("click", () => changePedalRules({styles: [...c.styles, ["New style", 1]]}));
+  $("prHeaviness").replaceChildren(...levels, addLevel);
+}
+
+function saveStyles() {
+  const styles = [...$("prHeaviness").querySelectorAll(".pr-row")].map((row) =>
+    [row.querySelector(".pr-style-name").value.trim(), Number(row.querySelector(".pr-style-from").value) || 0]);
+  if (styles.some(([name]) => !name)) { toast("Each style needs a name"); return; }
+  changePedalRules({styles});
+}
 
 // The page's layout (✎ in the header): the middle column's cards in the order wanted, with copies of the ones that
 // can have several (Fretboard, Tab, Keys: each with its own part, a tab of the bass beside the lead's, say) and the
@@ -1716,13 +2189,15 @@ const CARD_KINDS = {
   drums: {name: "Drums", fixed: "drumsCard"},
   theory: {name: "Theory", fixed: "theoryCard"},
   lyrics: {name: "Lyrics", fixed: "lyricsCard"},
+  plays: {name: "Hits and misses", fixed: "playsCard"},
+  pedaltones: {name: "Pedal tones", fixed: "pedalTonesCard"},
 };
 const FIRST_KINDS = ["song", "fretboard", "tab", "keys", "drums", "theory"];  // (the kinds a layout kept before it
 // said which it knew: the others are new to it)
 const LAYOUT_KEY = "rsk.layout";
 const SIDE_CARDS = [...document.querySelectorAll("#side > .card")].map((c) => c.id);  // (as the page has them)
 function defaultLayout() {
-  return {middle: ["song", "fretboard", "tab", "keys", "drums", "lyrics", "theory"].map((kind) => ({id: kind, kind, part: ""})),
+  return {middle: ["song", "fretboard", "tab", "keys", "drums", "lyrics", "plays", "theory", "pedaltones"].map((kind) => ({id: kind, kind, part: ""})),
           side: [...SIDE_CARDS], away: [], known: Object.keys(CARD_KINDS)};
 }
 function loadLayout() {
@@ -1930,6 +2405,8 @@ function cardsFrame() {
 requestAnimationFrame(cardsFrame);
 requestAnimationFrame(theoryFrame);
 requestAnimationFrame(lyricsFrame);
+
+requestAnimationFrame(pedalTonesFrame);
 
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
 function litControl(value, others, onChange) {
@@ -2282,10 +2759,15 @@ function renderSong() {
   $("artist").textContent = s.artist;
   $("file").textContent = `${s.artist ? "· " : ""}${s.file} · ${fmt(s.length)}`;
   $("songKey").replaceChildren(keyLine(s.key, s.id));
+  $("exportAudio").disabled = !s.audio_export;
+  $("exportAudio").title = s.audio_export ? "The song's audio as a WAV, lined up with the MIDI file: put both in at the start" :
+    "Needs the drum tools to decode it: run tools/drums-setup.sh";
   for (const c of liveCards) c.render(s, f);
   renderDrumsCard(s);
   renderLyricsCard(s);
   renderTheoryCard(s);
+  renderPedalTonesCard(s);
+  renderPlaysCard(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
     $("songArt").classList.add("none");
@@ -2329,6 +2811,35 @@ function renderSong() {
     updateButtons();
   } else {
     checkLights();
+  }
+}
+
+// Saving the song for a DAW: its MIDI file, and its audio as a WAV (decoded by the drum tools: a few seconds), as
+// downloads. GET /api/export/midi, /api/export/audio
+async function exportSong(what) {
+  const s = selected;
+  if (!s) return;
+  const button = $(what === "midi" ? "exportMidi" : "exportAudio"), note = $("exportNote");
+  button.disabled = true;
+  note.textContent = what === "midi" ? "" : "Decoding the audio…";
+  try {
+    const response = await fetch(`/api/export/${what}?id=${encodeURIComponent(s.id)}`);
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || response.statusText);
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const named = /filename\*=UTF-8''([^;]+)/.exec(disposition);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = named ? decodeURIComponent(named[1]) : `${s.title}.${what === "midi" ? "mid" : "wav"}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+    note.textContent = "";
+  } catch (e) {
+    note.textContent = "";
+    toast(e.message);
+  } finally {
+    button.disabled = what === "audio" && !s.audio_export;
   }
 }
 
@@ -2674,6 +3185,7 @@ function showState(st) {
     fullScreen(false);
   }
   state = st;
+  playsCounted(st.plays);
   const status = $("status");
   status.className = st.mode === "idle" ? "" : "on";
   const remote = st.remote || {};
@@ -3033,6 +3545,10 @@ async function loadSettings() {
   $("pedalSlot").innerHTML = '<option value="">Not known</option>' + s.pedal_names.map((name, i) =>
     `<option value="${i + 1}">${String(i + 1).padStart(3, "0")} ${esc(name)}</option>`).join("");
   $("pedalBackup").value = s.pedal_backup;
+  pedalNames = s.pedal_names;
+  pedalFavourites = s.pedal_favourites;
+  if (pedalTonesData) pedalTonesBuild(pedalTonesData);
+  if (pedalRules) pedalRulesBuild(pedalRules);
   $("pedalFavourites").value = s.pedal_favourites.join(", ");
   $("pedalBackup").placeholder = s.pedal_backup_used || "the newest backup (.bhb)";
   showPedal(state && state.pedal);
@@ -3156,6 +3672,12 @@ function showListening(l) {
 // The guitar's pedal: the preset it's on (as far as it's known), and the one Back goes to (or why it can't switch)
 function showPedal(p) {
   if (!p) return;
+  const tone = p.tone ? `${p.tone.key}|${p.tone.pedal}|${p.tone.own}` : "";
+  if (tone !== pedalToneSeen) {  // (the tone playing, or its preset, changed: on the Launchkey, say)
+    const changed = pedalToneSeen && tone && pedalToneSeen.split("|")[0] === tone.split("|")[0];
+    pedalToneSeen = tone;
+    if (changed) refreshPedalTones();
+  }
   $("pedalFollows").checked = !p.hold;
   const select = $("pedalSlot");
   if (select !== document.activeElement) select.value = p.slot == null ? "" : String(p.slot);
@@ -3265,6 +3787,8 @@ $("realPitch").addEventListener("change", () => {  // (one for both: playing a s
 });
 $("muteBtn").addEventListener("click", () => act(() => api("/api/play/options", {silent: state.sound})));
 $("loopOn").addEventListener("click", () => act(() => api("/api/loop", {on: !(state.loop || {}).on})));
+$("exportMidi").addEventListener("click", () => exportSong("midi"));
+$("exportAudio").addEventListener("click", () => exportSong("audio"));
 $("loopClear").addEventListener("click", () => act(() => api("/api/loop", {a: null, b: null})));
 $("slider").addEventListener("input", () => {
   dragging = true;
@@ -3308,6 +3832,7 @@ applyLayout();  // (the cards as laid out: before anything's shown in them)
     await loadPlayOptions();
     await moveOldOptions();
     await Promise.all([loadLibrary(), loadSettings()]);
+    loadPedalRules();
     const last = playOptions.song || store.get("rsk.last", null);
     if (last && songs.some((s) => s.id === last)) await selectSong(last);
   } catch (e) {

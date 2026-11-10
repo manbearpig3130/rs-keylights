@@ -19,7 +19,25 @@ def no_real_pedal(monkeypatch, tmp_path):
     return switched
 
 
-from rs_keylights import drums  # noqa: E402
+from rs_keylights import pedaltones, rig  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_real_pedal_tones(monkeypatch, tmp_path):
+    """No test reads or changes this Mac's RS Companion mapping, sidekicks.conf or dnafx-preset tone map."""
+    monkeypatch.setattr(rig, "COMPANION_DATA", tmp_path / "rs-mac-companion")
+    monkeypatch.setattr(pedaltones, "SIDEKICKS", tmp_path / "sidekicks.conf")
+    monkeypatch.setattr(pedaltones, "DEFAULT_TONE_MAP", tmp_path / "tones.toml")
+    monkeypatch.delenv("DNAFX_CONFIG", raising=False)
+
+
+from rs_keylights import drums, plays  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_real_plays(monkeypatch, tmp_path):
+    """No test reads or keeps this Mac's runs of songs: a folder of its own."""
+    monkeypatch.setattr(plays, "plays_dir", lambda: tmp_path / "plays")
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +62,7 @@ class FakeRiffLoop:
         self.riff_speed = None  # (Riff Repeater's, as the game has it; None: a mod that doesn't say)
         self.music_level = 80.0  # (the game's Music volume; None: a mod without it)
         self.game_time = None  # (the game's own song time and screen, as its time command says; None: no answer)
+        self.note_counts = None  # (the player's note counts, as its notes command says; None: no answer)
 
     def loop(self, a, b):
         self.sent.append(("loop", a, b))
@@ -57,6 +76,9 @@ class FakeRiffLoop:
 
     def time(self, wait=None):
         return self.game_time  # (not kept in sent: asked many times a second)
+
+    def notes(self, since):
+        return self.note_counts
 
     def status(self):
         return GameLoop(True, False, self.range, None, self.screen, 0, self.riff_speed, self.riff_accelerator, self.music_level)

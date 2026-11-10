@@ -89,6 +89,7 @@ class Syllable:
     text: str  # as charted: ending in "-" when the word goes on, "+" at the end of a line
     start: float
     end: float
+    note: int = -1  # the sung pitch (a MIDI note), as charted; -1: none (most charts give their syllables none)
 
 
 @dataclass(frozen=True)
@@ -201,8 +202,9 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
             bent.append(points[:max(0, min(r.take("i")[0], 32))])
         chord_notes.append((masks, bent, r.take("6b"), r.take("6b"), r.take("6h")))
     vocals = [r.take("fif48s") for _ in range(r.count())]  # (a vocals part's: when, a note, how long, the syllable)
-    lyrics = tuple(Syllable(text.split(b"\0")[0].decode("utf-8", "replace"), at, at + length)
-                   for at, _note, length, text in vocals)
+    lyrics = tuple(Syllable(text.split(b"\0")[0].decode("utf-8", "replace"), at, at + length,
+                            note if 0 <= note <= 127 else -1)
+                   for at, note, length, text in vocals)
     if vocals:  # their symbols
         r.skip(32)
         r.skip(144)

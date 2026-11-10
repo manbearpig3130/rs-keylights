@@ -109,7 +109,7 @@ def test_chord_names_from_their_notes():
 
 def test_a_vocals_parts_syllables_make_lines():
     a = parse(sng_plain(Song(vocals=3)))
-    assert a.lyrics == (Syllable("la", 0.0, 0.5),) * 3  # (as the builder has them)
+    assert a.lyrics == (Syllable("la", 0.0, 0.5, 60),) * 3  # (as the builder has them)
     lines = lyric_lines([Syllable("Hey", 1.0, 1.5), Syllable("lit-", 1.5, 2.0), Syllable("tle", 2.0, 2.5),
                          Syllable("kid+", 2.5, 3.0), Syllable("Did", 4.0, 4.5), Syllable("you", 4.5, 5.0),
                          Syllable("Up", 20.0, 21.0)])

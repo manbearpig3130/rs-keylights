@@ -23,22 +23,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, cast
-from urllib.parse import ParseResult, parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, quote, urlparse
 
 from .follow import DEFAULT_OVERLAY_PORT, OverlayClient, PartsFor
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, KeyboardError, Synth, keyboard_name
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
-from . import drums, theory
+from . import drums, midiexport, theory
 from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
 from .player import Track
 from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
 from .pedal import SLOTS as PEDAL_SLOTS, Pedal, PedalError
+from .pedaltones import PedalTones, PedalTonesError
+from .plays import Recorder, judge, runs_of
 from .riffloop import GameLoop, GameSongs, RiffLoop
-from .sng import BASS, GUITAR, Arrangement, Chord, Note, Section, note_name
+from .sng import (BASS, BEND, GUITAR, HAMMER_ON, HARMONIC, PALM_MUTE, PINCH_HARMONIC, PULL_OFF, SLIDE, TAP, TREMOLO,
+                  Arrangement, Chord, Note, Section, note_name)
 from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tones, tone_kind
 from .keyshow import KeyShow
 from .songkey import Key, find_key, scale_show, shapes, tuning_name
@@ -426,14 +429,18 @@ class Gui:
         synth_factory: Callable[[str], Synth] = Synth,
         pedal_factory: Callable[[], Pedal] = Pedal,
         riff_loop: RiffLoop | None = None,
+        pedal_tones_factory: Callable[[Callable[[int | None], str]], PedalTones] = PedalTones,
     ):
         self.index = index
         self._synth_factory = synth_factory  # other MIDI devices sounding parts (outputs), opened once they're used
         self._synths: dict[str, Synth] = {}
         self.pedal = pedal_factory()  # the guitar's pedal, its presets switched from the Launchkey and the page
+        self.pedal_tones = pedal_tones_factory(self.pedal.name)  # and its preset for each of a song's tones
         # Following, the loop is Rocksmith's: its Riff Repeater loops it (RS Re-ARMed's riffloop mod), for the song
         # it was set for (another followed, or following stopped: Riff Repeater's own again)
         self._riff_loop = riff_loop or RiffLoop()
+        self._recorder = Recorder(self._riff_loop)  # (the hits and misses counted as you play, kept)
+        self._recorder.start()
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
         self._game_time: tuple[float, float | None] = (-math.inf, None)  # (when asked, the game's time then)
@@ -653,6 +660,7 @@ class Gui:
             "start": self.song_settings.get(sid, {}).get("start", 0),
             "saved": sid in self.song_settings,
             "drums": self.drums_info(sid),
+            "audio_export": drums.can_decode(),
             "version": self.play_version,
             "parts": [
                 {
@@ -1888,6 +1896,73 @@ class Gui:
             "sections": [[s["name"], s["start"]] for s in _sections(raw)],
         }
 
+    def plays_info(self, sid: str, which: str | None = None) -> dict[str, Any]:
+        """A song's runs as the game counted them (plays.py), the newest first, and one of them (which: its id;
+        else the newest) note by note: its counts, each section's hits and misses, and the notes missed (each one's
+        time, section, what it is, and how often it was missed and hit: Riff Repeater's passes count each time)."""
+        loaded = self._load(sid)
+        by_name = {Path(r.sng).stem.lower(): (r, a) for r, a in loaded}
+        runs = [r for r in runs_of(list(by_name)) if r.file is not None and (r.arrangement or "").lower() in by_name]
+
+        def run_id(run: Any) -> str:
+            return f"{run.file.parent.name}/{run.file.stem}"
+        def part_of(run: Any) -> str:
+            ref = by_name[(run.arrangement or "").lower()][0]
+            return ref.name or ref.part
+        listed = [{"id": run_id(r), "started": r.started, "part": part_of(r), "hits": r.counts[0], "misses": r.counts[1]}
+                  for r in runs]
+        run = next((r for r in runs if run_id(r) == which), runs[0] if runs else None)
+        if run is None:
+            return {"runs": [], "run": None}
+        ref, a = by_name[(run.arrangement or "").lower()]
+        judgement = judge(a.notes, run.changes)
+        raw = a.sections or next((x.sections for _r, x in loaded if x.sections), ())
+        sections = _sections(raw)
+        starts = [x["start"] for x in sections]
+        tally: dict[int, list[int]] = {}
+        for judged in judgement.judged:
+            tally.setdefault(judged.note, [0, 0])[0 if judged.hit else 1] += 1
+        by_section = [[x["name"], x["start"], 0, 0] for x in sections]
+
+        def section_of(at: float) -> int:
+            return max(0, bisect_right(starts, at + 1e-3) - 1)
+        for i, (hits, misses) in tally.items():
+            if by_section:
+                row = by_section[section_of(a.notes[i].time)]
+                row[2] += hits
+                row[3] += misses
+        missed = [[round(a.notes[i].time, 3), sections[section_of(a.notes[i].time)]["name"] if sections else "",
+                   _note_said(a, a.notes[i], ref.bass), misses, hits]
+                  for i, (hits, misses) in sorted(tally.items(), key=lambda x: a.notes[x[0]].time) if misses]
+        counted = judgement.hits + judgement.misses
+        return {"runs": listed, "run": {
+            "id": run_id(run), "part": ref.name or ref.part, "started": run.started, "hits": judgement.hits,
+            "misses": judgement.misses, "accuracy": round(100 * judgement.hits / counted, 1) if counted else None,
+            "passes": judgement.passes, "unmatched": judgement.unmatched,
+            "sections": [row for row in by_section if row[2] or row[3]], "missed": missed}}
+
+    def export_midi(self, sid: str) -> tuple[str, bytes]:
+        """A song as a MIDI file, for a DAW (song_export): its name and the file."""
+        loaded = self._load(sid)
+        try:
+            vocals = next((r for r in self.index.of_song(loaded[0][0]) if r.part == "vocals"), None)
+            sung = vocals.load() if vocals is not None else None
+        except (ArchiveError, OSError, ValueError):  # (without its vocals, then)
+            sung = None
+        return song_export(loaded, sung)
+
+    def export_audio(self, sid: str) -> tuple[str, bytes]:
+        """A song's audio as a WAV file, lined up with its MIDI file (the drum tools decode it: a few seconds)."""
+        loaded = self._load(sid)
+        named = next((r for r, _a in loaded if r.artist), loaded[0][0])
+        with tempfile.TemporaryDirectory(prefix="rs-keylights-audio-") as work:
+            out = Path(work) / "song.wav"
+            try:
+                drums.decode(named, self.index.game_dir, out)
+            except drums.DrumsError as exc:
+                raise GuiError(str(exc)) from exc
+            return midiexport.file_name(named.title, ".wav"), out.read_bytes()
+
     def _lyrics(self, sid: str) -> tuple[Line, ...]:
         """A song's lyrics in lines, from its vocals part (none without one, or if it's gone)."""
         with self._lock:
@@ -2339,7 +2414,109 @@ class Gui:
         pedal = self.pedal
         slot, previous = pedal.slot, pedal.previous
         return {"slot": slot, "name": pedal.name(slot), "previous": previous, "previous_name": pedal.name(previous),
-                "error": pedal.error, "favourites": list(self.settings["pedal_favourites"]), "hold": pedal.held}
+                "error": pedal.error, "favourites": list(self.settings["pedal_favourites"]), "hold": pedal.held,
+                "tone": self._tone_playing()}
+
+    def _followed_now(self) -> tuple[ArrangementRef | None, float | None]:
+        """Following, the arrangement the game plays and where it is (None, None: not following)."""
+        with self._lock:
+            session = self._session
+        if not (isinstance(session, Following) and session.running):
+            return None, None
+        current = session.follower.current
+        if current is None:
+            return None, None
+        at = self.game_time()
+        return current, at if at is not None else session.follower.position(time.monotonic())
+
+    def _tone_playing(self) -> dict[str, Any] | None:
+        """Following, the song tone the game plays now (its key, short name, the pedal's preset for it, and whether
+        that's the song's own); None not following, or not known."""
+        current, at = self._followed_now()
+        if current is None or at is None:
+            return None
+        return self.pedal_tones.playing(current, at)
+
+    def song_pedal_tones(self, sid: str, part: str | None = None) -> dict[str, Any]:
+        """A song's tones and the pedal's preset for each, for the page's Song tones card (PedalTones.table): an
+        arrangement's (the one asked for, by its part or persistent ID; else the one the game plays, following
+        it; else the first), and the song's parts."""
+        refs = [r for r, _a in self._load(sid)]
+        followed, _at = self._followed_now()
+        ref = next((r for r in refs if part in (r.part, r.persistent_id)), None) or \
+            next((r for r in refs if followed is not None and r.persistent_id == followed.persistent_id), None) or refs[0]
+        try:
+            table = self.pedal_tones.table(ref)
+        except (PedalTonesError, ArchiveError, OSError) as exc:
+            raise GuiError(str(exc)) from exc
+        return {**table, "parts": [{"part": r.part, "name": r.name or r.part} for r in refs],
+                "played": followed is not None and ref.persistent_id == followed.persistent_id}
+
+    def set_song_pedal_tones(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A song's tone given a category of its own ("tone", "category": a category, or None for auto), or a preset
+        of its own ("tone", "pedal": a slot, or None); or the song's style ("style": a style, or None)."""
+        sid, part = str(body.get("id") or ""), body.get("part") or None
+        refs = [r for r, _a in self._load(sid)]
+        ref = next((r for r in refs if part in (r.part, r.persistent_id)), None)
+        if ref is None:
+            raise GuiError("Which part?")
+        try:
+            if "style" in body:
+                self.pedal_tones.set_style(ref, body["style"] or None)
+            elif "category" in body:
+                self.pedal_tones.set_tone(ref, str(body.get("tone") or ""), category=body["category"] or None,
+                                          change="category")
+            elif "pedal" in body:
+                pedal = body["pedal"]
+                self.pedal_tones.set_tone(ref, str(body.get("tone") or ""), change="pedal",
+                                          pedal=None if pedal is None else int(_number(pedal, "preset", 1, PEDAL_SLOTS)))
+            else:
+                raise GuiError("Change what?")
+        except PedalTonesError as exc:
+            raise GuiError(str(exc)) from exc
+        return self.song_pedal_tones(sid, ref.part)
+
+    def pedal_rules(self) -> dict[str, Any]:
+        """The pedal's rules for every song (PedalTones.rules), for the page's Pedal tone rules card."""
+        return self.pedal_tones.rules()
+
+    def set_pedal_rules(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A rule changed: the tone map's ("rule": its path, "slot": a preset or None), an artist's category in RS
+        Companion's mapping ("artist", "from", "to": a category or None), a style for a song key or an artist
+        ("style_for", "style": or None), or the styles by heaviness ("styles": [[name, from]...])."""
+        tones = self.pedal_tones
+        try:
+            if "rule" in body:
+                slot = body.get("slot")
+                tones.set_rule(list(body["rule"] or []), None if slot is None else int(_number(slot, "preset", 1, PEDAL_SLOTS)))
+            elif "artist" in body:
+                tones.set_artist_category(str(body["artist"]), str(body.get("from") or ""), body.get("to") or None)
+            elif "style_for" in body:
+                tones.set_named_style(str(body["style_for"]), body.get("style") or None)
+            elif "styles" in body:
+                tones.set_styles(list(body["styles"] or []))
+            else:
+                raise GuiError("Change what?")
+        except PedalTonesError as exc:
+            raise GuiError(str(exc)) from exc
+        return tones.rules()
+
+    def keep_pedal_tone(self, slot: int | None = None) -> str:
+        """Following, the pedal's preset (or slot) kept for the tone the game plays now, for its song; on the song's
+        own preset for it already, back to automatic. What it did, said short (for the Launchkey's screen)."""
+        current, _at = self._followed_now()
+        tone = self._tone_playing()
+        if current is None or tone is None:
+            raise GuiError("No song tone playing")
+        slot = slot if slot is not None else self.pedal.slot
+        if slot is None:
+            raise GuiError("The pedal's preset isn't known")
+        back = tone["own"] and tone["pedal"] == slot
+        try:
+            self.pedal_tones.set_tone(current, tone["key"], change="pedal", pedal=None if back else slot)
+        except PedalTonesError as exc:
+            raise GuiError(str(exc)) from exc
+        return f"{tone['short']}: automatic" if back else f"{tone['short']}: {slot:03d} kept"
 
     def pedal_name(self, slot: int | None) -> str:
         return self.pedal.name(slot)
@@ -2534,6 +2711,7 @@ class Gui:
                                    "game_list": game_list,
                                    "keys": self.keys_info(), "loop": self.loop_info(None),
                                    "listening": self.listening(), "pedal": self.pedal_info(),
+                                   "plays": self._recorder.changed,
                                    "launchkey": self._watch.status if self._watch is not None else None}
             if isinstance(session, Playback):
                 if not session.running:
@@ -2742,6 +2920,7 @@ class Gui:
         if self._keys_thread is not None:
             self._keys_queue.put(None)
         self.pedal.close()
+        self._recorder.stop()
         for synth in list(self._synths.values()):  # (other MIDI devices: their notes stopped)
             synth.close()
         if self._listener is not None:
@@ -2774,6 +2953,54 @@ class Gui:
                 running = False
             self._other = (time.monotonic(), running)
         return running
+
+
+TECHNIQUES_SAID = ((BEND, "bend"), (SLIDE, "slide"), (HAMMER_ON, "hammer-on"), (PULL_OFF, "pull-off"),
+                   (PALM_MUTE, "palm mute"), (PINCH_HARMONIC, "pinch harmonic"), (HARMONIC, "harmonic"), (TAP, "tap"),
+                   (TREMOLO, "tremolo"))
+
+
+def _note_said(a: Arrangement, note: Note, bass: bool) -> str:
+    """A note as the page says it: a chord's name and frets (low to high, x not played), or a note's name, string
+    (numbered as tab has them: 1 the thinnest) and fret; and how it's played (bend, slide...)."""
+    strings, pitches = 4 if bass else 6, list(note.pitches)
+    if len(pitches) > 1:
+        chord = next((c for c in a.chords if c.start - 0.01 <= note.time <= c.end + 0.01), None)
+        frets = dict(zip(note.strings, note.frets))
+        shape = " ".join(str(frets[s]) if s in frets else "x" for s in range(strings))
+        said = f"{chord.name if chord else 'Chord'} ({shape})"
+    else:
+        on = list(zip(note.strings, note.frets))
+        said = f"{note_name(pitches[0])} · string {strings - on[0][0]}, fret {on[0][1]}" if on else \
+            note_name(pitches[0])
+    how = [name for mask, name in TECHNIQUES_SAID if note.mask & mask]
+    if note.bends and "bend" not in how:
+        how.insert(0, "bend")
+    if (note.slide or note.slide_off) and "slide" not in how:
+        how.append("slide")
+    if note.vibrato:
+        how.append("vibrato")
+    return said + (" · " + ", ".join(how) if how else "")
+
+
+def song_export(loaded: list[tuple[ArrangementRef, Arrangement]], vocals: Arrangement | None = None) -> tuple[str, bytes]:
+    """A song's MIDI file (midiexport.py) and a name for it: its parts with notes (as loaded: the page's order), its
+    vocals' lyrics and melody, its drum part if one was made, its key, and its sections as markers."""
+    if not loaded:
+        raise GuiError("No parts with notes in this song")
+    named = next((r for r, _a in loaded if r.artist), loaded[0][0])
+    parts: list[midiexport.ExportPart] = []
+    for ref, a in loaded:
+        name = ref.name or ref.part.capitalize()
+        if any(p.name == name for p in parts):
+            name = f"{name} ({ref.part})"
+        parts.append(midiexport.ExportPart(name, kind(ref), a))
+    key = find_key([a for _r, a in loaded], [r.bass for r, _a in loaded])
+    raw = next((a.sections for _r, a in loaded if a.sections), ())
+    data = midiexport.song_midi(named.title, parts, markers=[(s["start"], s["name"]) for s in _sections(raw)],
+                                lyrics=vocals.lyrics if vocals else (), drums=drums.kept(loaded[0][0]) or (),
+                                key=(key.tonic, key.mode) if key else None)
+    return midiexport.file_name(named.title, ".mid"), data
 
 
 def _guitar(loaded: list[tuple[ArrangementRef, Arrangement]]) -> dict[str, Any] | None:
@@ -2956,9 +3183,12 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def _send(self, status: int, body: bytes, content_type: str, cookie: str | None = None,
-              cache: str = "no-store") -> None:
+              cache: str = "no-store", download: str | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        if download:  # (saved as a file of this name)
+            plain = download.encode("ascii", "replace").decode().replace("?", "_").replace('"', "'")
+            self.send_header("Content-Disposition", f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(download)}")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
         self.send_header("Referrer-Policy", "no-referrer")
@@ -3035,6 +3265,20 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.theory(query.get("id", [""])[0], query.get("part", [None])[0] or None))
             elif url.path == "/api/lyrics":
                 self._json(200, gui.lyrics(parse_qs(url.query).get("id", [""])[0]))
+            elif url.path == "/api/songtones":
+                query = parse_qs(url.query)
+                self._json(200, gui.song_pedal_tones(query.get("id", [""])[0], query.get("part", [None])[0] or None))
+            elif url.path == "/api/pedal/rules":
+                self._json(200, gui.pedal_rules())
+            elif url.path == "/api/plays":
+                query = parse_qs(url.query)
+                self._json(200, gui.plays_info(query.get("id", [""])[0], query.get("run", [None])[0] or None))
+            elif url.path == "/api/export/midi":
+                name, data = gui.export_midi(parse_qs(url.query).get("id", [""])[0])
+                self._send(200, data, "audio/midi", download=name)
+            elif url.path == "/api/export/audio":
+                name, data = gui.export_audio(parse_qs(url.query).get("id", [""])[0])
+                self._send(200, data, "audio/wav", download=name)
             elif url.path == "/api/roll":
                 query = parse_qs(url.query)
                 self._json(200, gui.roll(query.get("id", [""])[0], query.get("part", [None])[0] or None))
@@ -3106,6 +3350,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/volumes": lambda: gui.set_volumes(body.get("volumes") or {}),
             "/api/loop": lambda: gui.set_loop(body),
             "/api/pedal": lambda: gui.set_pedal(body),
+            "/api/songtones": lambda: gui.set_song_pedal_tones(body),
+            "/api/pedal/rules": lambda: gui.set_pedal_rules(body),
             "/api/riff": lambda: gui.set_game_riff(body),
             "/api/game/music": lambda: gui.set_game_music(body),
             "/api/drums": lambda: gui.set_drums(body),

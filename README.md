@@ -45,6 +45,7 @@ runs only read new or changed archives. The game folder is RS Re-ARMed's, unless
 .venv/bin/rs-keylights play amonpurs --mute-tone 77 --low-tone 80 --split E2   # a tone per kind of note
 .venv/bin/rs-keylights play amonpurs lead rhythm --tone lead=178 --lights lead=2,rhythm=2   # two parts together
 .venv/bin/rs-keylights index                       # update the index now
+.venv/bin/rs-keylights midi amontwil --audio -o ~/Music   # a MIDI file and its audio, for a DAW
 ```
 
 `play` takes a `.psarc` file, or part of a song's name, artist or file name. With no part it plays
@@ -261,7 +262,10 @@ song playing, else the active one:
   card), the next each tap, the first when it's on none of them, bright while it's on one: from there,
   knob 6 reaches the ones near it. The **bottom pad** keeps the pedal on the tone it's on, or lets it switch
   with the song's tones again (bright while it follows them; "Pedal: holding this tone" on the screen): it
-  makes dnafx-preset's hold file, and the listener switches to the song's tone once it's let go. The page's
+  makes dnafx-preset's hold file, and the listener switches to the song's tone once it's let go. Following,
+  while the pedal shows, **Record** keeps the preset shown for the song tone playing, for this song ("Rec:
+  keep for dist" on the screen; on its own preset already, "Rec: dist automatic" puts it back to the rules):
+  hold the tone, try presets with knob 6, and keep the one you like. The page's
   **Guitar pedal** card has it too ("Switch with the song's tones"); the guitar lighting the keys is on the
   page's **Guitar** card.
 - **Its keys** (column 7, purple): they play the Casio on a part of their own (channel 1: no song's part or
@@ -438,6 +442,47 @@ rearmed-mods' source (`~/git/rearmed-mods`, or the folder given), and makes a Py
 `~/Library/Application Support/rs-keylights/drums/`. It needs the Xcode command line tools, uv, and rearmed-mods' Song
 Stems installed (its model). rs-keylights itself needs numpy for it: `uv pip install --python .venv/bin/python -e ".[drums]"`.
 
+### Hits and misses
+
+The **Hits and misses** card shows what you hit and missed each time you played the song in Rocksmith (with the page
+running), as you play:
+
+- **Your accuracy:** the game's own count of hits and misses (Learn a Song's numbers).
+- **Each section's** hits out of the notes counted in it.
+- **The notes you missed**, by time and section: a chord's name and frets, or a note's name, string (1 the thinnest)
+  and fret, and how it's played (bend, slide, palm mute…). With Riff Repeater's passes, how often of how many. Not
+  following, a click goes there.
+- **Earlier runs** in the menu at the top, newest first.
+
+How: RS Re-ARMed's riffloop mod reads the game's note counts every frame (the note statistics, where RS Companion
+finds them) and keeps each change with the song's time. The page asks for them twice a second and keeps each run in
+`~/Library/Application Support/rs-keylights/plays/` (a file per run). Matched to the chart, each hit counted is the
+note nearest its time, each miss the earliest note not counted yet, up to a second before it: the game counts a miss
+once its note's gone by. The game scores the notes at your level, which can be fewer than the chart's hardest; a note
+it doesn't count isn't listed either way.
+
+### A song in a DAW
+
+**MIDI file** under the song's title saves it as a MIDI file for Logic or GarageBand (`Artist - Title.mid`), or
+`rs-keylights midi SONG` (`-o` a file or folder; `--audio` the WAV beside it):
+
+- **Its tempo map is the record's.** Each of the chart's beats gets its own tempo, and its time signatures come from
+  where the bars start, so the bars line up with the band as it speeds up and slows down. The time before the chart's
+  first beat is made into a bar or so of its own, so the file starts when the song does.
+- **A track for each part**, at its hardest difficulty, at the pitch it sounds (a song for a pedal tuned down sounds
+  down): picked notes a 16th long, palm mutes softer, accents harder, dead notes short and quiet. Bends, and slides
+  within the bend range, are pitch bends; vibrato is the mod wheel. The bend range is sent as RPN 0: 2 semitones,
+  unless a part bends further. Then the track's name says it, "Lead (bend range 3)", for an instrument that ignores
+  RPN and needs its own setting changed. Its tones ("Tone: …") and chord names are text events.
+- **The sections** are markers (Intro 1, Verse 1…). **The key** is a key signature: a mode's is its major's.
+- **The vocals:** their lyrics as lyric events, and their melody as notes when the chart has one (about half of
+  them; the rest give every syllable a pitch or two as placeholders).
+- **The drum part**, if it's made, on channel 10 (General MIDI drums).
+
+**Song audio** saves the song's audio as a WAV (a few seconds: the drum tools decode it, so it needs
+`tools/drums-setup.sh` once). It starts when the MIDI file does: put both in at the start of a Logic project and
+they line up.
+
 ### Guitar pedal
 
 A Harley Benton DNAfx GiT (the Core too) plugged into the Mac by USB has its presets switched by the
@@ -481,6 +526,25 @@ instead of each tone's). Checked against RS Companion's log, its 31 song tone me
 Without RS Companion's files every tone is Clean, its default. A song's tones take a few milliseconds to
 read (each part's tone changes, read without its notes). Run it as an RS Re-ARMed sidekick (see
 rearmed-sidekicks), beside dnafx-preset's listener.
+
+### Pedal tones, changed on the page
+
+The **Pedal tones** card shows the song's tones (an arrangement's: the one the game plays, following it, or
+the one picked), the one playing lit, each with how long it plays and its effects, its category, and the
+pedal's preset for it with the rule that picks it. Each can be Auto (the rules for every song) or the
+song's own: a category of its own goes into RS Companion's `presets.json` (as its app's overrides do, for
+each of the song's parts that has the tone), a preset of its own into dnafx-preset's tone map as a song
+rule. **Try** switches the pedal to a tone's preset; **Keep** gives the tone the preset the pedal's on. The
+song's style can be its own too. The **Pedal tone rules** card (in the settings column) has the rules for
+every song: each category's preset, artists', effects' and styles' presets, the songs' own, and, folded,
+RS Companion's artist categories, song and artist styles, and styles by heaviness.
+
+The files are the ones RS Re-ARMed's `sidekicks.conf` gives dnafx-preset's listener (its `--config`, and
+its `--midi-program-map` for a category without a preset), and the presets are picked by dnafx-preset's own
+code, so the page shows what the pedal does. A change keeps the rest of the file as it was (comments too;
+the line changed gets the preset's name as its comment, and the file before is kept as `.bak`).
+`song-tones` reads `presets.json` again within a second, and dnafx-preset's listener its tone map, so the
+pedal switches to the tone's new preset at once, if it's playing.
 
 ### On a phone
 

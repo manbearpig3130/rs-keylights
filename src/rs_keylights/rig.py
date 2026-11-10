@@ -353,14 +353,16 @@ class Presets:
         return key.lower() in {str(k).lower() for k in self.data.get("ai_rejected") or []}
 
     def match(self, arrangement: str, slot: str, key: str, descriptors: tuple[str, ...] = (), artist: str = "",
-              amp: str | None = None, gain: float | None = None, drive: float | None = None) -> Match:
+              amp: str | None = None, gain: float | None = None, drive: float | None = None,
+              overrides: bool = True) -> Match:
+        """overrides False: what the tone would be without changes made to its song (its "songs" and "tones")."""
         def result(preset: str, reason: str) -> Match:
             return Match(preset, self.category(preset), reason)
         song = _dict(_dict(self.data.get("songs")).get(arrangement))
-        if isinstance(song.get(slot), str):
+        if overrides and isinstance(song.get(slot), str):
             return result(song[slot], "song override")
         tones = {k.lower(): v for k, v in _dict(self.data.get("tones")).items()}
-        if isinstance(tones.get(key.lower()), str):
+        if overrides and isinstance(tones.get(key.lower()), str):
             return result(tones[key.lower()], "tone override")
         preset, why = self._rule(key, descriptors, amp, gain, drive)
         name = artist.strip()
@@ -424,11 +426,13 @@ class Presets:
         default = self.data.get("default")
         return (default if isinstance(default, str) else "Clean"), "default"
 
-    def style(self, heaviness: float | None, artist: str, key: str) -> str:
+    def style(self, heaviness: float | None, artist: str, key: str, own: bool = True) -> str:
         """A song's style: "song_styles" names one for its key or its artist (the key first), then the AI's answer, then
-        the AI suggestions' "song_styles"; else the last of "styles" its heaviness reaches."""
+        the AI suggestions' "song_styles"; else the last of "styles" its heaviness reaches. own False: as it'd be
+        without the song's own ("song_styles" for its key)."""
         use_ai = not self.rejected(key)
-        sources = [self._song_styles]
+        sources = [self._song_styles if own else {k: v for k, v in self._song_styles.items()
+                                                  if str(k).strip().lower() != key.lower()}]
         answer = self.answer(key) if use_ai else None
         if answer is not None:
             sources.append({key: answer["style"]})

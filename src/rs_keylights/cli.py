@@ -12,7 +12,7 @@ from typing import Sequence
 
 from . import drums
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
-from .gui import DEFAULT_GUI_PORT
+from .gui import DEFAULT_GUI_PORT, part_order, song_export
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, Keyboard, KeyboardError
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, HOP, LOWEST, RATE, Detector
@@ -91,6 +91,16 @@ def build_parser() -> argparse.ArgumentParser:
                               help="make every song's part again that was made before (as an update needs: a minute "
                                    "or so each)")
     drums_parser.set_defaults(handler=run_drums)
+
+    midi = commands.add_parser("midi", help="save a song as a MIDI file for a DAW: its parts, tempo map, sections, "
+                                            "chords, lyrics and drum part (if made)")
+    midi.add_argument("song", help="a .psarc file, or part of a song's name, artist or file name")
+    midi.add_argument("-o", "--output", type=Path, metavar="PATH",
+                      help="the file, or a folder to save it in (default: 'Artist - Title.mid' here)")
+    midi.add_argument("--audio", action="store_true",
+                      help="the song's audio beside it too, as a WAV lined up with it (the tools from "
+                           "tools/drums-setup.sh decode it)")
+    midi.set_defaults(handler=run_midi)
 
     index = commands.add_parser("index", help="update the index of the game's songs")
     index.set_defaults(handler=run_index)
@@ -586,6 +596,38 @@ def _make_drums(refs: list[ArrangementRef], again: bool, game: Path) -> int:
     for hit in hits:
         counts[drums.NAMES.get(hit.note, str(hit.note))] = counts.get(drums.NAMES.get(hit.note, str(hit.note)), 0) + 1
     print(f"{len(hits)} hits in {time.monotonic() - started:.0f} s: " + ", ".join(f"{n} {name}" for name, n in counts.items()))
+    return 0
+
+
+def run_midi(args: argparse.Namespace) -> int:
+    refs = find_song(args)
+    if refs is None:
+        return 1
+    playable = sorted((r for r in refs if r.part not in NO_NOTES), key=part_order)
+    vocals = next((r for r in refs if r.part == "vocals"), None)
+    if vocals is None and playable and not Path(args.song).expanduser().is_file():  # (a vocals part's manifest
+        # may not name its song: the song's parts, then)
+        vocals = next((r for r in open_index(args).of_song(playable[0]) if r.part == "vocals"), None)
+    try:
+        loaded = [(r, r.load()) for r in playable]
+        name, data = song_export(loaded, vocals.load() if vocals is not None else None)
+    except (ArchiveError, SngError, OSError, ValueError) as exc:
+        print(f"rs-keylights: {exc}", file=sys.stderr)
+        return 1
+    out = args.output.expanduser() if args.output else Path(name)
+    if out.is_dir():
+        out = out / name
+    out.write_bytes(data)
+    print(f"{out}: {', '.join(r.name or r.part for r in playable)}" + (", vocals" if vocals else "")
+          + (", drums" if drums.kept(refs[0]) else ""))
+    if args.audio:
+        wav = out.with_suffix(".wav")
+        try:
+            drums.decode(next((r for r in refs if r.artist), refs[0]), game_dir(args), wav)
+        except drums.DrumsError as exc:
+            print(f"rs-keylights: {exc}", file=sys.stderr)
+            return 1
+        print(wav)
     return 0
 
 

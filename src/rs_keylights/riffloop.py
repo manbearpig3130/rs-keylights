@@ -53,6 +53,44 @@ class GameSongs:
     key: str
 
 
+@dataclass(frozen=True)
+class NoteCounts:
+    """The player's note counts as the game has them (its note statistics, through the mod): the run of the song
+    they're of (a new one each time a song starts again, its counts from 0; 0: none yet), the next change's number,
+    the counts now (None: no statistics now, the song left), the arrangement playing (its .sng's name; None: none),
+    and the changes asked for: each one's number, run, the song's time then (None: no song's playback seen), and the
+    hits and misses then."""
+    run: int
+    next: int
+    hits: int | None
+    misses: int | None
+    streak: int | None
+    best: int | None
+    arrangement: str | None
+    changes: tuple[tuple[int, int, float | None, int, int], ...]
+
+
+def parse_notes(answer: str) -> NoteCounts | None:
+    words = answer.split()
+    if not words or words[0] != "notes":
+        return None
+    try:
+        fields = dict(word.split("=", 1) for word in words[1:] if "=" in word)
+        changes = []
+        for word in words[1:]:
+            if "=" not in word:
+                number, run, at, hits, misses = word.split(":")
+                changes.append((int(number), int(run), None if float(at) < 0 else float(at), int(hits), int(misses)))
+
+        def count(name: str) -> int | None:
+            value = int(fields[name])
+            return None if value < 0 else value
+        return NoteCounts(int(fields["run"]), int(fields["next"]), count("hits"), count("misses"), count("streak"),
+                          count("best"), None if fields.get("arr", "-") == "-" else fields["arr"], tuple(changes))
+    except (KeyError, ValueError):
+        return None
+
+
 def parse(answer: str) -> GameLoop | None:
     """The mod's answer ("riffloop hook=1 riff=0 loop=12.500,20.000 calls=3"); None if it isn't one."""
     words = answer.split()
@@ -164,6 +202,12 @@ class RiffLoop:
     def focus(self, key: str) -> bool:
         """The song with a key highlighted in the song list, as the game's own moves do; whether it answered."""
         return (self._ask(f"focus {key}") or "").startswith("songs focusing")
+
+    def notes(self, since: int) -> NoteCounts | None:
+        """The player's note counts, and their changes from the one numbered since (the mod keeps the last 4096);
+        None: no answer (no game, or a mod without them)."""
+        answer = self._ask(f"notes {since}")
+        return parse_notes(answer) if answer is not None else None
 
     def _send(self, command: str) -> GameLoop | None:
         answer = self._ask(command)

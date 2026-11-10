@@ -395,6 +395,29 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
     return hits
 
 
+def decode(ref: ArrangementRef, game_dir: Path, out: Path, tools: Path | None = None) -> None:
+    """A song's audio decoded to a WAV file (16-bit, at its own rate), its time the chart's: drums-setup.sh's
+    rs-stems-drums decodes it, as it does for a drum part (a few seconds)."""
+    tools = tools or tools_dir()
+    helper = tools / "rs-stems-drums"
+    if not helper.exists():
+        raise DrumsError(f"No audio decoder at {helper}: run tools/drums-setup.sh")
+    if not (tools / "codebooks.bin").exists():
+        codebooks(game_dir, tools / "codebooks.bin")
+    with tempfile.TemporaryDirectory(prefix="rs-keylights-audio-") as work_dir:
+        wem = Path(work_dir) / "song.wem"
+        wem.write_bytes(song_audio(ref, game_dir))
+        done = subprocess.run([str(helper), "decode", str(wem), str(out)], env={**os.environ, "RS_STEMS_CACHE": str(tools)},
+                              capture_output=True, text=True)
+    if done.returncode != 0 or not out.exists():
+        raise DrumsError(f"Decoding the song failed: {(done.stdout + done.stderr).strip()[-300:]}")
+
+
+def can_decode(tools: Path | None = None) -> bool:
+    """Whether a song's audio can be decoded (decode): drums-setup.sh's decoder is there."""
+    return ((tools or tools_dir()) / "rs-stems-drums").exists()
+
+
 def setup_done(tools: Path | None = None) -> bool:
     tools = tools or tools_dir()
     return (tools / "rs-stems-drums").exists() and (tools / "venv" / "bin" / "python").exists()
