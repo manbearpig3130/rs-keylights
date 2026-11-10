@@ -143,7 +143,16 @@ KIND_LETTERS = {"lead": "L", "rhythm": "R", "bass": "B"}  # whose chord it is, b
 TONE_BADGES = {"clean lead": "Clean ld", "distortion": "Dist", "acoustic": "Acoustic", "electric piano": "E.piano",
                "driven bass": "Drv bass", "synth bass": "Syn bass", "its own tone": "Own"}  # the tone the song's on
 # (the rest: capitalised)
-COLOURS = {"lead": (9, (127, 45, 0)), "rhythm": (21, (0, 127, 20)), "bass": (45, (0, 45, 127))}
+DRUMS_TO_MAKE = 0.12  # a song's drums not made yet: their pad this dim (a tap makes them)
+BEAT_FLASH = 0.09  # seconds the drums' pad below lights on each beat, beat lights on (the bar's first: brighter)
+BEAT_ON, BEAT_BAR, BEAT_REST = (55, 55, 55), (127, 127, 127), (8, 8, 8)  # (a beat, a bar's first, between: on)
+BOARD_REST = 0.3  # beat lights on, the song playing: every other pad and button this bright between beats (on one, as
+# they are)
+PALETTE_RGB = {1: (14, 14, 14), 3: (127, 127, 127), 5: (127, 0, 0), 9: (127, 42, 0), 11: (20, 13, 0),
+               13: (127, 127, 0), 21: (0, 127, 0), 23: (0, 12, 0), 37: (0, 84, 127), 39: (0, 8, 12), 45: (0, 0, 127),
+               49: (42, 0, 127), 53: (127, 0, 127), 55: (12, 0, 12)}  # the palette colours shown, as near as RGB goes
+COLOURS = {"lead": (9, (127, 45, 0)), "rhythm": (21, (0, 127, 20)), "bass": (45, (0, 45, 127)),
+           "drums": (3, (100, 100, 100))}  # (a song's drum part: white)
 TONIC, IN_SCALE, ALSO = 5, 3, 49  # palette colours: the scale view
 SOUND_ON, SOUND_OFF, FOLLOWING, NOT_FOLLOWING = 21, 5, 37, 39  # the right column's pads
 KEYS_ON, KEYS_RGB = 49, (60, 0, 127)  # its keys' pads: purple
@@ -176,6 +185,9 @@ class GuiProtocol(Protocol):
         ...
 
     def set_volumes(self, changes: dict[int, Any]) -> dict[str, Any]:
+        ...
+
+    def toggle_beat_lights(self) -> bool:
         ...
 
     def set_game_music(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +300,7 @@ class Watch:
         self._info: dict[str, Any] | None = None
         self._song: tuple[bool, str, str | None] | None = None  # following?, the song and arrangement played, last seen
         self._drawn: dict[Any, Any] = {}  # what the Launchkey shows, so only changes are sent
+        self._beat_drawn: str | None = None  # beat lights on: where in a beat it was drawn ("beat", "bar", "rest")
         self._pending: dict[tuple[str, str], int] = {}  # (arrangement, tone field or "lights"; or "volume", its place):
         # sent, until the page's state has them (several turns come at once)
         self._settling = False  # turned or tapped: where it stopped shown again once it stops
@@ -361,7 +374,49 @@ class Watch:
         if now >= self._next_info:
             self._next_info = now + INFO_EVERY
             self._refresh()
+        self._beat(now)
         self._show_screen(now)
+
+    def _beat_spot(self, info: dict[str, Any]) -> tuple[int, int] | None:
+        """Where the beat lights are: the drums' pad below (the arrangements' pads showing, not the mixer's)."""
+        if self.mode != "parts" or self.scale_view:
+            return None
+        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        column = next((i for i, a in enumerate(arrangements) if a["kind"] == "drums"), None)
+        return None if column is None else (1, column)
+
+    def _beat_now(self, info: dict[str, Any]) -> str | None:
+        """Beat lights on and the song playing (or the game's, following): "bar" for BEAT_FLASH on a bar's first
+        beat, "beat" on the others, "rest" between; otherwise None."""
+        song = info.get("song") or {}
+        beats = song.get("beats") or ()
+        if not info.get("beat_lights") or not beats or _sign(info) != "playing":
+            return None
+        at = self._song_at(info)
+        if at is None:
+            return None
+        i = bisect_right(beats, at) - 1
+        if i >= 0 and at - beats[i] < BEAT_FLASH:
+            return "bar" if beats[i] in set(song.get("bars") or ()) else "beat"
+        return "rest"
+
+    def _beat_look(self, info: dict[str, Any]) -> tuple[Any, ...]:
+        """The drums' pad below: beat lights off, dark; on, dim, and lit for BEAT_FLASH on each of the song's beats
+        while it plays (or the game's, following), brighter on a bar's first."""
+        if not info.get("beat_lights"):
+            return ("rgb", 0, 0, 0)
+        beat = self._beat_now(info)
+        return ("rgb", *(BEAT_BAR if beat == "bar" else BEAT_ON if beat == "beat" else BEAT_REST))
+
+    def _beat(self, now: float) -> None:
+        """The beat lights, at once (every step: a beat's too short to wait for the next look): the whole Launchkey
+        drawn again as a beat comes and goes (only what changed is sent)."""
+        info = self._info
+        if self.launchkey is None or info is None:
+            return
+        beat = self._beat_now(info)
+        if beat != self._beat_drawn:
+            self._draw()
 
     def look(self) -> None:
         """Takes over a Launchkey that's plugged in (and wanted), and lets go of one unplugged."""
@@ -464,6 +519,13 @@ class Watch:
         if launchkey is None:
             return
         wanted = self._picture()
+        info = self._info or {}
+        self._beat_drawn = self._beat_now(info)
+        if self._beat_drawn == "rest":  # (beat lights on, between beats: the rest of the board dim, the beat's pad as
+            # it is)
+            spot = self._beat_spot(info)
+            wanted = {where: look if where in ("scale", spot) else _dimmed(look, BOARD_REST)
+                      for where, look in wanted.items()}
         for spot, look in wanted.items():
             if self._drawn.get(spot) == look:
                 continue
@@ -505,6 +567,12 @@ class Watch:
                     continue
                 a = arrangements[column]
                 bright, rgb = COLOURS.get(a["kind"], COLOURS["lead"])
+                if a["kind"] == "drums" and not a.get("made", True):  # (not made yet: dim, a tap makes them;
+                    # being made, pulsing)
+                    picture[(0, column)] = ("palette", bright, True) if a.get("making") else \
+                        ("rgb", *(round(c * DRUMS_TO_MAKE) for c in rgb))
+                    picture[(1, column)] = self._beat_look(info)
+                    continue
                 if a["play"]:
                     picture[(0, column)] = ("palette", bright, a["playing"] and not self.mix_knobs)
                 elif self.mix_knobs:
@@ -514,6 +582,8 @@ class Watch:
                 share = min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
                 level = share * (1.0 if a["play"] else 0.25)
                 picture[(1, column)] = ("rgb", *(round(c * level) for c in rgb))
+                if a["kind"] == "drums":  # (its pad below: the beat lights)
+                    picture[(1, column)] = self._beat_look(info)
             keys = info.get("keys") or {}
             if not parts:
                 picture[(0, KEYS_COLUMN)] = ("palette", 0, False)
@@ -659,6 +729,11 @@ class Watch:
             self._turn_tone(column, event.steps, False, info, now)
         elif event.row == 0:
             self._toggle_part(a, now)
+        elif a["kind"] == "drums":  # (its pad below: the beat lights)
+            on = self.gui.toggle_beat_lights()
+            if self._info is not None:
+                self._info = {**self._info, "beat_lights": on}
+            self._say(now, line=f"Beat lights: {'on' if on else 'off'}")
         elif info.get("most_lights"):  # (the lit parts share the 4 keys: just whether it lights them)
             lights = 0 if self._lights_of(a) else 1
             self._pending[(a["id"], "lights")] = lights
@@ -717,7 +792,14 @@ class Watch:
         self._moves.clear()
 
     def _toggle_part(self, a: dict[str, Any], now: float) -> None:
-        """An arrangement's pad on top (the mixer's too): muted, or played again."""
+        """An arrangement's pad on top (the mixer's too): muted, or played again. The drums not made yet: made."""
+        if a["kind"] == "drums" and not a.get("made", True):
+            if a.get("making"):
+                self._say(now, lines=("Drums: making them", "(a minute or so)"))
+                return
+            self.gui.change_part("drums", {"make": True})
+            self._say(now, lines=("Drums: making them", "(a minute or so)"))
+            return
         play = not a["play"]
         self.gui.change_part(a["id"], {"play": play})
         self._said_by_pad(now, f"{a['name']}: {'on' if play else 'off'}")
@@ -1480,12 +1562,27 @@ class Watch:
                     self._mix_slider = GUITAR_COLUMN
             return
         arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        drummed = next((slot for slot, a in enumerate(arrangements) if a["kind"] == "drums"), None)
+        if drummed is not None and not arrangements[drummed].get("made", True):  # (no volume till they're made)
+            if encoder == drummed:
+                self._say(now, lines=("Drums: not made yet", "Their pad on top makes them"))
+                return
+            drummed = None
+        if drummed is not None and encoder in (drummed, CONTROLS):  # (the drum part's own volume)
+            volume = min(max(self._volume_of(drummed, info) + steps * VOLUME_STEP, 0), 127)
+            self._pending[("volume", "drums")] = volume
+            self.gui.change_part("drums", {"volume": volume})
+            if encoder == drummed:
+                self._mix_slider = encoder
+                return
         if encoder == CONTROLS:
             slots = range(len(info.get("volumes") or []))  # (all of them, in this song or not)
         else:
             slots = range(encoder, encoder + 1) if encoder < len(arrangements) else range(0)
         changes = {}
         for slot in slots:
+            if slot == drummed:
+                continue
             volume = min(max(self._volume_of(slot, info) + steps * VOLUME_STEP, 0), 127)
             self._pending[("volume", str(slot))] = volume
             changes[slot] = volume
@@ -1499,7 +1596,12 @@ class Watch:
             self._mix_slider = encoder
 
     def _volume_of(self, slot: int, info: dict[str, Any]) -> int:
-        """The volume of the arrangement in a place in its song (turns not in the page's state yet too)."""
+        """The volume of the arrangement in a place in its song (turns not in the page's state yet too); the drum
+        part's, its own."""
+        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        if slot < len(arrangements) and arrangements[slot]["kind"] == "drums":
+            pending = self._pending.get(("volume", "drums"))
+            return pending if pending is not None else int(arrangements[slot].get("volume", 100))
         pending = self._pending.get(("volume", str(slot)))
         volumes = info.get("volumes") or []
         return pending if pending is not None else int(volumes[slot]) if slot < len(volumes) else 100
@@ -1535,6 +1637,9 @@ class Watch:
             return
         column = min(column, len(arrangements) - 1)
         a, field = arrangements[column], FIELDS[self.field][0]
+        if a["kind"] == "drums":
+            self._say(now, lines=("Drums: no tones", "Volume: in the mixer"))
+            return
         if a.get("output"):  # (on another MIDI device: its programs, ten a step with knob 8)
             program = self._program_of(a)
             program = min(max((-1 if program is None else program) + steps * (10 if by_group else 1), 0), 127)
@@ -1628,6 +1733,16 @@ def _tag(arrangement: dict[str, Any], arrangements: list[dict[str, Any]]) -> str
 def _section_at(sections: list[dict[str, Any]], at: float) -> dict[str, Any] | None:
     """The section a song is in at a time (None: before its first)."""
     return next((x for x in reversed(sections) if x["start"] <= at + 0.001), None)
+
+
+def _dimmed(look: Any, level: float) -> Any:
+    """A pad's or a button's look, this bright (a palette colour as RGB, steady: one RGB doesn't have, as it is)."""
+    if isinstance(look, tuple) and len(look) == 2:  # a button: (colour, brightness)
+        return (look[0], round(look[1] * level))
+    if look[0] == "rgb":
+        return ("rgb", *(round(c * level) for c in look[1:]))
+    rgb = PALETTE_RGB.get(look[1])
+    return look if rgb is None else ("rgb", *(round(c * level) for c in rgb))
 
 
 def _sign(info: dict[str, Any]) -> str | None:

@@ -19,6 +19,16 @@ def no_real_pedal(monkeypatch, tmp_path):
     return switched
 
 
+from rs_keylights import drums  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_real_drums(monkeypatch, tmp_path):
+    """No test reads or writes this Mac's drum parts or finds its drum tools: a cache and a tools folder of its own."""
+    monkeypatch.setattr(drums, "cache_dir", lambda: tmp_path / "drums-cache")
+    monkeypatch.setenv("RS_KEYLIGHTS_DRUMS_TOOLS", str(tmp_path / "drums-tools"))
+
+
 from rs_keylights import gui as gui_module  # noqa: E402
 from rs_keylights.riffloop import GameLoop, GameSongs  # noqa: E402
 

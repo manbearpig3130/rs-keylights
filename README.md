@@ -232,7 +232,11 @@ runs (and gives them back when it stops, so a DAW can have them). It works on th
 song playing, else the active one:
 
 - **The arrangements** (▲ beside the knobs, lit): **pads 1–5 on top** are the song's arrangements (a
-  sixth, rare, is the page's only),
+  sixth, rare, is the page's only), and its drum part after them (white; in a song with five, the fifth place, that arrangement on the
+  page only; not made yet, with the tools there, dim: a tap makes it, pulsing meanwhile, then it plays): its pad on top mutes it, the mixer's knob is its volume (no tones), and
+  its pad below turns **beat lights** on or off: that pad flashes white on each of the song's beats as it plays (or the
+  game's, following), brighter on a bar's first, dim between, and the whole Launchkey pulses with it (every other pad
+  and button dims between beats and is back as it was on each one),
   orange for lead parts, green for rhythm, blue for bass. Bright ones play, muted ones are as dim as their
   colour goes, and the one you play in the game pulses. A tap mutes one or plays it again (the page's mute
   for it, and the mixer's pad: one switch). **Pads 1–5 below**: each one's lit keys, brighter for
@@ -380,6 +384,36 @@ page first: both would take it over).
 
 As each song starts, its scale climbs the keys too, while the song doesn't need them (turn it off in
 Follow Rocksmith). The Launchkey's keys go on playing as usual. Turn the remote off under Keyboard.
+
+### Drums
+
+A song can have a drum part, transcribed from its own audio, that plays along with its arrangements, playing or
+following: on the Casio's drum channel (10, General MIDI drums), or on another device (**Other MIDI devices** ›
+Drums: its port and channel, and its drums' notes, General MIDI's or an original Novation Circuit's 4 drums, on
+notes 60, 62, 64 and 65 of its channel 10). On a Circuit, the Drums card says which of its drums plays each of the
+part's (Drum 1 the kick, 2 the snare, 3 the hi-hats and ride, 4 the crash and toms, as it starts) and a sample of its
+own there (1 to 64; empty: the sample that drum has): it's chosen with that drum's patch select (Control Change 8,
+18, 44 or 50, its Programmer's Reference Guide 1.3) just before its hits, as it's needed, so the Circuit plays more
+than 4 sounds; two of them on one of its drums at once, the kick, snare, crash, ride, hi-hats, then toms first. Under the song's parts, **Drums**
+has **Make drum part** (a minute or so, in the background; then it plays), its volume and its mute; or
+`rs-keylights drums SONG` makes one (`--again` makes it again).
+
+The page's **Drums** card (under the keys) draws a drum kit: each drum lights as the part strikes it (brighter the
+harder), playing or following, and a click strikes it where the drums play (the keyboard's drum channel, or their
+device: its note for it, on hover), to hear it and tune its sound; under it, how many of each the part has.
+
+How it's made: the song's audio taken from its archive and decoded, its drums separated from the rest (the Demucs
+model rearmed-mods' Song Stems runs on the Neural Engine), transcribed with [ADTOF](https://github.com/MZehren/ADTOF)
+(its [PyTorch port](https://github.com/xavriley/ADTOF-pytorch): kick, snare, tom, hi-hat, cymbal), then refined: each
+hit's velocity from how loud it is, the toms low, mid or high by their pitch, the cymbals crash or ride (a ride's hits
+come in steady runs), and every hit snapped to the chart's 16th notes, so it keeps time with the game (Riff Repeater
+and speed changes too). Hi-hats are all closed: open ones can't be told from the cymbals' wash. Parts are kept in
+`~/Library/Caches/rs-keylights/drums/`.
+
+The tools: `tools/drums-setup.sh` (once) builds Song Stems' helper with the drums as a part it takes out, from
+rearmed-mods' source (`~/git/rearmed-mods`, or the folder given), and makes a Python with ADTOF's port, both in
+`~/Library/Application Support/rs-keylights/drums/`. It needs the Xcode command line tools, uv, and rearmed-mods' Song
+Stems installed (its model). rs-keylights itself needs numpy for it: `uv pip install --python .venv/bin/python -e ".[drums]"`.
 
 ### Guitar pedal
 

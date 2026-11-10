@@ -205,7 +205,7 @@ def test_settings_are_kept(server, tmp_path):
         "midi_port": "CASIO USB-MIDI", "channel": 11, "lights_early_ms": 15, "fastest_flash_ms": 70, "launchkey": True,
         "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
         "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {},
-        "most_lights": False,
+        "most_lights": False, "beat_lights": False,
         "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187]}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
@@ -1158,3 +1158,114 @@ def test_the_keys_card_shows_a_change_before_the_song_playing_takes_it(server):
     server.gui.set_song({"song": sid, "parts": {"lead": {"lights": 0}}}, later=30)
     _, roll = call(server, f"/api/roll?id={urllib.request.quote(sid)}")
     assert roll["parts"][0]["lights"] == 0 and not any(lit for *_rest, lit in roll["notes"])
+
+
+def test_a_songs_drum_part_plays_along_on_the_drum_channel_and_making_one_says_why_it_cant(server):
+    from rs_keylights import drums
+    sid = first_song(server)
+    gui = server.gui
+    _, song = call(server, f"/api/song?id={urllib.request.quote(sid)}")
+    assert song["drums"] == {"play": False, "volume": 100, "made": False, "hits": 0, "making": None, "error": None,
+                             "tools": False}
+    ref = gui._load(sid)[0][0]
+    drums.keep(ref, [drums.Hit(1.5, drums.KICK, 110), drums.Hit(1.75, drums.SNARE, 90)])
+    status, info = call(server, "/api/drums", {"song": sid, "play": True, "volume": 90})
+    assert status == 200 and (info["made"], info["hits"], info["play"], info["volume"]) == (True, 2, True, 90)
+    call(server, "/api/play", {"song": sid, "start": 1.4})
+    wait_for(lambda: [m for out in server.outs for m in out.sent if m[0] == 0x99], lambda sent: len(sent) >= 2)
+    sent = [m for out in server.outs for m in out.sent if m[0] in (0x99, 0xB9)]
+    assert [0x99, drums.KICK, 110] in sent and [0x99, drums.SNARE, 90] in sent and [0xB9, 7, 90] in sent  # (its volume)
+    call(server, "/api/stop", {})
+    call(server, "/api/drums", {"song": sid, "make": True})  # (no tools here: why, on the page)
+    info = wait_for(lambda: gui.drums_info(sid), lambda d: d["error"] is not None)
+    assert "drums-setup.sh" in info["error"] and info["making"] is None and info["made"]  # (the one made stays)
+
+
+def test_a_remote_has_a_songs_drum_part_as_one_more_arrangement(server):
+    from rs_keylights import drums
+    sid = first_song(server)
+    gui = server.gui
+    call(server, "/api/play/options", {"song": sid})
+    assert [a["id"] for a in gui.remote_info()["song"]["arrangements"]] == ["lead", "rhythm"]  # (none made)
+    drums.keep(gui._load(sid)[0][0], [drums.Hit(1.0, drums.KICK, 100)])
+    arrangements = gui.remote_info()["song"]["arrangements"]
+    assert [a["id"] for a in arrangements] == ["lead", "rhythm", "drums"] and arrangements[2]["volume"] == 100
+    gui.change_part("drums", {"volume": 70})  # (the Launchkey's: the drum part's own)
+    gui.change_part("drums", {"play": True})
+    assert gui.drums_info(sid)["volume"] == 70 and gui.drums_info(sid)["play"]
+    assert gui.remote_info()["song"]["arrangements"][2]["play"]
+    assert [a["id"] for a in gui._with_drums(sid, [{"id": str(i)} for i in range(5)])] == ["0", "1", "2", "3", "drums",
+                                                                                         "4"]  # (5: its fifth place)
+
+
+def test_a_remote_can_make_a_songs_drum_part_from_its_place_and_then_it_plays(server, monkeypatch):
+    from rs_keylights import drums
+    sid = first_song(server)
+    gui = server.gui
+    call(server, "/api/play/options", {"song": sid})
+    assert [a["id"] for a in gui.remote_info()["song"]["arrangements"]] == ["lead", "rhythm"]  # (no tools: no place)
+    monkeypatch.setattr(drums, "setup_done", lambda tools=None: True)
+    made = []
+
+    def make(ref, beats, game_dir, say=lambda _t: None, **_kw):
+        say("transcribing them")
+        made.append(ref.song_key)
+        hits = [drums.Hit(1.0, drums.KICK, 100)]
+        drums.keep(ref, hits)
+        return hits
+
+    monkeypatch.setattr(drums, "make", make)
+    a = gui.remote_info()["song"]["arrangements"][2]
+    assert (a["id"], a["made"], a["play"], a["making"]) == ("drums", False, False, False)
+    version = gui.play_version
+    gui.change_part("drums", {"make": True})  # (its pad on top)
+    assert gui.play_version > version  # (every page shows it's being made, not just once it's made)
+    a = wait_for(lambda: gui.remote_info()["song"]["arrangements"][2], lambda x: x["made"])
+    assert made and a["play"] and gui.drums_info(sid)["play"]  # (made: playing, as it would after Make on the page)
+
+
+def test_the_drums_card_has_the_songs_drum_part_and_a_drum_struck_sounds_on_the_drum_channel(server):
+    from rs_keylights import drums
+    sid = first_song(server)
+    gui = server.gui
+    _, part = call(server, f"/api/drums/part?id={urllib.request.quote(sid)}")
+    assert (part["made"], part["hits"], part["device"], part["channel"]) == (False, [], None, 10)
+    assert part["names"]["36"] == "kick" and part["notes"]["49"] == 49  # (as General MIDI has them, on the keyboard)
+    drums.keep(gui._load(sid)[0][0], [drums.Hit(1.0, drums.KICK, 110), drums.Hit(1.5, drums.CRASH, 80)])
+    _, part = call(server, f"/api/drums/part?id={urllib.request.quote(sid)}")
+    assert part["made"] and part["hits"] == [[1.0, 36, 110], [1.5, 49, 80]]
+    status, said = call(server, "/api/drums/hit", {"note": 38})
+    assert status == 200 and said == {"played": 38}
+    sent = wait_for(lambda: [m for out in server.outs for m in out.sent if m[0] in (0x99, 0x89)],
+                    lambda m: any(x[0] in (0x99, 0x89) and x[2] == 0 or x[0] == 0x89 for x in m))
+    assert [0x99, 38, 100] in sent  # (struck; let go a moment later)
+
+
+def test_the_drums_on_a_circuit_have_a_kit_its_drums_and_samples_and_a_drum_struck_chooses_its_sample(tmp_path):
+    from rs_keylights import drums
+    from rs_keylights.keyboard import Synth
+    dlc = tmp_path / "game" / "dlc"
+    dlc.mkdir(parents=True)
+    (dlc / "s_m.psarc").write_bytes(song_archive("s", {"lead": ("L", Song(levels={0: [N(1.0)]}))}))
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    index.refresh()
+    class CircuitOut(FakeMidiOut):
+        def get_ports(self):
+            return ["Circuit"]
+
+    circuit = CircuitOut()
+    gui = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False,
+              synth_factory=lambda port: Synth(port, midi_out_factory=lambda: circuit))
+    gui.set_settings({"outputs": {"drums": {"port": "Circuit", "channel": 10, "map": "circuit"}}})
+    kit = gui.settings["outputs"]["drums"]["kit"]
+    assert kit["36"] == [1, None] and kit["51"] == [3, None] and kit["43"] == [4, None]  # (the kit as it starts)
+    gui.set_settings({"outputs": {"drums": {"port": "Circuit", "channel": 10, "map": "circuit", "kit": {"43": [4, 21]}}}})
+    assert gui.settings["outputs"]["drums"]["kit"]["43"] == [4, 21]
+    with pytest.raises(Exception, match="sample"):
+        gui.set_settings({"outputs": {"drums": {"port": "Circuit", "channel": 10, "map": "circuit", "kit": {"43": [4, 65]}}}})
+    sid = gui.library()["songs"][0]["id"]
+    part = gui.drum_part(sid)
+    assert part["device"] == "Circuit" and part["notes"]["43"] == 65 and part["kit"]["43"] == [4, 21]
+    assert gui.hit_drum({"note": drums.TOMS[0]}) == {"played": 65}
+    assert circuit.sent[-2:] == [[0xB9, 50, 20], [0x99, 65, 100]]  # (Drum 4's patch select: sample 21; then it)
+    gui.close()

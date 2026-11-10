@@ -13,7 +13,7 @@ from .library import ArrangementRef
 from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .parts import Part, PlannedPart, VoicesFor, plan, player_for
-from .player import Player
+from .player import Player, Track
 from .sng import Arrangement, note_name
 from .tones import Tone
 
@@ -240,6 +240,8 @@ class Follower:
         self._load = load
         self._voices_for = voices_for  # with sound: the voices (channels and tones) for each arrangement
         self._parts_for = parts_for  # None: just the arrangement played, on every key
+        self._extras_for: Callable[[ArrangementRef], Sequence[Track]] | None = None  # tracks besides the parts (drums)
+        self._extras: list[Track] = []  # (and those playing)
         self.lights_early = lights_early  # seconds the keys light before the notes
         self.fastest_flash = fastest_flash  # a key's repeats closer than this flash on every other note
         self.pooled_lights = False  # the lit parts share the 4 lit keys a moment at a time, the one played first
@@ -417,9 +419,23 @@ class Follower:
         return plan(parts, self._voices_for, strict=False, pooled=self.pooled_lights,
                     first=current)  # (one that doesn't fit the keyboard's channels: just lit)
 
+    def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
+        """Tracks to play besides the parts, for the arrangement played (its song's drum part), or none; the song
+        playing goes on with them from where it is."""
+        self._extras_for = extras_for
+        if self._player is None or self.current is None:
+            return
+        if (list(extras_for(self.current)) if extras_for else []) == self._extras:
+            return  # (the same: what plays goes on as it is, its notes sounding)
+        player = self._player_with(self._planned)
+        player.retime(rate=self._player.rate)
+        self._player.stop()
+        self._player = player  # the next step seeks it to where the song is
+
     def _player_with(self, planned: list[PlannedPart]) -> Player:
         self._planned = planned
-        return player_for(planned, self.keyboard, self.lights_early, self.fastest_flash)
+        self._extras = list(self._extras_for(self.current)) if self._extras_for and self.current is not None else []
+        return player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=self._extras)
 
     def _describe(self, planned: list[PlannedPart]) -> str:
         """How the parts play; for the arrangement played alone on every key, just its voices."""

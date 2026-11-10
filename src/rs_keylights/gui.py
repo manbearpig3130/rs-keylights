@@ -30,7 +30,9 @@ from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, Ke
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
-from .parts import CHANNELS_USED_UP, Part, PlannedPart, VoicesFor, channels_needed, plan, player_for
+from . import drums
+from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlannedPart, VoicesFor, channels_needed, drum_track, plan, player_for
+from .player import Track
 from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
@@ -220,13 +222,14 @@ def _arrangement_id(value: str) -> str:
 
 
 def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
-    """The MIDI device sounding each kind of part (lead, rhythm, bass) other than the keyboard, with a change,
-    checked: its port, channel, and whether it plays a note at a time (a change of None: the keyboard again)."""
+    """The MIDI device sounding each kind of part (lead, rhythm, bass; and a song's drums) other than the keyboard,
+    with a change, checked: its port, channel, and whether it plays a note at a time (drums: its drums' notes,
+    DRUM_MAPS) (a change of None: the keyboard again)."""
     if not isinstance(change, dict):
         raise GuiError("Expected a MIDI device for each kind of part")
     out = dict(table)
     for part, chosen in change.items():
-        if part not in KINDS:
+        if part not in (*KINDS, "drums"):
             raise GuiError(f"No kind of part {part!r}")
         if not chosen:
             out.pop(part, None)
@@ -239,7 +242,61 @@ def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
                      "mono": bool(chosen.get("mono", True)),
                      "program": None if program in (None, "") else int(_number(program, "program", 0, 127)),
                      "octave": int(_number(chosen.get("octave", 0), "octave", -2, 2))}
+        if part == "drums":
+            if chosen.get("map", "gm") not in DRUM_MAPS:
+                raise GuiError(f"No drum notes {chosen.get('map')!r}")
+            out[part]["map"] = chosen.get("map", "gm")
+            out[part]["kit"] = _circuit_kit(chosen.get("kit") or (table.get(part) or {}).get("kit") or {})
     return out
+
+
+def _circuit_kit(change: Any) -> dict[str, list[int | None]]:
+    """A Novation Circuit's drums for each General MIDI drum (CIRCUIT_KIT, changed), checked: which of its 4 drums
+    plays it (1 to 4), and its sound there (one of its samples, 1 to 64; None: the one that drum has)."""
+    if not isinstance(change, dict):
+        raise GuiError("Expected the Circuit's drum for each drum")
+    out = {str(note): list(drum) for note, drum in CIRCUIT_KIT.items()}
+    for note, drum in change.items():
+        if str(note) not in out:
+            raise GuiError(f"No drum {note!r}")
+        if not isinstance(drum, (list, tuple)) or len(drum) != 2:
+            raise GuiError("Expected a Circuit drum (1 to 4) and its sample (1 to 64, or none)")
+        sample = drum[1]
+        out[str(note)] = [int(_number(drum[0], "Circuit drum", 1, 4)),
+                          None if sample in (None, "") else int(_number(sample, "sample", 1, 64))]
+    return out
+
+
+# A song's drum part on another device: its drums' notes. General MIDI's (as the Casio's drum channel has them), or an
+# original Novation Circuit's 4 drums on its channel 10 (its Programmer's Reference Guide 1.3: Drum 1 to 4 on notes 60,
+# 62, 64 and 65, and each one's sample chosen with a Control Change, its patch select, 0 to 63): each drum of the part
+# on one of them (CIRCUIT_KIT, changed on the page), with a sample of its own if it's given one (sent before its hits
+# as it's needed, so one of the Circuit's drums plays several)
+DRUM_MAPS = ("gm", "circuit")
+CIRCUIT_NOTES = {1: 60, 2: 62, 3: 64, 4: 65}
+CIRCUIT_PATCH_SELECT = {1: 8, 2: 18, 3: 44, 4: 50}
+CIRCUIT_KIT: dict[int, tuple[int, int | None]] = {  # (Drum 1 the kick, 2 the snare, 3 the hi-hats and ride: time is
+    # kept on one or the other; 4 the crash and toms)
+    drums.KICK: (1, None), drums.SNARE: (2, None), drums.CLOSED_HAT: (3, None), drums.OPEN_HAT: (3, None),
+    drums.RIDE: (3, None), drums.CRASH: (4, None), **{t: (4, None) for t in drums.TOMS}}
+
+
+def _drum_voicing(output: dict[str, Any] | None) -> tuple[dict[int, int | None], dict[int, tuple[int, int]]]:
+    """The drums' device's notes for each General MIDI drum, and the sounds chosen on it first (CC, value)."""
+    if not output or output.get("map") != "circuit":
+        return {}, {}
+    kit = _circuit_kit(output.get("kit") or {})
+    notes: dict[int, int | None] = {}
+    patches: dict[int, tuple[int, int]] = {}
+    for note, (drum, sample) in kit.items():
+        notes[int(note)] = CIRCUIT_NOTES[int(drum or 1)]
+        if sample:
+            patches[int(note)] = (CIRCUIT_PATCH_SELECT[int(drum or 1)], int(sample) - 1)
+    return notes, patches
+DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
+DRUM_HIT_LENGTH = 0.15  # seconds a drum struck on the page sounds (its sound decays by itself)
+DRUMS_PLACE_MOST = 4  # for a remote, a song's drum part is an arrangement after its own, in this place at most (its
+# fifth: a song with five arrangements has its drums there, its fifth on the page only)
 
 
 def _tone_map(table: dict[str, Any], change: Any) -> dict[str, int | None]:
@@ -410,7 +467,7 @@ class Gui:
                                          "launchkey": True, "keys_sound": True, "keys_lights": True, "ring": True,
                                          "overlap_ms": 120, "listen": False, "listen_device": GUITAR_INPUT,
                                          "tone_changes": True, "tone_map": dict(TONE_KINDS), "techniques": True,
-                                         "outputs": {}, "most_lights": False,
+                                         "outputs": {}, "most_lights": False, "beat_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
                                          "pedal_favourites": list(PEDAL_FAVOURITES)}
@@ -425,6 +482,7 @@ class Gui:
         self._play_saved = False
         self.songs_file = self.settings_file.with_name("songs.json")
         self._by_key: dict[str, str] | None = None  # (song key -> id, for the keys only one song has)
+        self._making: dict[str, dict[str, Any]] = {}  # drum parts being made (or that failed), by song: step, error
         # The game's song list sorted by artist, as last seen following (song keys in its order): where songs with the
         # same sort names (two copies of a song) go, as the game has them in the order it loaded them, not by a name.
         # Taken as the page starts (the library keeps its order while it runs: the Launchkey browses it by place)
@@ -567,6 +625,7 @@ class Gui:
             "sections": _sections(next((a.sections for _r, a in loaded if a.sections), ())),
             "start": self.song_settings.get(sid, {}).get("start", 0),
             "saved": sid in self.song_settings,
+            "drums": self.drums_info(sid),
             "version": self.play_version,
             "parts": [
                 {
@@ -655,6 +714,177 @@ class Gui:
                           for pp in planned],
                 "notes": notes, "lowest": keys.lowest, "highest": keys.highest, "most_lit": keys.max_lit,
                 "pooled": pooled and len(planned) > 1}
+
+    # A song's drum part (drums.py): made from its audio, kept, and played along with its arrangements
+
+    def _drum_settings(self, sid: str) -> dict[str, Any]:
+        own = self.song_settings.get(sid, {}).get("drums", {})
+        return {"play": bool(own.get("play", False)), "volume": int(own.get("volume", DRUMS_VOLUME))}
+
+    def drums_info(self, sid: str) -> dict[str, Any]:
+        """A song's drum part, for the page: whether it's made (its hits), played and how loud, being made (the
+        step) or failed (why), and whether the tools to make one are there."""
+        ref = self._load(sid)[0][0]
+        hits = drums.kept(ref)
+        making = self._making.get(sid, {})
+        return {**self._drum_settings(sid), "made": hits is not None, "hits": len(hits) if hits else 0,
+                "making": making.get("step"), "error": making.get("error"), "tools": drums.setup_done()}
+
+    def _with_drums(self, sid: str, arrangements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """A remote's arrangements of a song, with its drum part as one more: after them, in DRUMS_PLACE_MOST at
+        most (its mute and its volume are the drum part's own; no lit keys or tones). Not made yet, it's there to be
+        made (made: whether it is; making: while it's being made), if the tools to make one are."""
+        try:
+            made = drums.kept(self._load(sid)[0][0]) is not None
+        except (GuiError, OSError, ValueError):
+            return arrangements
+        if not made and not drums.setup_done():
+            return arrangements
+        chosen = self._drum_settings(sid)
+        entry = {"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": made and chosen["play"],
+                 "lights": 0, "tones": {}, "chords": (), "tone_changes": (), "notes": (), "output": None,
+                 "volume": chosen["volume"], "made": made, "making": bool(self._making.get(sid, {}).get("step")),
+                 "error": self._making.get(sid, {}).get("error")}
+        place = min(len(arrangements), DRUMS_PLACE_MOST)
+        return [*arrangements[:place], entry, *arrangements[place:]]
+
+    def _drum_tracks(self, sid: str) -> list[Track]:
+        """A song's drum part as a track, if it's made and played (and there's sound): on the keyboard's drum
+        channel, or the device chosen for drums (outputs), its notes mapped."""
+        chosen = self._drum_settings(sid)
+        if self.play_options["silent"] or not chosen["play"]:
+            return []
+        try:
+            hits = drums.kept(self._load(sid)[0][0])
+        except (GuiError, OSError, ValueError):
+            return []
+        if not hits:
+            return []
+        output = self.settings["outputs"].get("drums")
+        synth = self._synth(output["port"]) if output else None
+        notes, patches = _drum_voicing(output) if output and synth else ({}, {})
+        voices = DrumVoices(channel=output["channel"] if output and synth else drums.DRUM_CHANNEL, notes=notes,
+                            patches=patches, volume=chosen["volume"])
+        return [drum_track(hits, voices, synth)]
+
+    def set_drums(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A song's drum part played or not ("play"), how loud ("volume", 0 to 127), or made ("make": again, if it
+        is), in the background (a minute or so); what plays goes on with it at once."""
+        sid = str(body.get("song", ""))
+        loaded = self._load(sid)
+        if body.get("make"):
+            self._make_drums(sid, loaded)
+        with self._lock:
+            kept = dict(self.song_settings.get(sid, {}))
+            own = dict(kept.get("drums", {}))
+            if "play" in body:
+                own["play"] = bool(body["play"])
+            if "volume" in body:
+                own["volume"] = int(_number(body["volume"], "volume", 0, 127))
+            was = kept.get("drums", {})
+            if own != was:
+                self.song_settings[sid] = {**kept, "drums": own}
+                self._save_songs()
+                self.play_version += 1
+        if own.get("play") != was.get("play"):  # (played or not: what plays goes on with it, or without)
+            self._drums_on(sid)
+        elif own.get("volume") != was.get("volume"):  # (its volume: at once, on its channel, as the parts' are)
+            self._drums_volume_now(sid)
+        return self.drums_info(sid)
+
+    def drum_part(self, sid: str) -> dict[str, Any]:
+        """A song's drum part for the page's drums card: its hits ([seconds, General MIDI note, velocity], none if it
+        isn't made), and where it plays: the keyboard's drum channel, or the device chosen for drums (its port, channel
+        and its notes for each drum)."""
+        hits = drums.kept(self._load(sid)[0][0]) or []
+        chosen = self.settings["outputs"].get("drums")
+        there = chosen is not None and self._synth(chosen["port"]) is not None
+        mapped, _patches = _drum_voicing(chosen) if chosen and there else ({}, {})
+        return {"made": bool(hits), "hits": [[round(h.time, 3), h.note, h.velocity] for h in hits],
+                "device": chosen["port"] if chosen and there else None,
+                "channel": chosen["channel"] if chosen and there else drums.DRUM_CHANNEL,
+                "notes": {str(n): mapped.get(n, n) for n in drums.NAMES}, "names": {str(n): name for n, name in drums.NAMES.items()},
+                "missing": chosen["port"] if chosen and not there else None,
+                "output": chosen, "kit": _circuit_kit((chosen or {}).get("kit") or {})}
+
+    def hit_drum(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A drum struck (from the page's drums card: to hear it, and tune its sound): its General MIDI note
+        ("note"), on the drums' keyboard channel or device as a drum part would play it, at a velocity (100)."""
+        note = int(_number(body.get("note"), "drum", 0, 127))
+        velocity = int(_number(body.get("velocity", 100), "velocity", 1, 127))
+        chosen = self.settings["outputs"].get("drums")
+        synth = self._synth(chosen["port"]) if chosen else None
+        if synth is not None:
+            notes, patches = _drum_voicing(chosen)
+            played = notes.get(note, note)
+            if played is None:
+                return {"played": None}
+            if note in patches:  # (its sound chosen on the device first)
+                synth.control(chosen["channel"], *patches[note])
+            synth.play(chosen["channel"], (played,), velocity)
+            threading.Timer(DRUM_HIT_LENGTH, lambda: synth.stop(chosen["channel"], (played,))).start()
+            return {"played": played}
+        with self._keys_lock:
+            keyboard = self._keys_keyboard(open_one=True)
+            if keyboard is None:
+                raise GuiError("No keyboard to play it on")
+            keyboard.sound(drums.DRUM_CHANNEL, note, velocity)
+        threading.Timer(DRUM_HIT_LENGTH, lambda: keyboard.sound(drums.DRUM_CHANNEL, note, 0)).start()
+        return {"played": note}
+
+    def _drums_volume_now(self, sid: str) -> None:
+        """A song's drum part, playing or followed, at its volume now (its channel's, on its keyboard or device)."""
+        with self._lock:
+            session = self._session
+        if not (isinstance(session, (Playback, Following)) and session.running):
+            return
+        if isinstance(session, Playback) and not (self._playing and self._playing["id"] == sid):
+            return
+        for track in self._drum_tracks(sid):
+            if isinstance(track.voices, DrumVoices):
+                sound: Any = track.sound or session.keyboard
+                sound.set_volume(track.voices.channel, track.voices.volume)
+
+    def _drums_on(self, sid: str) -> None:
+        """What plays (this song, playing or followed) goes on with its drum part as it is now."""
+        with self._lock:
+            session = self._session
+        if isinstance(session, Following) and session.running:
+            session.set_extras(lambda ref: self._drum_tracks(song_id(ref)))
+        elif self._playing and self._playing["id"] == sid:
+            self._play_on(sid)
+
+    def _make_drums(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> None:
+        """A song's drum part made, on a thread of its own; once it's made, played (and what plays goes on with it)."""
+        with self._lock:
+            if self._making.get(sid, {}).get("step"):
+                return  # (being made)
+            self._making[sid] = {"step": "starting", "error": None}
+            self.play_version += 1  # (every page shows it's being made, however it was asked for)
+        ref = loaded[0][0]
+        beats = next((a.beats for _r, a in loaded if a.beats), ())
+
+        def step(text: str) -> None:
+            self._making[sid] = {"step": text, "error": None}
+
+        def run() -> None:
+            try:
+                drums.make(ref, beats, self.index.game_dir, say=step)
+            except Exception as exc:  # (a tool missing, or failing: said on the page)
+                self._making[sid] = {"step": None, "error": str(exc)}
+                with self._lock:
+                    self.play_version += 1
+                return
+            self._making.pop(sid, None)
+            with self._lock:
+                kept = dict(self.song_settings.get(sid, {}))
+                if "play" not in kept.get("drums", {}):  # (made: played, unless it was turned off)
+                    self.song_settings[sid] = {**kept, "drums": {**kept.get("drums", {}), "play": True}}
+                    self._save_songs()
+                self.play_version += 1
+            self._drums_on(sid)
+
+        threading.Thread(target=run, name="drums", daemon=True).start()
 
     def _song_parts(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> list[dict[str, Any]]:
         """A song's parts as chosen to play: unless chosen otherwise, as default_lights has them."""
@@ -777,6 +1007,24 @@ class Gui:
             self.play_version += 1
             self._save()
         return self.state()
+
+    def toggle_beat_lights(self) -> bool:
+        """A remote's lights pulsing to the song's beat (its drums' pad below: a metronome you see), on or off; kept."""
+        with self._lock:
+            on = not self.settings["beat_lights"]
+            self.settings["beat_lights"] = self._kept["beat_lights"] = on
+            self._save()
+        return on
+
+    def _beats_of(self, sid: str) -> dict[str, Any]:
+        """A song's beats and the bars' first beats, as its chart has them (its first arrangement with them), for a
+        remote's beat lights."""
+        try:
+            loaded = self._load(sid)
+        except (GuiError, OSError, ValueError):
+            return {"beats": (), "bars": ()}
+        a = next((a for _r, a in loaded if a.beats), None)
+        return {"beats": a.beats if a else (), "bars": a.bars if a else ()}
 
     def toggle_real_pitch(self) -> bool:
         """Real pitch on or off, for what's followed or played; whether it's on now."""
@@ -1030,7 +1278,8 @@ class Gui:
         if not isinstance(session, Playback) or not session.running or not self._playing or self._playing["id"] != sid:
             return
         planned, length = self._plan(sid)
-        session.replace(player_for(planned, session.keyboard, *self._light_timing()), length)
+        session.replace(player_for(planned, session.keyboard, *self._light_timing(), extra=self._drum_tracks(sid)),
+                        length)
         self._playing, self._planned_now = self._describe(sid, planned), planned
 
     def _load(self, sid: str) -> list[tuple[ArrangementRef, Arrangement]]:
@@ -1189,8 +1438,8 @@ class Gui:
                 self._stop()
                 keyboard = self._open_keyboard()
                 try:
-                    playback = Playback(player_for(planned, keyboard, *self._light_timing()), keyboard, length, start,
-                                        speed)
+                    playback = Playback(player_for(planned, keyboard, *self._light_timing(),
+                                                   extra=self._drum_tracks(sid)), keyboard, length, start, speed)
                 except Exception:
                     keyboard.close()
                     raise
@@ -1305,6 +1554,7 @@ class Gui:
         if session is self._session and session.running:
             session.follower.pooled_lights = bool(self.settings["most_lights"])
             session.set_parts(self._follow_voices(), self._follow_parts())
+            session.set_extras(lambda ref: self._drum_tracks(song_id(ref)))
 
     def _replay(self, key: str, action: Callable[[], None], later: float) -> None:
         """(Holding _lock.) Plays the parts again with changes: now, or once they stop coming for later seconds
@@ -1347,6 +1597,7 @@ class Gui:
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
                                       parts_for=self._follow_parts(), trace=self._trace)
                 following.follower.pooled_lights = bool(self.settings["most_lights"])
+                following.set_extras(lambda ref: self._drum_tracks(song_id(ref)))  # (its song's drum part)
                 following.start()
                 self._session, self._followed = following, None
         return self.state()
@@ -1440,10 +1691,10 @@ class Gui:
                                              lambda ref: self.follow_settings["arrangements"].get(ref.persistent_id, {}))
                 notes = self._notes(followed["id"], lambda ref: ref.persistent_id)
                 followed = {**followed, "lyrics": self._lyrics(followed["id"]),
-                            "arrangements": [{**a, "chords": chords.get(a["id"], ()),
-                                              "tone_changes": changes.get(a["id"], ()), "notes": notes.get(a["id"], ()),
-                                              "output": self._output_of(a["kind"])}
-                                             for a in followed["arrangements"]]}
+                            "arrangements": self._with_drums(followed["id"], [
+                                {**a, "chords": chords.get(a["id"], ()), "tone_changes": changes.get(a["id"], ()),
+                                 "notes": notes.get(a["id"], ()), "output": self._output_of(a["kind"])}
+                                for a in followed["arrangements"]])}
             self._riff_sync(followed["id"] if followed else None)
             length = None
             if followed is not None:
@@ -1459,13 +1710,14 @@ class Gui:
             if said is not None and said.accelerator is not None:  # (and its Accelerator: its menu's switch)
                 self._riff_settings = {**self._riff_settings, "accelerator": said.accelerator}
             return {"mode": "follow", "sound": not self.play_options["silent"], "real_pitch": info["real_pitch"], **defaults,
-                    "song": followed, "position": None, "length": length, "paused": state == "paused",
+                    "song": followed and {**followed, **self._beats_of(followed["id"])}, "position": None, "length": length,
+                    "paused": state == "paused",
                     "state": state, "connected": connected,
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "music": self.game_music(), "volumes": list(self.settings["volumes"]),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
-                    "most_lights": bool(self.settings["most_lights"])}
+                    "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
         sid, song = playing or self.play_options.get("song"), None
         position = length = None
         if sid:
@@ -1479,12 +1731,13 @@ class Gui:
                                              lambda ref: self.song_settings.get(sid, {}).get("parts", {}).get(ref.part, {}))
                 notes = self._notes(sid, lambda ref: ref.part)
                 song = {"id": sid, "title": details["title"], "key": details["key"], "played": None,
-                        "sections": details["sections"], "lyrics": self._lyrics(sid),
-                        "arrangements": [{"id": p["part"], "name": p["name"], "kind": p["kind"], "playing": False,
-                                          "play": p["play"], "lights": p["lights"], "tones": p["tones"],
-                                          "chords": chords.get(p["part"], ()), "tone_changes": changes.get(p["part"], ()),
-                                          "notes": notes.get(p["part"], ()), "output": self._output_of(p["kind"])}
-                                         for p in details["parts"]]}
+                        "sections": details["sections"], "lyrics": self._lyrics(sid), **self._beats_of(sid),
+                        "arrangements": self._with_drums(sid, [
+                            {"id": p["part"], "name": p["name"], "kind": p["kind"], "playing": False,
+                             "play": p["play"], "lights": p["lights"], "tones": p["tones"],
+                             "chords": chords.get(p["part"], ()), "tone_changes": changes.get(p["part"], ()),
+                             "notes": notes.get(p["part"], ()), "output": self._output_of(p["kind"])}
+                            for p in details["parts"]])}
                 position, length = details["start"], details["length"]
         paused = False
         session = self._session
@@ -1495,7 +1748,7 @@ class Gui:
                 "length": length, "paused": paused, "speed": self.play_options["speed"],
                 "volumes": list(self.settings["volumes"]), "loop": self.loop_info(sid),
                 "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
-                    "most_lights": bool(self.settings["most_lights"])}
+                    "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
 
     def _chords(self, sid: str, key: Callable[[ArrangementRef], str]) -> dict[str, tuple[Chord, ...]]:
         """A song's arrangements' chords, by their key (the part, or its persistent ID); none if it's gone."""
@@ -1867,6 +2120,12 @@ class Gui:
         info = self.remote_info()
         song = info["song"]
         if song is None or not changes:
+            return
+        changes = dict(changes)
+        drummed = changes.pop("drums", None)  # (the drum part: its own mute and volume)
+        if drummed is not None:
+            self.set_drums({"song": song["id"], **{k: v for k, v in drummed.items() if k in ("play", "volume", "make")}})
+        if not changes:
             return
         if info["mode"] == "follow":
             body: dict[str, Any] = {}
@@ -2658,6 +2917,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.library())
             elif url.path == "/api/song":
                 self._json(200, gui.song(parse_qs(url.query).get("id", [""])[0]))
+            elif url.path == "/api/drums/part":
+                self._json(200, gui.drum_part(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/roll":
                 query = parse_qs(url.query)
                 self._json(200, gui.roll(query.get("id", [""])[0], query.get("part", [None])[0] or None))
@@ -2731,6 +2992,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/pedal": lambda: gui.set_pedal(body),
             "/api/riff": lambda: gui.set_game_riff(body),
             "/api/game/music": lambda: gui.set_game_music(body),
+            "/api/drums": lambda: gui.set_drums(body),
+            "/api/drums/hit": lambda: gui.hit_drum(body),
             "/api/reindex": gui.reindex,
         }
         route = routes.get(url.path)

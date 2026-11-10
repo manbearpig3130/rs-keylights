@@ -3,14 +3,15 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from typing import Callable
+from typing import Callable, Sequence
 
 from .follow import TICK, Follower, OverlayClient, PartsFor
+from .library import ArrangementRef
 from .keyboard import Keyboard
 from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .parts import VoicesFor
-from .player import Player
+from .player import Player, Track
 
 # Sessions that run in the background and can be stopped: playing a song (pause, seek, speed and an A-B loop
 # while it plays) and following the game.
@@ -223,6 +224,11 @@ class Following:
         """Other tones (or none) or parts: what plays goes on with them from where the song is."""
         with self._lock:
             self.follower.set_parts(voices_for, parts_for)
+
+    def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
+        """Tracks besides the parts (a song's drum part): what plays goes on with them from where the song is."""
+        with self._lock:
+            self.follower.set_extras(extras_for)
 
     @property
     def showing(self) -> bool:

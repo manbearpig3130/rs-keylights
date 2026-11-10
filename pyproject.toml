@@ -18,6 +18,9 @@ test = [
     "pytest>=8.0",
     "pyright>=1.1",
 ]
+drums = [  # making a song's drum part (rs-keylights drums; with tools/drums-setup.sh's tools)
+    "numpy>=1.26",
+]
 listen = [  # hearing a guitar (the Guitar card, rs-keylights listen)
     "numpy>=1.26",
     "sounddevice>=0.4.6",

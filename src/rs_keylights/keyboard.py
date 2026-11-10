@@ -419,6 +419,11 @@ class Synth:
             self._send([0xE0 | (channel - 1), value & 0x7F, value >> 7])
             self._bent.add(channel)
 
+    def control(self, channel: int, number: int, value: int) -> None:
+        """A Control Change on its channel (a Novation Circuit's drum patch select, say)."""
+        with self._lock:
+            self._send([0xB0 | (channel - 1), number, value])
+
     def modulate(self, channel: int, depth: int) -> None:
         with self._lock:
             self._send([0xB0 | (channel - 1), MODULATION, min(max(depth, 0), 127)])

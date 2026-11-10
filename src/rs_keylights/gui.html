@@ -229,6 +229,19 @@
   .fretboard .live-shape.live-root.live-hit circle { fill: var(--accent); stroke: var(--accent); }
   .fretboard .live-shape.live-root.live-hit text { fill: var(--accent-text); }
   .fretboard .live-next { fill: none; stroke: var(--live); stroke-width: 2; opacity: .55; }
+  .drumkit svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
+  .drumkit .piece { cursor: pointer; }
+  .drumkit .shell { fill: var(--input); stroke: var(--muted); stroke-width: 1.5; }
+  .drumkit .head { fill: var(--panel); stroke: var(--muted); stroke-width: 1.5; }
+  .drumkit .metal { fill: color-mix(in srgb, var(--warn) 30%, var(--panel)); stroke: var(--muted); stroke-width: 1.2; }
+  .drumkit .stand { stroke: var(--line); stroke-width: 2; }
+  .drumkit .glow { fill: var(--live); pointer-events: none; }
+  .drumkit .piece:hover .head, .drumkit .piece:hover .metal { stroke: var(--text); stroke-width: 2.2; }
+  .circuit-kit { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 14px; margin-top: 10px; font-size: 13px; }
+  .circuit-kit label { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+  .circuit-kit .name { flex: 1; color: var(--muted); }
+  .circuit-kit input { width: 52px; }
+  .drumkit text { font-size: 11px; fill: var(--muted); text-anchor: middle; pointer-events: none; }
   .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; }
   .roll-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
@@ -327,6 +340,15 @@
     </div>
     <div id="roll" class="roll"><canvas id="rollCanvas" aria-label="The notes falling onto the keys"></canvas></div>
     <div id="rollLegend" class="roll-legend"></div>
+  </section>
+
+  <section id="drumsCard" class="card" hidden>
+    <div class="fret-head">
+      <h3 id="drumsTitle">Drums</h3>
+    </div>
+    <div id="drumkit" class="drumkit"></div>
+    <div id="drumsInfo" class="roll-legend"></div>
+    <div id="circuitKit" class="circuit-kit" hidden></div>
   </section>
   </div>
 
@@ -1127,6 +1149,173 @@ $("rollPart").addEventListener("change", () => {
   if (selected) renderRoll(selected, followedSong());
 });
 
+// The drums: a drum kit drawn from the front, each drum lighting as the song's drum part strikes it (brighter the
+// harder, fading), playing or following; a click strikes it, where the drums play (the keyboard's drum channel or
+// their device, its note for it), to hear it and tune its sound. Under it, how many of each the part has and where
+// it plays. GET /api/drums/part, POST /api/drums/hit
+const KIT = {  // each drum: its General MIDI notes (the first struck by a click), name, and how it's drawn
+  crash: {notes: [49], name: "Crash", shape: "cymbal", x: 150, y: 52, w: 80},
+  ride: {notes: [51], name: "Ride", shape: "cymbal", x: 500, y: 62, w: 92},
+  hihat: {notes: [42, 46], name: "Hi-hat", shape: "hat", x: 62, y: 150, w: 52},
+  high: {notes: [50], name: "High tom", shape: "tom", x: 262, y: 108, w: 40, h: 34},
+  mid: {notes: [47], name: "Mid tom", shape: "tom", x: 372, y: 108, w: 44, h: 38},
+  snare: {notes: [38], name: "Snare", shape: "tom", x: 170, y: 192, w: 50, h: 26},
+  low: {notes: [43], name: "Low tom", shape: "tom", x: 500, y: 188, w: 56, h: 64},
+  kick: {notes: [36, 35], name: "Kick", shape: "kick", x: 318, y: 232, w: 64},
+};
+const DRUM_FLASH = 0.18;  // seconds a drum's light fades over
+let drumsData = null, drumsWanted = "", drumsOutputs = "", drumsFlash = new Map(), drumsShown = "";
+
+function kitSvg() {
+  const out = [], piece = (key, body) => out.push(`<g class="piece" data-drum="${key}">${body}</g>`);
+  for (const [key, d] of Object.entries(KIT)) {
+    if (d.shape === "cymbal") {
+      piece(key, `<line class="stand" x1="${d.x}" y1="${d.y}" x2="${d.x}" y2="285"/>` +
+        `<ellipse class="metal" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}"/>` +
+        `<ellipse class="glow" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}" opacity="0"/>` +
+        `<text x="${d.x}" y="${d.y - d.w * 0.14 - 5}">${d.name}</text>`);
+    } else if (d.shape === "hat") {
+      piece(key, `<line class="stand" x1="${d.x}" y1="${d.y}" x2="${d.x}" y2="285"/>` +
+        `<ellipse class="metal" cx="${d.x}" cy="${d.y + 7}" rx="${d.w}" ry="${d.w * 0.14}"/>` +
+        `<ellipse class="metal" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}"/>` +
+        `<ellipse class="glow" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}" opacity="0"/>` +
+        `<text x="${d.x}" y="${d.y - d.w * 0.14 - 5}">${d.name}</text>`);
+    } else if (d.shape === "tom") {
+      const top = d.y, ry = d.w * 0.28;
+      piece(key, (key === "low" || key === "snare" ? `<line class="stand" x1="${d.x}" y1="${top + d.h}" x2="${d.x}" y2="285"/>` : "") +
+        `<rect class="shell" x="${d.x - d.w}" y="${top}" width="${d.w * 2}" height="${d.h}"/>` +
+        `<ellipse class="shell" cx="${d.x}" cy="${top + d.h}" rx="${d.w}" ry="${ry}"/>` +
+        `<ellipse class="head" cx="${d.x}" cy="${top}" rx="${d.w}" ry="${ry}"/>` +
+        `<ellipse class="glow" cx="${d.x}" cy="${top}" rx="${d.w}" ry="${ry}" opacity="0"/>` +
+        `<text x="${d.x}" y="${top - ry - 5}">${d.name}</text>`);
+    } else {
+      piece(key, `<circle class="head" cx="${d.x}" cy="${d.y}" r="${d.w}"/>` +
+        `<circle class="glow" cx="${d.x}" cy="${d.y}" r="${d.w}" opacity="0"/>` +
+        `<text x="${d.x}" y="${d.y + 4}">${d.name}</text>`);
+    }
+  }
+  return `<svg viewBox="0 0 620 304" role="img" aria-label="A drum kit: click a drum to hear it">${out.join("")}</svg>`;
+}
+
+function renderDrumsCard(s) {
+  const card = $("drumsCard");
+  card.hidden = !s;
+  if (card.hidden) return;
+  if (!$("drumkit").firstChild) {
+    $("drumkit").innerHTML = kitSvg();
+    for (const g of $("drumkit").querySelectorAll(".piece")) {
+      g.addEventListener("click", () => {
+        const d = KIT[g.dataset.drum];
+        drumsFlash.set(g.dataset.drum, {at: performance.now(), velocity: 110});
+        act(() => api("/api/drums/hit", {note: d.notes[0]}));
+      });
+    }
+  }
+  const wanted = `${s.id}|${s.drums ? s.drums.hits : 0}|${drumsOutputs}`;
+  if (drumsWanted === wanted) return;
+  drumsWanted = wanted;
+  api(`/api/drums/part?id=${encodeURIComponent(s.id)}`).then((d) => {
+    if (drumsWanted !== wanted) return;
+    const byNote = new Map();
+    for (const [t, note, velocity] of d.hits) {
+      const key = Object.keys(KIT).find((k) => KIT[k].notes.includes(note));
+      if (!key) continue;
+      if (!byNote.has(key)) byNote.set(key, {times: [], velocities: []});
+      byNote.get(key).times.push(t);
+      byNote.get(key).velocities.push(velocity);
+    }
+    drumsData = {...d, byDrum: byNote};
+    drumsShown = "";
+    for (const g of $("drumkit").querySelectorAll(".piece")) {
+      const k = KIT[g.dataset.drum], note = d.notes[String(k.notes[0])];
+      g.querySelector("title")?.remove();
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = `${k.name}: ` + (note == null ? "not played on this device" :
+        d.device ? `${d.device}'s note ${note}` : `note ${note}`) + " (click to hear it)";
+      g.prepend(title);
+    }
+    const counts = Object.entries(KIT).map(([key, k]) => [k.name, byNote.has(key) ? byNote.get(key).times.length : 0])
+      .filter(([, n]) => n).map(([name, n]) => `${name.toLowerCase()} ${n}`);
+    const where = d.missing ? `its device (${d.missing}) isn't connected: the keyboard's drum channel` :
+      d.device ? `${d.device}, channel ${d.channel}` : `the keyboard's drum channel (${d.channel})`;
+    showCircuitKit(d);
+    $("drumsTitle").textContent = d.made ? "Drums" : "Drums · no drum part yet";
+    $("drumsInfo").innerHTML = (d.made ? `<span>${d.hits.length} hits: ${esc(counts.join(" · "))}</span>` :
+      `<span>Make one in the song's Drums block (under its parts); click a drum to hear it meanwhile</span>`) +
+      `<span>Plays on ${esc(where)}</span>`;
+  }).catch(() => { if (drumsWanted === wanted) drumsWanted = ""; });
+}
+
+// The drums on a Novation Circuit: each drum of the part on one of its 4 drums, with a sample of its own there (1 to
+// 64: sent before its hits as it's needed; empty: the sample that drum has), so the Circuit plays more than 4. Click
+// the drum above to hear it with it.
+const CIRCUIT_ROWS = [[36, "Kick"], [38, "Snare"], [42, "Hi-hat"], [46, "Open hi-hat"], [51, "Ride"], [49, "Crash"],
+  [50, "High tom"], [47, "Mid tom"], [43, "Low tom"]];
+function showCircuitKit(d) {
+  const box = $("circuitKit"), circuit = !!(d.device && d.output && d.output.map === "circuit");
+  box.hidden = !circuit;
+  if (!circuit) return;
+  box.replaceChildren(...CIRCUIT_ROWS.map(([note, name]) => {
+    const [drum, sample] = d.kit[String(note)] || [1, null];
+    const row = document.createElement("label");
+    row.title = "Which of the Circuit's 4 drums plays it, and its sample there (1 to 64; empty: the sample that drum " +
+      "has). Two drums on one Circuit drum at once: the kick, snare, crash, ride, hi-hats, then toms first";
+    const label = document.createElement("span");
+    label.className = "name";
+    label.textContent = name;
+    const which = document.createElement("select");
+    which.innerHTML = [1, 2, 3, 4].map((n) => `<option value="${n}">Drum ${n}</option>`).join("");
+    which.value = String(drum);
+    const number = document.createElement("input");
+    number.type = "number";
+    number.min = "1";
+    number.max = "64";
+    number.placeholder = "its own";
+    number.value = sample == null ? "" : String(sample);
+    const send = () => act(async () => {
+      const kit = {...d.kit, [note]: [Number(which.value), number.value ? Number(number.value) : null]};
+      await api("/api/settings", {outputs: {drums: {...d.output, kit}}});
+      drumsWanted = "";  // (asked again: the kit as it's kept)
+      if (selected) renderDrumsCard(selected);
+    });
+    which.addEventListener("change", send);
+    number.addEventListener("change", send);
+    row.append(label, which, number);
+    return row;
+  }));
+}
+
+function drumsFrame() {
+  requestAnimationFrame(drumsFrame);
+  const s = selected;
+  if (!s || $("drumsCard").hidden || !$("drumkit").firstChild) return;
+  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
+  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+  const at = clock && clock.moving ? clock.position + since : null;  // (lit only as it plays)
+  const now = performance.now(), lights = [];
+  for (const g of $("drumkit").querySelectorAll(".piece")) {
+    const key = g.dataset.drum;
+    let level = 0;
+    const struck = drumsData && drumsData.byDrum.get(key);
+    if (struck && at !== null) {
+      let lo = 0, hi = struck.times.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (struck.times[mid] <= at) lo = mid + 1; else hi = mid; }
+      const i = lo - 1;
+      if (i >= 0 && at - struck.times[i] < DRUM_FLASH) level = struck.velocities[i] / 127 * (1 - (at - struck.times[i]) / DRUM_FLASH);
+    }
+    const clicked = drumsFlash.get(key);
+    if (clicked) {
+      const age = (now - clicked.at) / 1000;
+      if (age < DRUM_FLASH * 2) level = Math.max(level, clicked.velocity / 127 * (1 - age / (DRUM_FLASH * 2)));
+      else drumsFlash.delete(key);
+    }
+    lights.push(level.toFixed(2));
+    g.querySelector(".glow").setAttribute("opacity", (level * 0.85).toFixed(2));
+  }
+  drumsShown = lights.join(",");
+}
+requestAnimationFrame(drumsFrame);
+
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
 function litControl(value, others, onChange) {
   const box = document.createElement("span");
@@ -1378,8 +1567,15 @@ async function loadLibrary(data) {
 let songShown = -1;  // the version of the play settings the page shows
 let songBusy = false;
 
+// (The song wanted, songTarget: an answer is used only if it's still the one wanted, so a song selected
+// meanwhile, say by the Launchkey, isn't put back by an older one arriving late; the latest select wins)
+let songWanted = 0, songTarget = null;
 async function selectSong(id) {
-  selected = await api("/api/song?id=" + encodeURIComponent(id));
+  const asked = ++songWanted;
+  songTarget = id;
+  const song = await api("/api/song?id=" + encodeURIComponent(id));
+  if (asked !== songWanted) return;
+  selected = song;
   store.set("rsk.last", id);
   await moveOldSong();
   songShown = selected.version;
@@ -1409,14 +1605,17 @@ async function moveOldSong() {
 async function changeSong(change) {
   const id = selected.id;
   songBusy = true;
+  let song;
   try {
-    selected = await api("/api/song/settings", {song: id, ...change});
+    song = await api("/api/song/settings", {song: id, ...change});
   } catch (e) {
     toast(e.message);
-    selected = await api("/api/song?id=" + encodeURIComponent(id));
+    song = await api("/api/song?id=" + encodeURIComponent(id));
   } finally {
     songBusy = false;
   }
+  if (!selected || selected.id !== id) return;  // (another song selected meanwhile: it stays)
+  selected = song;
   songShown = selected.version;
   renderSong();
 }
@@ -1431,8 +1630,9 @@ function renderActive() {
   $("activeBadge").textContent = following ? "● following" : "● active";
   $("activeBadge").hidden = following ? !followedSong() : !here;
   const bar = $("activeBar");
-  bar.hidden = following || here;
-  if (following || here) return;
+  const switching = songTarget === state.active && selected.id !== songTarget;  // (on its way: no bar meanwhile)
+  bar.hidden = following || here || switching;
+  if (bar.hidden) return;
   const active = songs.find((song) => song.id === state.active);
   bar.innerHTML = "";
   const note = document.createElement("span");
@@ -1470,6 +1670,7 @@ function renderSong() {
   renderFretboard(s);
   renderTab(s);
   renderRoll(s, f);
+  renderDrumsCard(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
     $("songArt").classList.add("none");
@@ -1499,6 +1700,7 @@ function renderSong() {
       }));
     }
   }
+  if (s.drums) rows.appendChild(drumsBlock(s));
   $("parts").replaceChildren(rows);
   showOptions();
   $("slider").max = String(s.length);
@@ -1513,6 +1715,80 @@ function renderSong() {
   } else {
     checkLights();
   }
+}
+
+// The song's drum part: made from its audio (Make drum part: a minute or so, in the background), then played
+// along with its arrangements, playing or following, on the keyboard's drum channel or the device chosen for drums
+// (Other MIDI devices); its volume and mute. POST /api/drums
+let drumsPoll = null;
+function drumsBlock(s) {
+  const d = s.drums, block = document.createElement("div");
+  block.className = "part-block" + (d.made && d.play ? "" : " off");
+  const head = document.createElement("div");
+  head.className = "part-head";
+  const name = document.createElement("span");
+  name.className = "part-name";
+  const detail = d.making ? `making it: ${d.making}…` : d.made ? `${d.hits} hits, transcribed from the song's audio` :
+    "no drum part yet";
+  name.innerHTML = `<b>Drums</b> <span class="muted small">${esc(detail)}</span>`;
+  head.append(name);
+  const send = (body) => act(async () => {
+    const info = await api("/api/drums", {song: s.id, ...body});
+    if (selected && selected.id === s.id) {
+      selected = {...selected, drums: info};
+      renderSong();
+    }
+  });
+  if (d.made) {
+    const volume = document.createElement("label");
+    volume.className = "part-volume";
+    volume.title = "Its volume (100%: as it starts), this song's";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "127";
+    slider.value = String(d.volume);
+    const shown = document.createElement("output");
+    shown.textContent = `${slider.value}%`;
+    slider.addEventListener("input", () => { shown.textContent = `${slider.value}%`; });
+    slider.addEventListener("change", () => send({volume: Number(slider.value)}));
+    const mute = document.createElement("button");
+    mute.type = "button";
+    mute.className = "part-mute" + (d.play ? "" : " on");
+    mute.textContent = d.play ? "🔊" : "🔇";
+    mute.title = d.play ? "Mute the drums" : "Muted: play the drums";
+    mute.addEventListener("click", (e) => { e.preventDefault(); send({play: !d.play}); });
+    volume.append("Volume", slider, shown, mute);
+    head.append(volume);
+  }
+  const make = document.createElement("button");
+  make.type = "button";
+  make.className = "part-fold";
+  make.textContent = d.made ? "Make again" : "Make drum part";
+  make.disabled = !!d.making || !d.tools;
+  make.title = d.tools ? "Transcribe the drums from the song's audio (a minute or so, in the background)" :
+    "The tools aren't there yet: run tools/drums-setup.sh in rs-keylights' folder";
+  make.addEventListener("click", (e) => { e.preventDefault(); send({make: true}); });
+  head.append(make);
+  block.append(head);
+  if (d.error || !d.tools) {
+    const note = document.createElement("div");
+    note.className = "muted small";
+    note.textContent = d.error ? `Couldn't make it: ${d.error}` : "To make drum parts, run tools/drums-setup.sh first.";
+    block.append(note);
+  }
+  clearTimeout(drumsPoll);  // (being made: its step, until it's done)
+  if (d.making) {
+    drumsPoll = setTimeout(async () => {
+      if (!selected || selected.id !== s.id) return;
+      const again = await api(`/api/song?id=${encodeURIComponent(s.id)}`).catch(() => null);
+      if (again && selected && selected.id === s.id) {
+        selected = again;
+        renderSong();
+      }
+    }, 2000);
+  }
+  return block;
 }
 
 // A part: its name (and whether it's the one played in the game), the keys it lights, its volume and whether
@@ -1690,7 +1966,11 @@ async function moveOldOptions() {
 async function refreshSong() {
   await loadPlayOptions();
   if (selected) {
-    selected = await api("/api/song?id=" + encodeURIComponent(selected.id));
+    const id = selected.id;
+    if (songTarget && songTarget !== id) return;  // (another song being selected: it comes with them)
+    const song = await api("/api/song?id=" + encodeURIComponent(id));
+    if (!selected || selected.id !== id || (songTarget && songTarget !== id)) return;  // (another selected meanwhile)
+    selected = song;
     songShown = selected.version;
     renderSong();
   }
@@ -1799,7 +2079,8 @@ function showState(st) {
   noteFretClock(st);
   showSongTones(st);
   showKeys(st.keys);
-  for (const slider of document.querySelectorAll("#parts .part-volume input")) {  // (the Launchkey's mixer too)
+  for (const slider of document.querySelectorAll("#parts .part-volume input[data-slot]")) {  // (the Launchkey's mixer
+    // too; the drums' slider is the song's own)
     const volume = String((st.volumes || [])[slider.dataset.slot] ?? 100);
     if (slider !== document.activeElement && slider.value !== volume) {
       slider.value = volume;
@@ -1809,12 +2090,12 @@ function showState(st) {
   const goTo = st.mode === "following" ? st.follow.song_id : st.song ? st.song.id : st.active;
   status.classList.toggle("link", !!goTo && (!selected || selected.id !== goTo));
   status.title = status.title || (goTo ? "Show it" : "");
+  showBrowse(st.browse, st.active);  // (first: a song the Launchkey switched to is on its way before the bar's drawn)
   if (markedId() !== shownActive) {
     shownActive = markedId();
     markRows();
     renderActive();
   }
-  showBrowse(st.browse, st.active);
   const followedId = st.mode === "following" ? st.follow.song_id : null;  // the song the game plays, shown
   if (followedId && (!selected || selected.id !== followedId) && !followSelecting) {
     followSelecting = true;
@@ -2155,7 +2436,7 @@ function showToneKinds(table) {
 function showOutputs(s) {
   const rows = document.createDocumentFragment();
   const others = s.ports.filter((port) => port !== s.midi_port);
-  for (const part of ["lead", "rhythm", "bass"]) {
+  for (const part of ["lead", "rhythm", "bass", "drums"]) {
     const chosen = (s.outputs || {})[part];
     const label = document.createElement("label");
     label.textContent = part[0].toUpperCase() + part.slice(1);
@@ -2172,7 +2453,7 @@ function showOutputs(s) {
     channel.max = "16";
     channel.style.width = "56px";
     channel.title = "Its MIDI channel (the device's own: a Korg monologue's is 1 unless set otherwise)";
-    channel.value = String(chosen ? chosen.channel : 1);
+    channel.value = String(chosen ? chosen.channel : part === "drums" ? 10 : 1);
     const mono = document.createElement("label");
     mono.title = "Each note stops as the next sounds, as a monophonic synth plays them";
     const monoBox = document.createElement("input");
@@ -2193,15 +2474,23 @@ function showOutputs(s) {
     octave.innerHTML = [-2, -1, 0, 1, 2].map((n) =>
       `<option value="${n}">${n ? (n > 0 ? "+" : "−") + Math.abs(n) + " oct" : "as is"}</option>`).join("");
     octave.value = String(chosen ? chosen.octave || 0 : 0);
+    const notes = document.createElement("select");  // (drums: the device's drum notes)
+    notes.title = "Its drums' notes: General MIDI's, or an original Novation Circuit's 4 drums (kick; snare and toms; " +
+      "hi-hats; cymbals), on its channel 10";
+    notes.innerHTML = '<option value="gm">General MIDI drums</option><option value="circuit">Circuit: 4 drums</option>';
+    notes.value = chosen && chosen.map ? chosen.map : "gm";
     const send = () => act(async () => {
       await api("/api/settings", {outputs: {[part]: port.value ?
         {port: port.value, channel: Number(channel.value) || 1, mono: monoBox.checked,
-         program: program.value ? Number(program.value) - 1 : null, octave: Number(octave.value)} : null}});
+         program: program.value ? Number(program.value) - 1 : null, octave: Number(octave.value),
+         ...(part === "drums" ? {map: notes.value} : {})} : null}});
       showOutputs(await api("/api/settings"));
     });
-    for (const control of [port, channel, monoBox, program, octave]) control.addEventListener("change", send);
-    channel.hidden = mono.hidden = program.hidden = octave.hidden = !port.value;
-    box.append(port, channel, program, octave, mono);
+    for (const control of [port, channel, monoBox, program, octave, notes]) control.addEventListener("change", send);
+    channel.hidden = !port.value;
+    mono.hidden = program.hidden = octave.hidden = !port.value || part === "drums";
+    notes.hidden = !port.value || part !== "drums";
+    box.append(port, channel, program, octave, mono, notes);
     if (chosen && (s.outputs_there || {})[part] === false) {
       const missing = document.createElement("span");
       missing.className = "missing";
@@ -2211,6 +2500,8 @@ function showOutputs(s) {
     rows.append(label, box);
   }
   $("outputRows").replaceChildren(rows);
+  drumsOutputs = JSON.stringify((s.outputs || {}).drums || null);
+  if (selected) renderDrumsCard(selected);
 }
 
 // The guitar heard: what it plays now, or how loud (or why it isn't heard)

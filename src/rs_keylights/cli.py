@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 from typing import Sequence
 
+from . import drums
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
 from .gui import DEFAULT_GUI_PORT
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, Keyboard, KeyboardError
@@ -79,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     tones = commands.add_parser("tones", help="list the keyboard's tones, for play --tone")
     tones.add_argument("text", nargs="?", help="only tones whose name or group contains this (e.g. organ, lead)")
     tones.set_defaults(handler=run_tones)
+
+    drums_parser = commands.add_parser("drums", help="make a song's drum part from its audio (a minute or so: the tools "
+                                                     "from tools/drums-setup.sh); the page plays it along")
+    drums_parser.add_argument("song", help="a .psarc file, or part of a song's name, artist or file name")
+    drums_parser.add_argument("--again", action="store_true", help="make it again, if it's made")
+    drums_parser.set_defaults(handler=run_drums)
 
     index = commands.add_parser("index", help="update the index of the game's songs")
     index.set_defaults(handler=run_index)
@@ -501,6 +508,29 @@ def run_play(args: argparse.Namespace) -> int:
         pass
     finally:
         keyboard.close()
+    return 0
+
+
+def run_drums(args: argparse.Namespace) -> int:
+    refs = find_song(args)
+    if refs is None:
+        return 1
+    ref = refs[0]
+    print(ref.title)
+    if drums.kept(ref) is not None and not args.again:
+        print("Its drum part is made already (--again to make it again)")
+        return 0
+    beats = next((a.beats for a in (r.load() for r in refs if r.part not in NO_NOTES) if a.beats), ())
+    started = time.monotonic()
+    try:
+        hits = drums.make(ref, beats, game_dir(args), say=lambda step: print(f"  {step}...", flush=True))
+    except drums.DrumsError as exc:
+        print(f"rs-keylights: {exc}", file=sys.stderr)
+        return 1
+    counts: dict[str, int] = {}
+    for hit in hits:
+        counts[drums.NAMES.get(hit.note, str(hit.note))] = counts.get(drums.NAMES.get(hit.note, str(hit.note)), 0) + 1
+    print(f"{len(hits)} hits in {time.monotonic() - started:.0f} s: " + ", ".join(f"{n} {name}" for name, n in counts.items()))
     return 0
 
 

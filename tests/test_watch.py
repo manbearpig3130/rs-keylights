@@ -70,6 +70,10 @@ class FakeGui:
             self.pedal = {**self.pedal, "slot": slot, "previous": self.pedal["slot"]}
         return dict(self.pedal)
 
+    def toggle_beat_lights(self):
+        self.info["beat_lights"] = not self.info.get("beat_lights", False)
+        return self.info["beat_lights"]
+
     def set_game_music(self, body):  # (following: the game's Music volume, from where it is)
         if self.music is None:
             raise ValueError("Music volume: update the riffloop mod")
@@ -116,6 +120,8 @@ class FakeGui:
             if a["id"] == arrangement:
                 a["tones"] = {**a["tones"], **{k: v for k, v in fields.items() if k in ("tone", "mute_tone", "volume")}}
                 a["play"], a["lights"] = fields.get("play", a["play"]), fields.get("lights", a["lights"])
+                if a["kind"] == "drums" and "volume" in fields:  # (a drum part's volume: its own, as the page has it)
+                    a["volume"] = fields["volume"]
 
     def toggle_sound(self):
         self.sound = not self.sound
@@ -1609,3 +1615,111 @@ def test_following_knob_2_and_the_pad_below_set_riff_repeaters_speed_and_acceler
     clock.now = 8.0
     watch.step()
     assert pads(launchkey)[(1, 0)] == (21, False)
+
+
+def test_a_songs_drum_part_is_one_more_arrangement_its_pad_mutes_it_and_the_mixer_sets_its_volume():
+    watch, gui, launchkey, clock = watching("play")
+    gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
+                                     "lights": 0, "tones": {}, "volume": 90})
+    gui.info["song"] = gui.song
+    watch.step()
+    assert pads(launchkey)[(0, 3)] == (3, False) and pads(launchkey)[(1, 3)] == (0, 0, 0)  # (white; no lit keys)
+    launchkey.queued = [Pad(0, 3)]  # its pad on top: muted
+    clock.now = 0.5
+    watch.step()
+    assert gui.changes[-1] == ("drums", {"play": False})
+    launchkey.queued = [Pad(1, 3)]  # the one below: the beat lights (nothing of the drums changed)
+    clock.now = 1.0
+    watch.step()
+    assert len(gui.changes) == 1 and note(watch) == ("Beat lights: on", None)
+    launchkey.queued = [Turn(3, 1)]  # its knob, outside the mixer: no tones
+    clock.now = 1.5
+    watch.step()
+    assert len(gui.changes) == 1 and note(watch) == (None, ("Drums: no tones", "Volume: in the mixer"))
+    launchkey.queued = [Button(105), Turn(3, -10)]  # the mixer: its knob, its own volume (not a place's)
+    clock.now = 2.0
+    watch.step()
+    assert gui.changes[-1] == ("drums", {"volume": 80}) and gui.volume_changes == []
+    launchkey.queued = [Turn(CONTROLS, 2)]  # knob 8: all of them, its too
+    clock.now = 2.5
+    watch.step()
+    assert gui.changes[-1] == ("drums", {"volume": 82}) and 3 not in gui.volume_changes[-1]
+
+
+def test_a_songs_drums_not_made_yet_are_a_dim_pad_that_makes_them():
+    watch, gui, launchkey, clock = watching("play")
+    drums = {"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": False, "lights": 0, "tones": {},
+             "volume": 100, "made": False, "making": False}
+    gui.song["arrangements"].append(drums)
+    gui.info["song"] = gui.song
+    watch.step()
+    assert pads(launchkey)[(0, 3)] == (12, 12, 12) and pads(launchkey)[(1, 3)] == (0, 0, 0)  # (dim white)
+    launchkey.queued = [Pad(0, 3)]
+    clock.now = 0.5
+    watch.step()
+    assert gui.changes[-1] == ("drums", {"make": True}) and note(watch) == (None, ("Drums: making them", "(a minute or so)"))
+    drums["making"] = True  # (being made: pulsing; a tap says so)
+    clock.now = 1.0
+    watch.step()
+    assert pads(launchkey)[(0, 3)] == (3, True)
+    launchkey.queued = [Pad(0, 3), Button(105), Turn(3, 5)]  # (and in the mixer: no volume yet)
+    clock.now = 1.5
+    watch.step()
+    assert len(gui.changes) == 1 and note(watch) == (None, ("Drums: not made yet", "Their pad on top makes them"))
+    drums.update(made=True, making=False, play=True)  # (made: as it would be after)
+    launchkey.queued = [Button(105)]
+    clock.now = 2.0
+    watch.step()
+    assert pads(launchkey)[(0, 3)] == (3, False)
+
+
+def test_the_drums_pad_below_turns_beat_lights_on_and_they_flash_on_each_beat():
+    watch, gui, launchkey, clock = watching("play")
+    gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
+                                     "lights": 0, "tones": {}, "volume": 100, "made": True})
+    gui.song["beats"], gui.song["bars"] = (1.0, 1.5, 2.0, 2.5, 3.0), (1.0, 3.0)
+    gui.info["song"] = gui.song
+    gui.live = 1.2
+    watch.step()
+    assert pads(launchkey)[(1, 3)] == (0, 0, 0)  # (off: dark)
+    launchkey.queued = [Pad(1, 3)]
+    clock.now = 0.5
+    watch.step()
+    assert gui.info["beat_lights"] and note(watch) == ("Beat lights: on", None)
+    assert pads(launchkey)[(1, 3)] == (8, 8, 8)  # (on, between beats: dim)
+    for at, lit in ((1.52, (55, 55, 55)), (1.7, (8, 8, 8)), (3.03, (127, 127, 127))):  # (a beat; between; a bar's first)
+        gui.live = at
+        clock.now += 0.03
+        watch.step()
+        assert pads(launchkey)[(1, 3)] == lit, at
+    gui.info["paused"] = True  # (paused, as it next looks: no beats)
+    gui.live = 2.5
+    clock.now += 0.3
+    watch.step()
+    assert pads(launchkey)[(1, 3)] == (8, 8, 8)
+
+
+def test_beat_lights_pulse_the_whole_board_dimming_it_between_beats():
+    watch, gui, launchkey, clock = watching("play")
+    gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
+                                     "lights": 0, "tones": {}, "volume": 100, "made": True})
+    gui.song["beats"], gui.song["bars"] = (1.0, 1.5, 2.0), (1.0,)
+    gui.info["song"], gui.info["beat_lights"], gui.live = gui.song, True, 1.52
+    watch.step()
+
+    def play_button():
+        return next(c[2:] for c in reversed(launchkey.calls) if c[:2] == ("button", 115))
+
+    sound = pads(launchkey)[(0, 7)]
+    assert sound[0] == 21 and play_button() == (3, 127)  # (on a beat: as they are)
+    gui.live, clock.now = 1.7, clock.now + 0.03  # (between: dim, the beat's pad as it is)
+    watch.step()
+    assert pads(launchkey)[(0, 7)] == (0, 38, 0) and play_button() == (3, 38)
+    assert pads(launchkey)[(1, 3)] == (8, 8, 8)
+    gui.live, clock.now = 2.01, clock.now + 0.03
+    watch.step()
+    assert pads(launchkey)[(0, 7)] == sound and play_button() == (3, 127)
+    gui.info["beat_lights"] = False  # (off, as it next looks: as they are, between beats too)
+    gui.live, clock.now = 2.2, clock.now + 0.3
+    watch.step()
+    assert pads(launchkey)[(0, 7)] == sound

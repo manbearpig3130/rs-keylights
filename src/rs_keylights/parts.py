@@ -3,10 +3,11 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 
-from dataclasses import dataclass, replace
-from typing import Callable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Mapping, Sequence
 
-from .keyboard import Keyboard
+from .drums import CLOSED_HAT, CRASH, DRUM_CHANNEL, KICK, OPEN_HAT, RIDE, SNARE, TOMS, Hit
+from .keyboard import NORMAL_VOLUME, Keyboard
 from .library import ArrangementRef
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, techniques
 from .player import Player, Track
@@ -17,6 +18,8 @@ from .sound import KEYBOARD_CHANNELS, Voices
 # and voices, and one player for them all.
 
 VoicesFor = Callable[[ArrangementRef, tuple[int, int, int]], Voices]  # a part's voices, on these channels
+HIT_LENGTH = 0.1  # seconds a drum's hit sounds (its sound decays by itself)
+DRUM_ORDER = (KICK, SNARE, CRASH, RIDE, CLOSED_HAT, OPEN_HAT, *reversed(TOMS))  # which wins a device's drum, two at once
 
 
 @dataclass(frozen=True)
@@ -86,10 +89,61 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
     return planned
 
 
+@dataclass(frozen=True)
+class DrumVoices:
+    """A drum part's sound: each hit on its channel (General MIDI's drums, 10), its drum's note mapped (another
+    device's own notes: a Novation Circuit's 4 drums; a drum mapped to none isn't played), at the hit's velocity
+    (its light's mask carries it). Its hits are short: they don't ring."""
+
+    channel: int = DRUM_CHANNEL
+    notes: Mapping[int, int | None] = field(default_factory=dict)  # (General MIDI note -> the device's; absent: as is)
+    volume: int = NORMAL_VOLUME
+    ring: bool = False
+    techniques: bool = False
+    # A drum's sound chosen on the device first (General MIDI note -> a Control Change and its value: a Novation
+    # Circuit's drum patch select, so one of its 4 drums plays several), sent as it's needed (another than the
+    # last on that control); what was sent last, by control
+    patches: Mapping[int, tuple[int, int]] = field(default_factory=dict)
+    sent: dict[int, int] = field(default_factory=dict, compare=False)
+
+    def pick(self, light: Light) -> tuple[int, tuple[int, ...], int]:
+        return self.channel, self.notes_for(light), max(1, min(127, light.mask))
+
+    def prepare(self, sound: Any, light: Light) -> None:
+        """Before a hit sounds: its drum's sound chosen on the device, if it isn't already."""
+        for pitch in light.pitches:
+            if pitch in self.patches:
+                number, value = self.patches[pitch]
+                if self.sent.get(number) != value:
+                    sound.control(self.channel, number, value)
+                    self.sent[number] = value
+
+    def notes_for(self, light: Light) -> tuple[int, ...]:
+        mapped = (self.notes.get(p, p) for p in light.pitches)
+        return tuple(n for n in mapped if n is not None)
+
+
+def drum_track(hits: Sequence[Hit], voices: DrumVoices, sound: Any = None) -> Track:
+    """A drum part's track: its hits sounding (none lit), on the keyboard or another device (sound). Two at once on
+    one of the device's drums (its notes) that choose their sound there: the first of DRUM_ORDER (a drum plays one
+    sound at a time)."""
+    if voices.patches:
+        first: dict[tuple[float, int | None], Hit] = {}
+        for h in sorted(hits, key=lambda h: (h.time, DRUM_ORDER.index(h.note) if h.note in DRUM_ORDER else 99)):
+            first.setdefault((h.time, voices.notes.get(h.note, h.note)), h)
+        hits = sorted(first.values(), key=lambda h: (h.time, h.note))
+    lights = [Light(h.time, h.time + HIT_LENGTH, (), (h.note,), h.velocity) for h in hits]
+    return Track(lights, voices, lit=False, sound=sound)
+
+
 def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float = LIGHTS_EARLY,
-               min_period: float = MIN_PERIOD) -> Player:
+               min_period: float = MIN_PERIOD, extra: Sequence[Track] = ()) -> Player:
     """Sets the parts' tones on the keyboard and makes their player (lead: seconds the keys light early;
-    min_period: repeats closer than this flash on every other note)."""
+    min_period: repeats closer than this flash on every other note), with extra tracks of their own (a drum part)."""
+    for track in extra:
+        if isinstance(track.voices, DrumVoices):  # (its channel's volume; its device's drum sounds as they are)
+            sound: Any = track.sound or keyboard  # (a Keyboard or a Synth: both set a channel's volume)
+            sound.set_volume(track.voices.channel, track.voices.volume)
     for p in planned:
         if p.voices is None:
             continue
@@ -98,7 +152,7 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
             p.voices.output.program(p.voices.main.channel, p.voices.program)
         for voice in p.voices.all():
             sound.set_voice(voice.channel, voice.tone.program, voice.tone.bank, volume=p.voices.volume)
-    return Player([_track(p) for p in planned], keyboard, lead=lead, min_period=min_period,
+    return Player([*(_track(p) for p in planned), *extra], keyboard, lead=lead, min_period=min_period,
                   most_keys=MOST_LIT)  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
 
 

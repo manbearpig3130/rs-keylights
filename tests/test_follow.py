@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -331,3 +332,18 @@ def test_a_show_on_the_keys_gives_way_to_the_songs_lights():
     f.show([(0.0, (50,)), (1.0, ())])  # the song's key is lit: no room for a show
     f.step(1.01)
     assert keys.lit == {60}
+
+
+def test_tracks_besides_the_parts_rebuild_what_plays_only_when_they_change():
+    from rs_keylights.drums import KICK, Hit
+    from rs_keylights.parts import DrumVoices, drum_track
+    follower = Follower(None, None, None)  # type: ignore[arg-type]
+    built = []
+    follower._player_with = lambda planned: built.append(planned) or SimpleNamespace(rate=1.0, stop=lambda: None, retime=lambda **_k: None)  # type: ignore[method-assign]
+    follower.current, follower._player = object(), SimpleNamespace(rate=1.0, stop=lambda: None)  # (one playing)
+    drums = [drum_track([Hit(1.0, KICK, 100)], DrumVoices())]
+    follower._extras = list(drums)
+    follower.set_extras(lambda ref: [drum_track([Hit(1.0, KICK, 100)], DrumVoices())])  # (the same: nothing)
+    assert built == []
+    follower.set_extras(lambda ref: [drum_track([Hit(1.0, KICK, 100)], DrumVoices(volume=60))])  # (another)
+    assert len(built) == 1

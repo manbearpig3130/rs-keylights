@@ -280,6 +280,9 @@ class Player:
         if not sounding:
             return
         sound = self._sound(ti)
+        prepare = getattr(voices, "prepare", None)  # (a drum's sound chosen on its device first)
+        if prepare is not None:
+            prepare(sound, light)
         for note in set(sounding.values()):
             self._held[(id(sound), channel, note)] = self._held.get((id(sound), channel, note), 0) + 1
         sound.play(channel, tuple(sorted(set(sounding.values()))), velocity)
