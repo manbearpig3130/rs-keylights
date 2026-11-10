@@ -1,0 +1,153 @@
+Here's the full picture. Effort is rough:
+
+Effort	Means
+S	an evening
+M	a session or two
+L	several sessions
+XL	big, or uncertain whether it's possible
+What's possible
+Easy now: reading and changing the game's data (phrases, settings, the song clock), pressing keys for you, and calling its own functions. The Riff Repeater work proved all of these.
+Moderate: the audio engine, and anything that changes how the game makes decisions (difficulty, scoring).
+Hard: drawing inside the game. The highway and menus run through Metal and Rocksmith's Flash-based UI. So the visuals belong on your second screen, and the game supplies the data.
+1. The Launchkey as Rocksmith's control surface (tomorrow)
+Idea	What you get	Effort
+Play = pause / resume	The Play button just works	S
+Scrub knob	Turns step through the pause menu's timeline; the screen shows where you'll resume	S
+Menu buttons	Record = select, Track = back / up / down: drive Rocksmith's menus without the keyboard	S
+Restart the pass	A pad that restarts Riff Repeater's pass when you fluff the start	S
+Tuner button	Straight to the tuner (handy with the Drop pedal)	S
+"Play this in Rocksmith"	Pick a song on the page or the Launchkey; the mod types it into Rocksmith's search and selects it	M
+One-touch practice	One pad: loop this section, pre-select it, 70% speed, Accelerator on, open Riff Repeater	M
+2. The companion screen (rs-keylights maximised on screen 2)
+Idea	What you get	Effort
+Companion layout	The fretboard as the centrepiece, current chord, a section map of the song	M
+Tab with peek-ahead	The next 2–4 bars as scrolling tab, synced to the game's exact time: techniques, chord names, sections, your A–B marked	M
+"Up next" card	The next section, the next chord shapes as chord boxes, and warnings like "bend in 3 bars"	S–M
+Theory card	Chord numbers (i–VI–VII), the section's progression, why a note works (passing tones, borrowed chords)	S–M
+Piano roll	The keys and bass parts as notes, for the Casio and the Monologue	M
+3. What Rocksmith knows but never shows you
+Everything here depends on one foundation mod: reading which notes you hit and miss (L). It unlocks:
+
+A miss heatmap on the fretboard: "you keep missing the 12th-fret bend in the chorus".
+Accuracy per section over days: graphs of real progress. Very motivating with ADHD, because progress becomes visible.
+Timing tendency, if the game keeps early/late data: "you rush the second half of the riff".
+A practice journal, logged automatically: time played, songs, loops, the speeds you reached, with a streak calendar.
+A "weakest bit" button: one press loops your worst phrase at 75% with the Accelerator on.
+4. Fixing Rocksmith's old annoyances
+Idea	Effort
+Riff Repeater faster than 100%, for overspeed training (the mod's speed command already allows up to 200%; it just needs testing)	S
+Riff Repeater that never ends (find what made your session finish)	M
+Difficulty that steps up faster, or stays at max, or is remembered per song: the game's own difficulty settings (DD_GoUpRatio, DD_AllowInstantLevelUp…) on the Launchkey or the page	S–M
+Note tolerance and latency tuned to your rig: the game has Riff_Tolerance and note-rating settings	M (experimental)
+Better detection of low notes in B standard plus the Drop pedal	L (research)
+Skip or relax the tuning check when the Drop pedal does the tuning	M
+5. Your whole library in one place
+Idea	Effort
+The page filters by tuning: "everything in B standard", "everything the Drop pedal reaches from my tuning", plus key, tempo and "not played in a while". Less choosing paralysis, less retuning	S–M
+Playlists grouped by Drop pedal setting, so fewer pedal changes in a session	S
+PC .psarc in the Mac game: the charts differ mainly in their encryption key, which is easy for the mod to handle. The audio banks are platform-specific and need a look. Fallback: convert in the background, as DLC Builder does	M–L
+.feedpak: I'd need to look at the format (you have 9.8 GB of them on the KINGSTON drive). rs-keylights could read them first, for the page and the keys; getting them into the game is harder because of the audio	M, then L–XL
+6. Your desk as the band
+Idea	Effort
+A click that follows Riff Repeater: Circuit or Casio drums that slow down with the speed, restart with each loop and play the count-in	S–M
+Beat lights: Launchkey pads pulse on the beat, a metronome you can see	S
+Stage lights: every Rocksmith song has a lighting track for its venues; play it on the pads and the Casio's keys	S
+MIDI clock out, so the Circuit's and Monologue's sequencers stay in time even when slowed	M
+Backing band: the Monologue on bass and the Circuit on drums from the chart, with Rocksmith's backing muted	M
+7. Your songwriting (deconstruct, then rebuild)
+Idea	Effort
+Export any song to MIDI: every arrangement, the tempo map, sections as markers, ready for Logic or GarageBand	S–M
+A bass line into the Monologue's sequencer, or the Circuit's patterns, section by section	M
+Record your practice: the dry cable, your wet pedal sound and the song's sections as markers; cut a riff into the Circuit's sampler	M
+Reharmonise: play the song's progression on the Casio in different voicings, to hear what the harmony does	S–M
+8. Short learning games (ADHD-friendly)
+Find the note: the page asks for a note on a string; the listener checks it, against the clock. (M)
+Call and response: the Casio plays a lick from the current section, and you play it back. (M)
+Hidden lights: the keys light on the first pass, then go dark, so you learn by ear. (S)
+Daily micro-goal and streak on the Launchkey screen. (S–M)
+Celebrations: reach 100% on the Accelerator, and the Casio and the pads put on a light show. (S)
+My thoughts on the order
+The control surface (tomorrow): it turns your desk into the cockpit.
+The companion screen with tab peek-ahead: the biggest benefit every time you play.
+Hits and misses: the engine for stats, heatmaps, the journal and the "weakest bit" button. This is the one that feeds motivation.
+The library: tuning filters first (quick), then PC psarc, then feedpak.
+The band and songwriting tools: save these for when you want something new and fun.
+The ones I'd expect to surprise you are typing into Rocksmith's search from the page, playing the songs' own lighting tracks on your desk, early/late timing feedback, and dropping a bass line straight into the Monologue.
+
+I can turn this into a page where you can tick and rank the ideas, if that helps you take inventory.
+
+
+
+I don't need that tuner button, i have one on my polytune 3.
+Love the one-touch practice idea.
+and yea the comapnion screen will be great. What would be the benefit of the piano roll? or what is it exactly because i already have the piano playing the parts from RS songs?
+Alsi i'm not using B standard in addition to the drop pedal. the guitar is tuned to E standard and I mostly play songs that are in lower tunings so im just using the drop more often than not.
+.feedpack is basically a more open version of a .psarc file for the feedback project formerly known as slopsmith.
+I love all the ideas in 6. for my desk as well.
+And I like how we've been able to make good use of the CASIO i got in the UK, It would be cool to have more keyboard-related stuff in RS as wel. RS+ has keyboard support, but just being able to make use of the CASIO lights to light up notes for RS and my guitar is helpful so i can get familiar with notes and chords. any other piano/keyboard ideas? or ideas in general?
+
+I thought of one. Currently im using my TC Helicon blender as audio input and output, and the guitar is plugged in there, but to get it working with RS2014 on mac you have to create an aggregate device called Rocksmith USB Guitar Adapter and assign the input to it. But if you have an interface with too many inputs, rocksmith doesn't like it so i have to use a tool called Blackhole-2ch to feed it into the aggregate device, and i also need to use Ladiocast to stream the input to blackhole. Others were using full DAWs but i dont want all that running all the time when i could just support the input with a mod .
+Show more
+6:23 AM
+Noted on the tuning: your guitar is in E standard, and the Drop pedal does the lower tunings. I'll correct that in my notes, along with the rest of your rig.
+
+
+
+Bash Record the user's rig and correct the tuning note
+IN
+M=/Users/mbp/.claude/projects/-Users-mbp-git-rs-rearmed/memory; cat > $M/user-music-rig.md <<'EOF'
+---
+name: user-music-rig
+description: The user's music desk and guitar setup (tuning, pedals, interface, keyboards, synths) as of 2026-11-01
+metadata:
+  type: user
+---
+
+- Guitar tuned to **E standard**; songs in lower tunings via a **DigiTech Drop** pedal (not B standard tuning: an earlier note saying so was wrong). So standard tunings below E are one pedal setting away; drop tunings would need a retune.
+- Tuner: TC Electronic **Polytune 3** (no tuner features wanted).
+- Effects: Harley Benton **DNAfx GiT Core** (switched by [[rs-keylights-next-session]] / dnafx-preset); listens to the pedal's wet signal, in-game guitar muted, physical mixer knobs (no game mixer wanted).
+- Audio interface: **TC Helicon Blender**, guitar plugged in there. For RS2014 on Mac: an aggregate device named "Rocksmith USB Guitar Adapter", fed through **BlackHole 2ch** with **LadioCast** (interfaces with many inputs upset Rocksmith). Wants a mod to replace that chain.
+- Keyboards/synths: **Casio LK-170** (lights keys, bought in the UK), **Novation Launchkey Mini MK4 25**, **Korg monologue**, **Novation Circuit**.
+- Normally played RS on Windows; now RS Re-ARMed on Mac. Has PC .psarc and .feedpak (Feedback, formerly Slopsmith: a more open psarc-like format) libraries, wants them all readable.
+- ADHD; recently able to stick with learning music; makes songs by deconstructing songs and recreating them with the Korg.
+EOF
+sed -i '' 's/^- \[rs-keylights next session\](rs-keylights-next-session.md) — .*/- [rs-keylights next session](rs-keylights-next-session.md) — branches practice-tools \/ riffloop, history, Launchkey and Riff Repeater findings/' $M/MEMORY.md; echo "- [User's music rig](user-music-rig.md) — E standard + Drop pedal, Blender interface + BlackHole/LadioCast, Casio/Launchkey/monologue/Circuit, DNAfx, ADHD" >> $M/MEMORY.md; sed -i '' 's/the user plays B standard with a DigiTech Drop pedal, /the user tunes E standard + DigiTech Drop pedal (see user-music-rig), /' $M/rs-keylights-next-session.md; cat $M/MEMORY.md
+
+OUT
+- [Local RS Companion build](local-rs-companion-build.md) — installed RS Companion is the user's fork with the slow Riff Repeater fix; backup of 1.4.2 kept
+- [User pushes their own code](user-pushes-own-code.md) — commit when asked, then give the push command; don't push
+- [rs-keylights next session](rs-keylights-next-session.md) — branches practice-tools / riffloop, history, Launchkey and Riff Repeater findings
+- [User's music rig](user-music-rig.md) — E standard + Drop pedal, Blender interface + BlackHole/LadioCast, Casio/Launchkey/monologue/Circuit, DNAfx, ADHD
+[This command modified 1 file you've previously read: ../../.claude/projects/-Users-mbp-git-rs-rearmed/memory/rs-keylights-next-session.md. Call Read before editing.]
+6:23 AM
+Your tuning, and what it means for the library. With the guitar in E standard plus the Drop pedal, a song's tuning tells the page exactly what you'd need:
+
+Standard tunings below E (Eb, D, C#, C, B…) are just a pedal setting.
+Drop tunings (Drop D, Drop C…) also need the low string retuned.
+So the library filter becomes "playable with just the pedal" versus "needs a retune". When a song loads, the Launchkey and page could also say "Drop −5", so you set the pedal and never touch Rocksmith's tuner. (S)
+
+The piano roll: it's a scrolling view of the keyboard's notes as bars: pitch going up, time going sideways, with each bar's length showing how long to hold the note. The Casio's lights only show now, so the roll would add look-ahead and durations. Since you already have the Casio, it's low value on its own. It would make more sense as one lane of the tab peek-ahead than as its own feature.
+
+.feedpak: an open format is good news.
+
+On the page and the keys: rs-keylights could read the charts directly, for the fretboard, the tab peek-ahead, the Casio and the Launchkey. Straightforward. (M)
+In Rocksmith itself: converting the charts to Rocksmith's format is doable now that we know it well. The audio is the hard part: Rocksmith only plays its own audio format (Wwise). The fun workaround is a mod that plays the feedpak's audio itself, kept in step with the game's clock. (XL)
+Your audio input idea: yes, and it's a good one.
+
+Why it should work: RS Re-ARMed already has a hook on the game opening its guitar input (si_open), and RS Re-ARMed's own Mac audio layer is code we control.
+What you'd get: pick "TC Helicon Blender, input 1" once, with no aggregate device, BlackHole or LadioCast running.
+The less obvious benefit: BlackHole and LadioCast each add buffering, so cutting them out should lower latency, and lower latency means tighter timing feedback when you play. rs-keylights' guitar listening would read the Blender directly too.
+Effort: M. It might be better built into RS Re-ARMed's launcher than as a mod; I'll check where the device is chosen.
+More Casio and keyboard ideas
+Idea	What you get	Effort
+"Where is this on my guitar?"	Press a Casio key, and the fretboard shows every place that note is on your guitar. Play a chord on the Casio, and the page names it and shows guitar shapes for it. Connects what you know on keys to the fretboard	S
+Piano voicings	The Casio lights the current chord the way a pianist would play it (triads and inversions around middle C) instead of the guitar's notes, so you learn how chords are built	S
+The vocal melody on keys	Rocksmith's vocals file has the melody's pitches as well as the lyrics. The Casio lights the sung melody, so you can play or sing along, or work out a lead line for the Monologue	S–M
+A piano part for any song	Left hand from the bass arrangement, right hand from the chords: a playable piano arrangement, lit on the Casio	M
+Keys scoring and wait mode	The Casio reports what you press, so rs-keylights can score you against the lit notes. In its own playback, the song can wait until you hit the lit keys	M
+Note-name game	A key lights up, you name it, and the Launchkey shows the answer	S
+A few more general ideas
+Latency check: play a note, and the mod measures when Rocksmith hears it, then suggests the right latency setting. (M)
+A warm-up routine: five minutes of chromatic or scale runs, lit on the Casio and the fretboard, with a click from the Circuit, at your speed. (S–M)
+A practice rotation: three short loops from different songs that rotate every few minutes. You get variety without having to decide what's next, which tends to suit ADHD well. This extends one-touch practice. (M)
+For tomorrow: the Launchkey control surface plus one-touch practice. After that, the companion screen and your desk ideas from section 6. I've noted your rig, including the Blender chain, so I won't get the tuning wrong again.
