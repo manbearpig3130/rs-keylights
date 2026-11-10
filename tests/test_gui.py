@@ -894,6 +894,10 @@ def test_a_remote_has_the_songs_lyrics_from_its_vocals_part(tmp_path):
     assert [line.text for line in gui.remote_info()["song"]["lyrics"]] == ["la la la"]
     gui.switch({"song": without["id"]})
     assert gui.remote_info()["song"]["lyrics"] == ()
+    page = gui.lyrics(with_lyrics["id"])  # (the page's card: lines, their syllables' starts and places)
+    assert [line[2] for line in page["lines"]] == ["la la la"]
+    assert [syllable[1:] for syllable in page["lines"][0][3]] == [[0, 2], [3, 5], [6, 8]]
+    assert gui.lyrics(without["id"])["lines"] == []
 
 
 def test_notes_ring_on_unless_turned_off(server):

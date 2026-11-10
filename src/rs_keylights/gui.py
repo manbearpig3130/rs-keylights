@@ -1877,16 +1877,28 @@ class Gui:
                 out[key(ref)] = ((-math.inf, tone_kind(a.base_tone, ref.bass) or "its own tone"), *changes)
         return out
 
+    def lyrics(self, sid: str) -> dict[str, Any]:
+        """A song's lyrics, for the page's lyrics card: each line's start, end, text, and its syllables (each one's
+        start, and where it is in the text: from, to); and the song's sections (name, start), to head the lines."""
+        loaded = self._load(sid)
+        raw = next((a.sections for _r, a in loaded if a.sections), ())
+        return {
+            "lines": [[round(line.start, 3), round(line.end, 3), line.text,
+                       [[round(at, 3), begin, end] for at, begin, end in line.syllables]] for line in self._lyrics(sid)],
+            "sections": [[s["name"], s["start"]] for s in _sections(raw)],
+        }
+
     def _lyrics(self, sid: str) -> tuple[Line, ...]:
         """A song's lyrics in lines, from its vocals part (none without one, or if it's gone)."""
         with self._lock:
             if sid in self._lyric_lines:
                 self._lyric_lines.move_to_end(sid)
                 return self._lyric_lines[sid]
-        vocals = next((r for r in self.index.arrangements() if song_id(r) == sid and r.part == "vocals"), None)
         try:
+            refs = self.index.of_song(self._load(sid)[0][0])  # (its song's: not every song's looked through)
+            vocals = next((r for r in refs if r.part == "vocals"), None)
             lines = lyric_lines(vocals.load().lyrics) if vocals is not None else ()
-        except (ArchiveError, OSError, ValueError):
+        except (ArchiveError, GuiError, OSError, ValueError):
             lines = ()
         with self._lock:
             self._lyric_lines[sid] = lines
@@ -3021,6 +3033,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/theory":
                 query = parse_qs(url.query)
                 self._json(200, gui.theory(query.get("id", [""])[0], query.get("part", [None])[0] or None))
+            elif url.path == "/api/lyrics":
+                self._json(200, gui.lyrics(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/roll":
                 query = parse_qs(url.query)
                 self._json(200, gui.roll(query.get("id", [""])[0], query.get("part", [None])[0] or None))

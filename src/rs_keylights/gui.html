@@ -275,6 +275,25 @@
   .pattern { color: var(--muted); font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .theory-strip { height: 64px; }
   .theory-strip canvas { width: 100%; height: 100%; display: block; }
+  #lyricsWhere { color: var(--muted); font-size: 13px; }
+  .lyrics-view { position: relative; height: 260px; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain;
+    -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
+    mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent); }  /* (lines fade in and out at the edges) */
+  .lyrics-view::-webkit-scrollbar { display: none; }
+  .lyrics-lines { padding: 104px 2px; }  /* (the first and last lines can come to the middle) */
+  .lyrics-section { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+    margin: 16px 0 4px; }
+  .lyrics-line { position: relative; font-size: 19px; font-weight: 600; line-height: 1.35; padding: 3px 0; color: var(--muted);
+    transition: color 0.25s, opacity 0.25s; }
+  .lyrics-line.past { opacity: 0.45; }
+  .lyrics-line.now { color: var(--text); }
+  .lyrics-line.now .sung { color: var(--live); }
+  .lyrics-line.now .singing { color: transparent; -webkit-background-clip: text; background-clip: text;
+    background-image: linear-gradient(90deg, var(--live) var(--fill, 0%), var(--text) var(--fill, 0%)); }
+  .lyrics-line.waiting::before { content: ""; position: absolute; left: 0; top: -3px; height: 3px; border-radius: 2px;
+    width: calc(var(--wait, 0) * 96px); background: var(--live); opacity: 0.7; }  /* (the gap before it, counted down) */
+  .lyrics-view.seekable .lyrics-line { cursor: pointer; }
+  .lyrics-view.seekable .lyrics-line:hover { color: var(--text); opacity: 1; }
   .fret-chord { font-weight: 700; font-size: 16px; color: var(--live); }
   .swatch.now { background: var(--live); }
   .fret-legend { display: none; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); position: absolute;
@@ -359,6 +378,15 @@
     <div id="drumkit" class="drumkit"></div>
     <div id="drumsInfo" class="roll-legend"></div>
     <div id="circuitKit" class="circuit-kit" hidden></div>
+  </section>
+
+  <section id="lyricsCard" class="card" hidden>
+    <div class="fret-head">
+      <h3>Lyrics</h3>
+      <span id="lyricsWhere"></span>
+    </div>
+    <div id="lyricsView" class="lyrics-view"><div id="lyricsLines" class="lyrics-lines"></div></div>
+    <div id="lyricsNone" class="small" hidden>No lyrics: this song has no vocals part.</div>
   </section>
 
   <section id="theoryCard" class="card" hidden>
@@ -1561,6 +1589,121 @@ function theoryRuns(notes) {
   return runs;
 }
 
+// The lyrics card: the song's lines as they're sung, under their sections' names; the line being sung in the middle,
+// its syllables lit as they're sung (the one being sung filling up), a long gap before the next counted down by a
+// bar over it. Playing the song (or not), a line clicked goes there; following, the game says where. Scrolled by
+// hand, it stays where it's put a while, then follows the song again
+// GET /api/lyrics
+const LYRICS = {EARLY: 0.1, AFTER: 0.5, GAP: 3, HOLD: 4000, EASE: 0.18};  // seconds a syllable lights early; a line
+// stays in the middle after it ends; a gap this long is counted down; ms a hand's scroll holds; how fast it scrolls
+let lyricsData = null, lyricsWanted = "", lyricsShown = "", lyricsHeld = 0;
+function renderLyricsCard(s) {
+  const card = $("lyricsCard");
+  card.hidden = !s;
+  if (card.hidden || card.closest("#parked")) return;  // (removed from the layout: nothing to do)
+  $("lyricsView").classList.toggle("seekable", !followedSong());
+  if (lyricsWanted === s.id) return;
+  lyricsWanted = s.id;
+  lyricsData = null;
+  lyricsShown = "";
+  $("lyricsLines").replaceChildren();
+  $("lyricsWhere").textContent = "";
+  $("lyricsNone").hidden = true;
+  api(`/api/lyrics?id=${encodeURIComponent(s.id)}`)
+    .then((d) => {
+      if (lyricsWanted !== s.id) return;
+      lyricsData = d;
+      lyricsBuild(d);
+    }).catch(() => { if (lyricsWanted === s.id) lyricsWanted = ""; });
+}
+
+function lyricsBuild(d) {
+  const lines = document.createDocumentFragment();
+  let section = -1;
+  d.lines.forEach(([start, _end, text, syllables], i) => {
+    const si = theoryAt(d.sections, start + 0.5, (x) => x[1]);  // (a section's name over its first line)
+    if (si >= 0 && si !== section) {
+      const head = document.createElement("div");
+      head.className = "lyrics-section";
+      head.textContent = d.sections[si][0];
+      lines.append(head);
+    }
+    section = si;
+    const line = document.createElement("div");
+    line.className = "lyrics-line";
+    line.dataset.i = i;
+    let done = 0;
+    for (const [_at, from, to] of syllables) {
+      if (from > done) line.append(text.slice(done, from));
+      const span = document.createElement("span");
+      span.textContent = text.slice(from, to);
+      line.append(span);
+      done = to;
+    }
+    if (done < text.length) line.append(text.slice(done));
+    lines.append(line);
+  });
+  $("lyricsLines").replaceChildren(lines);
+  $("lyricsView").hidden = !d.lines.length;
+  $("lyricsNone").hidden = !!d.lines.length;
+}
+
+function lyricsFrame() {
+  requestAnimationFrame(lyricsFrame);
+  const d = lyricsData, s = selected, view = $("lyricsView");
+  if (!d || !d.lines.length || !s || lyricsWanted !== s.id || $("lyricsCard").hidden || !$("lyricsCard").offsetParent) return;
+  const clock = fretClock && fretClock.song === s.id ? fretClock : null;
+  const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
+  const at = (clock ? clock.position + since : Number(s.start) || 0) + LYRICS.EARLY;
+  // The line in the middle: the one being sung (a moment after it too), else the next; its syllable being sung
+  const lines = d.lines, last = theoryAt(lines, at);
+  const focus = last >= 0 && at <= lines[last][1] + LYRICS.AFTER ? last : Math.min(last + 1, lines.length - 1);
+  const [start, end, _text, syllables] = lines[focus];
+  const k = at < start ? -1 : theoryAt(syllables, at);
+  const nodes = $("lyricsLines").querySelectorAll(".lyrics-line"), line = nodes[focus];
+  const shown = `${focus}|${k}`;
+  if (shown !== lyricsShown) {
+    const was = Number(lyricsShown.split("|")[0]);
+    lyricsShown = shown;
+    if (was !== focus) {
+      nodes.forEach((n, i) => {
+        n.classList.toggle("past", i < focus);
+        n.classList.toggle("now", i === focus);
+        if (i !== focus) n.classList.remove("waiting");
+      });
+      for (const span of (nodes[was] || line).querySelectorAll("span")) span.className = "";
+      const si = theoryAt(d.sections, Math.max(at, start) + 0.5, (x) => x[1]);
+      $("lyricsWhere").textContent = si >= 0 ? d.sections[si][0] : "";
+    }
+    line.querySelectorAll("span").forEach((span, i) => { span.className = i < k ? "sung" : i === k ? "singing" : ""; });
+  }
+  if (k >= 0) {  // (the syllable being sung, filling up till the next starts)
+    const next = k + 1 < syllables.length ? syllables[k + 1][0] : end;
+    const fill = Math.min(Math.max((at - syllables[k][0]) / Math.min(Math.max(next - syllables[k][0], 0.08), 1), 0), 1);
+    line.querySelectorAll("span")[k].style.setProperty("--fill", `${Math.round(fill * 100)}%`);
+  }
+  const before = focus > 0 ? lines[focus - 1][1] : 0, gap = start - before;  // (a long wait for it: counted down)
+  const waiting = at < start && gap >= LYRICS.GAP;
+  line.classList.toggle("waiting", waiting);
+  if (waiting) line.style.setProperty("--wait", Math.max(0, Math.min(1, (start - at) / (gap - LYRICS.AFTER))).toFixed(3));
+  if (performance.now() < lyricsHeld) return;  // (scrolled by hand: left there a while)
+  const target = line.offsetTop - view.clientHeight * 0.42 + line.offsetHeight / 2;
+  const move = target - view.scrollTop;
+  if (Math.abs(move) > view.clientHeight * 2) view.scrollTop = target;  // (a jump: there at once)
+  else if (Math.abs(move) >= 0.5) view.scrollTop += move * LYRICS.EASE;
+}
+for (const name of ["wheel", "touchmove"]) {
+  $("lyricsView").addEventListener(name, () => { lyricsHeld = performance.now() + LYRICS.HOLD; }, {passive: true});
+}
+$("lyricsLines").addEventListener("click", (e) => {
+  const line = e.target.closest(".lyrics-line");
+  if (!line || !lyricsData || followedSong()) return;
+  const position = Math.max(0, lyricsData.lines[Number(line.dataset.i)][0] - 1);  // (a moment before it)
+  lyricsHeld = 0;
+  if (playingThis()) act(() => api("/api/seek", {position}));
+  else act(() => changeSong({start: position}));
+});
+
 // The page's layout (✎ in the header): the middle column's cards in the order wanted, with copies of the ones that
 // can have several (Fretboard, Tab, Keys: each with its own part, a tab of the bass beside the lead's, say) and the
 // rest there once or not at all; and the settings column's cards in order, or put away. Moved by dragging (⠿) or
@@ -1572,12 +1715,15 @@ const CARD_KINDS = {
   keys: {name: "Keys", make: makeRollCard},
   drums: {name: "Drums", fixed: "drumsCard"},
   theory: {name: "Theory", fixed: "theoryCard"},
+  lyrics: {name: "Lyrics", fixed: "lyricsCard"},
 };
+const FIRST_KINDS = ["song", "fretboard", "tab", "keys", "drums", "theory"];  // (the kinds a layout kept before it
+// said which it knew: the others are new to it)
 const LAYOUT_KEY = "rsk.layout";
 const SIDE_CARDS = [...document.querySelectorAll("#side > .card")].map((c) => c.id);  // (as the page has them)
 function defaultLayout() {
-  return {middle: ["song", "fretboard", "tab", "keys", "drums", "theory"].map((kind) => ({id: kind, kind, part: ""})),
-          side: [...SIDE_CARDS], away: []};
+  return {middle: ["song", "fretboard", "tab", "keys", "drums", "lyrics", "theory"].map((kind) => ({id: kind, kind, part: ""})),
+          side: [...SIDE_CARDS], away: [], known: Object.keys(CARD_KINDS)};
 }
 function loadLayout() {
   const kept = store.get(LAYOUT_KEY, null), base = defaultLayout();
@@ -1586,9 +1732,14 @@ function loadLayout() {
   const middle = kept.middle.filter((c) => c && CARD_KINDS[c.kind] && typeof c.id === "string" && !ids.has(c.id) &&
     ids.add(c.id) && (!CARD_KINDS[c.kind].fixed || (!seen.has(c.kind) && seen.add(c.kind))));
   if (!middle.some((c) => c.kind === "song")) middle.unshift({id: "song", kind: "song"});  // (always there)
+  const known = Array.isArray(kept.known) ? kept.known : FIRST_KINDS;
+  for (const kind of Object.keys(CARD_KINDS)) {  // (a card new since it was kept: there, at the end)
+    if (!known.includes(kind) && !middle.some((c) => c.kind === kind)) middle.push({id: kind, kind, part: ""});
+  }
   const side = (Array.isArray(kept.side) ? kept.side : []).filter((id) => SIDE_CARDS.includes(id));
   for (const id of SIDE_CARDS) if (!side.includes(id)) side.push(id);  // (cards new since: at the end)
-  return {middle, side, away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id))};
+  return {middle, side, away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id)),
+          known: Object.keys(CARD_KINDS)};
 }
 let layout = loadLayout();
 let liveCards = [];  // the copies laid out (Fretboard, Tab, Keys): each {spec, root, render(s, f), frame()}
@@ -1778,6 +1929,7 @@ function cardsFrame() {
 }
 requestAnimationFrame(cardsFrame);
 requestAnimationFrame(theoryFrame);
+requestAnimationFrame(lyricsFrame);
 
 // A part's lit keys: − n +, the + only while keys are free (the keyboard lights 4 in all)
 function litControl(value, others, onChange) {
@@ -2132,6 +2284,7 @@ function renderSong() {
   $("songKey").replaceChildren(keyLine(s.key, s.id));
   for (const c of liveCards) c.render(s, f);
   renderDrumsCard(s);
+  renderLyricsCard(s);
   renderTheoryCard(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
