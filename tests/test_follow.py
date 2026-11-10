@@ -130,8 +130,10 @@ def test_clock_rate_stays_1_with_late_samples():
 class FakeClient:
     def __init__(self):
         self.state: GameState | Exception = OverlayError("down")
+        self.reads = 0
 
     def read(self):
+        self.reads += 1
         if isinstance(self.state, Exception):
             raise self.state
         return self.state
@@ -145,6 +147,9 @@ class FakeIndex:
 
     def find(self, persistent_id):
         return self.refs.get(persistent_id)
+
+    def by_sng(self, name):
+        return next((r for r in self.refs.values() if r.sng.rsplit("/", 1)[-1][:-4].lower() == name.lower()), None)
 
     def refresh(self, progress=None):
         self.refreshes += 1
@@ -436,6 +441,47 @@ def test_following_takes_where_the_song_is_from_the_game_while_it_says_and_rs_co
     client.state = GameState(4, 10.95, "X", "ID1")
     f.step(1.3)
     assert abs(f.position(1.3) - 10.95) < 0.05  # (RS Companion's 0.3 s behind, the game's own gone)
+
+
+def test_the_game_says_which_arrangement_plays_so_rs_companion_isnt_read():
+    other = ArrangementRef("ID2", "/x.psarc", "songs/bin/macos/x_bass.sng", "X", "Bass", "Song", "Artist")
+    client, index, keys, statuses = FakeClient(), FakeIndex([REF, other]), FakeKeys(), []
+    game: dict = {"t": None, "arr": None}
+    f = Follower(client, index, keys, status=statuses.append, load=lambda ref: NOTES, game_time=lambda: (  # type: ignore[arg-type]
+        game["t"], "LearnASong_Game" if game["arr"] else "LearnASong_SongOptions", game["arr"]))
+    f.step(0.0)
+    assert f.current is None and f.connected and f.from_game  # (the game reached: no song yet)
+    game.update(t=9.9, arr="X_Lead")  # (as the game names it: its .sng's name)
+    for i in range(1, 12):
+        game["t"] = round(9.9 + i * 0.02, 4)
+        f.step(i * 0.02)
+    assert f.current == REF and index.refreshes == 1 and keys.lit == {60}  # (looked for once: then found)
+    game.update(arr="x_bass")  # (another arrangement: that one, from where it is)
+    f.step(0.3)
+    assert f.current == other
+    game.update(t=None, arr=None)  # (the song left: none)
+    f.step(0.32)
+    assert f.current is None and not keys.lit
+    assert client.reads == 0 and "Connected to Rocksmith" in statuses
+
+
+def test_rs_companion_is_read_while_the_game_doesnt_say_which_arrangement():
+    client, index, keys = FakeClient(), FakeIndex([REF]), FakeKeys()
+    game: dict = {"got": (9.95, "LearnASong_Game", "")}  # (a mod that doesn't say)
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 game_time=lambda: game["got"])
+    client.state = GameState(4, 9.9, "X", "ID1")
+    f.step(0.0)
+    assert f.current == REF and client.reads == 1 and not f.from_game  # (RS Companion's song, the game's time)
+    game["got"] = (10.0, "LearnASong_Game", "x_lead")  # (now it says: the game's from now)
+    f.step(0.2)
+    reads = client.reads
+    f.step(0.4)
+    assert f.from_game and f.current == REF and client.reads == reads
+    game["got"] = None  # (the game gone: RS Companion again, once it's missed a few times)
+    for i in range(3, 8):
+        f.step(i * 0.2)
+    assert not f.from_game and client.reads > reads
 
 
 def test_the_games_time_unanswered_is_asked_again_a_while_later():

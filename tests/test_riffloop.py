@@ -46,7 +46,8 @@ def test_where_the_game_is_comes_with_its_state():
 def test_the_games_time_asked_for_alone():
     mod = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     mod.bind(("127.0.0.1", 0))
-    answers = [b"time t=13.2040 screen=LearnASong_Game", b"time t=- screen=MainMenu",
+    answers = [b"time t=13.2040 screen=LearnASong_Game arr=amonpurs_lead", b"time t=- screen=MainMenu arr=-",
+               b"time t=1.5 screen=LearnASong_Game",  # (a mod that doesn't say the arrangement)
                b"riffloop error: not a command: time"]  # (a mod without it)
 
     def answer():
@@ -57,7 +58,8 @@ def test_the_games_time_asked_for_alone():
 
     Thread(target=answer, daemon=True).start()
     game = RiffLoop(mod.getsockname()[1])
-    assert game.time() == (13.204, "LearnASong_Game")
-    assert game.time() == (None, "MainMenu")  # (no song's playback seen)
+    assert game.time() == (13.204, "LearnASong_Game", "amonpurs_lead")
+    assert game.time() == (None, "MainMenu", None)  # (no song's playback seen)
+    assert game.time() == (1.5, "LearnASong_Game", "")
     assert game.time() is None
     mod.close()

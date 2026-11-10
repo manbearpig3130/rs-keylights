@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
+import threading
 from dataclasses import dataclass
 
 # Rocksmith's Riff Repeater looping a range of our own (the A-B loop, following the game), through RS Re-ARMed's
@@ -86,6 +87,8 @@ class RiffLoop:
 
     def __init__(self, port: int = PORT, wait: float = WAIT) -> None:
         self.port, self.wait = port, wait
+        self._time_socket: socket.socket | None = None  # (the time's own, kept: it's asked 50 times a second)
+        self._time_lock = threading.Lock()
 
     def loop(self, a: float, b: float) -> GameLoop | None:
         return self._send(f"loop {a:.3f} {b:.3f}")
@@ -124,20 +127,21 @@ class RiffLoop:
     def status(self) -> GameLoop | None:
         return self._send("status")
 
-    def time(self, wait: float = TIME_WAIT) -> tuple[float | None, str | None] | None:
-        """Where the game's song is, exactly (its playback's own time; None: no song's playback seen), and its screen
-        (None: not seen yet), asked many times a second, following it: nothing else done. None: no answer (no game,
-        or a mod without it)."""
-        words = (self._ask("time", wait) or "").split()
-        if len(words) != 3 or words[0] != "time":
+    def time(self, wait: float = TIME_WAIT) -> tuple[float | None, str | None, str | None] | None:
+        """Where the game's song is, exactly (its playback's own time; None: no song's playback seen), its screen
+        (None: not seen yet), and the arrangement playing (its .sng's name, e.g. amonamarthwayofvikings_lead; None:
+        none; "": a mod that doesn't say), asked many times a second, following it: nothing else done. None: no
+        answer (no game, or a mod without it)."""
+        words = (self._ask_time(wait) or "").split()
+        if len(words) not in (3, 4) or words[0] != "time":
             return None
         fields = dict(word.split("=", 1) for word in words[1:] if "=" in word)
         try:
             timer = None if fields.get("t", "-") == "-" else float(fields["t"])
         except ValueError:
             return None
-        screen = fields.get("screen", "-")
-        return timer, None if screen == "-" else screen
+        screen, arrangement = fields.get("screen", "-"), fields.get("arr", "")
+        return timer, None if screen == "-" else screen, None if arrangement == "-" else arrangement
 
     def songs(self) -> GameSongs | None:
         """Learn a Song's song list (while it shows): its highlighted song; None without it (or the mod)."""
@@ -164,6 +168,32 @@ class RiffLoop:
     def _send(self, command: str) -> GameLoop | None:
         answer = self._ask(command)
         return parse(answer) if answer is not None else None
+
+    def _ask_time(self, wait: float) -> str | None:
+        """The time command asked on a socket kept for it (answers come late, after their wait, dropped first)."""
+        with self._time_lock:
+            sock = self._time_socket
+            try:
+                if sock is None:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.connect(("127.0.0.1", self.port))
+                    self._time_socket = sock
+                sock.setblocking(False)
+                while True:  # (late answers, and refusals of earlier asks with no listener: dropped)
+                    try:
+                        sock.recv(16384)
+                    except (BlockingIOError, InterruptedError):
+                        break
+                    except OSError:
+                        continue
+                sock.settimeout(wait)
+                sock.send(b"time")
+                return sock.recv(16384).decode(errors="replace")
+            except OSError:
+                if sock is not None:
+                    sock.close()
+                self._time_socket = None
+                return None
 
     def _ask(self, command: str, wait: float | None = None) -> str | None:
         try:

@@ -4,7 +4,8 @@ Lights the keys of a light-up keyboard with the notes of Rocksmith 2014, so you 
 would go on a piano.
 
 - **`follow`**: lights the keys, silently, along with the song Rocksmith is playing. It follows the
-  game through [RS Companion](https://github.com/glebb/rs-mac-companion)'s stream overlay API.
+  game itself through rearmed-sidekicks' riffloop mod in RS Re-ARMed, or else through
+  [RS Companion](https://github.com/glebb/rs-mac-companion)'s stream overlay API.
 - **`play`**: plays an arrangement from a song file on the keyboard, with lights and sound, without
   the game.
 
@@ -21,8 +22,10 @@ uv pip install --python .venv/bin/python -e .
 
 Connect the keyboard with a USB cable; it shows up as the MIDI port `CASIO USB-MIDI`.
 
-For `follow`, turn on **Stream overlays** in RS Companion's Settings. RS Companion then serves the
-song timer, the song and the selected arrangement on `127.0.0.1:9938` (only on this Mac).
+For `follow`, RS Re-ARMed with rearmed-sidekicks' riffloop mod is all it needs: the game itself says which
+arrangement is playing and where it is. Without the mod, turn on **Stream overlays** in RS Companion's Settings.
+RS Companion then serves the song timer, the song and the selected arrangement on `127.0.0.1:9938` (only on this
+Mac).
 
 The first run indexes the game's song files (about 30 s for 2,000 archives on a USB drive). Later
 runs only read new or changed archives. The game folder is RS Re-ARMed's, unless you give
@@ -505,15 +508,17 @@ step is very short, so the keys go dark at that update instead of waiting for th
 still. Riff Repeater rewinds the timer quickly to the section's start, and the keys stay dark while
 it does. After you pick a new speed, three updates in a row at the new speed are enough to measure it.
 
-**With the riffloop mod, the game's own time.** When RS Re-ARMed has rearmed-sidekicks' riffloop mod (with its
-`time` command), following asks the game itself where the song is, 50 times a second: its playback's own time,
-answered over a local socket in well under a millisecond. The keys and the parts playing along go by that (within a
-frame of the game's), with Riff Repeater's speed measured from it, the pause screen going dark at once, and its rewind
-dark while it goes back; RS Companion then only says which song and arrangement are playing. Its time is checked
-against RS Companion's timer (another song's playback, far from it, is set aside), and without the mod (or before the
-game's playback is found, a second or so into a song outside Riff Repeater) it's RS Companion's timer as above.
-RS Companion is read on a thread of its own either way, so its answers (about 100 KB, album art and all, now and
-then tens of milliseconds) never hold up the notes. A trace (`--trace`) says which it played by ("from").
+**With the riffloop mod, the game itself.** When RS Re-ARMed has rearmed-sidekicks' riffloop mod (with its
+`time` command), following asks the game itself, 50 times a second, where the song is and which arrangement is
+playing: its playback's own time, and its own copy of the arrangement (named as its `.sng` file is, e.g.
+`amonamarthwayofvikings_lead`), answered over a local socket in under a tenth of a millisecond. The keys and the parts
+playing along go by that (within a frame of the game's), with Riff Repeater's speed measured from it, the pause
+screen going dark at once, and its rewind dark while it goes back. The song starts as soon as the mod finds the
+song's playback (near where the last one was, then everywhere), and stops as you leave it. RS Companion isn't read at
+all then. Without the mod (or a mod that doesn't say the arrangement), RS Companion says which song and arrangement,
+and its timer as above, read on a thread of its own, so its answers (about 100 KB, album art and all, now and then
+tens of milliseconds) never hold up the notes. A trace (`--trace`) says which it played by ("from", and "game"
+for the arrangement the game said).
 
 **Riff Repeater below about 65% speed needs a fixed RS Companion.** RS Companion 1.4.2 checks that
 the song is still playing by watching the game's play record advance at normal speed; slower, it

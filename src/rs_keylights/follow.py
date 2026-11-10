@@ -22,10 +22,11 @@ from .tones import Tone
 # Follows the song Rocksmith plays through RS Companion's stream overlay API (RockSniffer's API,
 # 127.0.0.1:9938, Settings > Stream overlays): the song timer, the song and the selected
 # arrangement. RS Companion updates the timer about 4 times a second; SongClock fills in between.
-# With RS Re-ARMed's riffloop mod in the game, where the song is comes from the game itself instead (its playback's
-# own time, asked 50 times a second and answered in well under a millisecond: GameClock), RS Companion only saying
-# which song and arrangement; and RS Companion is read on a thread of its own (OverlayReader), so its answers (a
-# hundred KB, album art and all, now and then tens of milliseconds) never hold up the notes.
+# With RS Re-ARMed's riffloop mod in the game, it all comes from the game itself instead: where the song is (its
+# playback's own time, asked 50 times a second and answered in well under a millisecond: GameClock) and which
+# arrangement plays (its playback's own copy of it, named as its .sng is), so RS Companion isn't needed: it's read
+# only while the game doesn't say (no game yet, or a mod without it), on a thread of its own (OverlayReader), so its
+# answers (a hundred KB, album art and all, now and then tens of milliseconds) never hold up the notes.
 
 DEFAULT_OVERLAY_PORT = 9938
 POLL_INTERVAL = 0.1
@@ -34,8 +35,9 @@ GAME_TIME_EVERY = 0.02  # seconds between asks of the game's own time (riffloop'
 GAME_TIME_MISSES, GAME_TIME_BACK_OFF = 3, 2.0  # unanswered this many times (no game, or a mod without it): asked
 # again this long after
 # The game's own song time and screen (riffloop's time command: seconds, None without a song's playback seen; and
-# its screen, "..._Pause" paused); None: no answer
-GameTime = Callable[[], "tuple[float | None, str | None] | None"]
+# its screen, "..._Pause" paused), and the arrangement playing (its .sng's name: None without a song's playback, ""
+# from a mod that doesn't say); None: no answer
+GameTime = Callable[[], "tuple[float | None, str | None] | tuple[float | None, str | None, str | None] | None"]
 MENUS = (0, 1)  # currentState: no game, menus
 
 # The parts to play while an arrangement is played: arrangements of its song, each with the keys it lights
@@ -352,6 +354,9 @@ class IndexProtocol(Protocol):
     def find(self, persistent_id: str) -> ArrangementRef | None:
         ...
 
+    def by_sng(self, name: str) -> ArrangementRef | None:
+        ...
+
     def refresh(self, progress: Callable[[int, int], None] | None = None) -> int:
         ...
 
@@ -398,7 +403,10 @@ class Follower:
         self._companion_timer: float | None = None  # (RS Companion's timer as last read)
         self._next_game_time = 0.0
         self._game_misses = 0
-        self._reader = OverlayReader(client, clock) if overlay_thread else None  # (RS Companion on its own thread)
+        self._game_says = False  # the game says which arrangement plays (riffloop's): RS Companion isn't read
+        self._game_unknown = ""  # (an arrangement it said that isn't in the library, even looked for again)
+        self._overlay_thread = overlay_thread
+        self._reader: OverlayReader | None = None  # (RS Companion on its own thread, while it's read)
         self._arrangement_id = ""
         self._player: Player | None = None
         self.current: ArrangementRef | None = None  # the arrangement being followed
@@ -423,9 +431,13 @@ class Follower:
 
     def close(self) -> None:
         """Stops reading RS Companion (its thread), and everything off."""
+        self._stop_reader()
+        self.stop()
+
+    def _stop_reader(self) -> None:
         if self._reader is not None:
             self._reader.stop()
-        self.stop()
+        self._reader = None
 
     def stop(self) -> None:
         """Turns everything off (until the next step)."""
@@ -447,8 +459,13 @@ class Follower:
 
     @property
     def connected(self) -> bool | None:
-        """It reaches RS Companion's overlay API (None: not tried yet)."""
-        return self._connected
+        """It reaches the game (riffloop), or RS Companion's overlay API (None: not tried yet)."""
+        return True if self._game_says else self._connected
+
+    @property
+    def from_game(self) -> bool:
+        """The game itself says which arrangement plays (riffloop's), not RS Companion."""
+        return self._game_says
 
     def show(self, frames: Sequence[tuple[float, tuple[int, ...]]], repeat: bool = True) -> None:
         """Lights a show on the keys (frames: seconds into it and the keys lit; the last one's time is its length)
@@ -509,15 +526,19 @@ class Follower:
             self._sleep(TICK)
 
     def step(self, now: float) -> None:
-        if self._reader is not None:  # (RS Companion's reads, as they've come)
-            self._reader.start()
+        if self._game_time is not None and now >= self._next_game_time:
+            self._ask_game_time(now)
+        if self._game_says:
+            self._stop_reader()  # (not needed)
+        elif self._overlay_thread:  # (RS Companion's reads, as they've come)
+            if self._reader is None:
+                self._reader = OverlayReader(self.client, self._clock)
+                self._reader.start()
             for asked, got in self._reader.take():
                 self._polled(got, asked)
         elif now >= self._next_poll:
             self._next_poll = now + POLL_INTERVAL
             self._poll(now)
-        if self._game_time is not None and self._player is not None and now >= self._next_game_time:
-            self._ask_game_time(now)
         position = self.position(now)
         if self._show is not None:
             self._show.step(self.keyboard, now, self._player, None if position is None else position + self.offset)
@@ -547,14 +568,57 @@ class Follower:
             self._game_misses += 1
             again = GAME_TIME_BACK_OFF if self._game_misses >= GAME_TIME_MISSES else GAME_TIME_EVERY
             self._next_game_time = now + again
+            if self._game_misses >= GAME_TIME_MISSES and self._game_says:  # (the game gone: RS Companion, if it's there)
+                self._game_says = False
+                self._unload()
             return
         self._game_misses = 0
         self._next_game_time = now + GAME_TIME_EVERY
-        timer, screen = got
+        timer, screen = got[0], got[1]
+        arrangement = got[2] if len(got) > 2 else ""
+        if arrangement != "":
+            if not self._game_says:
+                self._status("Connected to Rocksmith")
+                self._unload()  # (RS Companion's song, if any: the game's own from now)
+                self._game_says = True
+            self._game_arrangement(arrangement, now)
+        elif self._game_says:  # (a mod that doesn't say, now: RS Companion's)
+            self._game_says = False
+            self._unload()
+        if self._player is None:
+            return
         if timer is None:  # (no song's playback seen: RS Companion's timer, till it is)
             self._game_clock.reset()
             return
         self._game_clock.update(timer, now, paused=bool(screen and screen.endswith("_Pause")))
+
+    def _game_arrangement(self, name: str | None, now: float) -> None:
+        """The arrangement the game says plays (its .sng's name; None: no song's playback, so none), opened as it
+        changes."""
+        if name is None:
+            if self.current is not None or self._player is not None:
+                self._record({"t": now, "game": None})
+                self._unload()
+            return
+        if self.current is not None and _sng_name(self.current) == name.lower():
+            return
+        if name == self._game_unknown:
+            return
+        ref = self.index.by_sng(name)
+        if ref is None:
+            self._status("Looking for new songs...")
+            self.index.refresh()
+            ref = self.index.by_sng(name)
+        self._unload()
+        self._record({"t": now, "game": name})
+        if ref is None:
+            self._game_unknown = name
+            self._status(f"Arrangement {name} isn't in the game's archives")
+            return
+        self._arrangement_id = ref.persistent_id
+        self._player = self._open_ref(ref)
+        if self._player is None:  # (its notes unreadable: not tried again till another plays)
+            self._game_unknown = name
 
     def _poll(self, now: float) -> None:
         try:
@@ -603,6 +667,9 @@ class Follower:
         if ref is None:
             self._status(f"Song {song_key}: arrangement {arrangement_id} isn't in the game's archives")
             return None
+        return self._open_ref(ref)
+
+    def _open_ref(self, ref: ArrangementRef) -> Player | None:
         try:
             arrangement = self._load(ref)
         except Exception as exc:  # a broken or unreadable song file: keep following the game
@@ -702,6 +769,11 @@ class Follower:
         self._arrangement_id = ""
         self._song_clock.reset()
         self._game_clock.reset()
+
+
+def _sng_name(ref: ArrangementRef) -> str:
+    """An arrangement's .sng's name, as the game names it (songs/bin/macos/amonpurs_lead.sng: amonpurs_lead)."""
+    return ref.sng.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
 
 
 def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, int, object]]:

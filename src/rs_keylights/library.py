@@ -163,6 +163,7 @@ class SongIndex:
         self._archives: dict[str, dict] = {}
         self._by_id: dict[str, ArrangementRef] = {}
         self._by_song: dict[tuple[str, str], list[ArrangementRef]] = {}  # (each song's arrangements)
+        self._by_sng: dict[str, ArrangementRef] = {}  # (each arrangement by its .sng's name, as the game names it)
         self._load_cache()
 
     def __len__(self) -> int:
@@ -216,13 +217,18 @@ class SongIndex:
         return read
 
     def _build(self) -> None:
-        self._by_id, self._by_song = {}, {}
+        self._by_id, self._by_song, self._by_sng = {}, {}, {}
         for entry in self._archives.values():
             for fields in entry["arrangements"]:
                 ref = ArrangementRef(**{**fields, "tuning": tuple(fields.get("tuning", ()))})
                 self._by_id[ref.persistent_id] = ref
         for ref in self._by_id.values():
             self._by_song.setdefault((ref.archive, ref.song_key), []).append(ref)
+            self._by_sng.setdefault(ref.sng.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower(), ref)
+
+    def by_sng(self, name: str) -> ArrangementRef | None:
+        """The arrangement whose .sng has this name (as the game names an arrangement: amonpurs_lead), if indexed."""
+        return self._by_sng.get(name.lower())
 
     def of_song(self, ref: ArrangementRef) -> list[ArrangementRef]:
         """The arrangements of an arrangement's song (its archive's, with its song key), as indexed."""
@@ -241,7 +247,7 @@ class SongIndex:
             try:
                 self._build()
             except (TypeError, KeyError):
-                self._archives, self._by_id, self._by_song = {}, {}, {}
+                self._archives, self._by_id, self._by_song, self._by_sng = {}, {}, {}, {}
 
     def _save_cache(self) -> None:
         self.cache.parent.mkdir(parents=True, exist_ok=True)
