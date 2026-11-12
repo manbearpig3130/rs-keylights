@@ -276,8 +276,10 @@ def test_a_strummed_chords_strings_sound_one_after_another():
 
 
 def test_a_pinch_harmonics_squeal_scoops_up_into_its_pitch_with_a_wide_vibrato():
-    from rs_keylights.player import SCOOP, SCOOP_TIME, SQUEAL_GROWS, SQUEAL_VIBRATO, SQUEAL_WIDTH
+    from rs_keylights.player import SQUEAL_VIBRATO
     from rs_keylights.sng import PINCH_HARMONIC
+    from rs_keylights.sound import Squeal
+    shape = Squeal()
     squeal = Light(1.0, 1.0, (), (71,), PINCH_HARMONIC, rings=(2.0,), vibrato=True, extra=True)
 
     def controls(voices, light=squeal):
@@ -293,13 +295,33 @@ def test_a_pinch_harmonics_squeal_scoops_up_into_its_pitch_with_a_wide_vibrato()
     own.squeal = object()  # (a channel of its own)
     events = controls(own)
     bends = [e[2] for e in events if e[0] == "bend"]
-    assert events[0] == ("bend", 11, -SCOOP) and events[1][0] == "play"  # (flat as it starts: the attack at once)
+    assert events[0] == ("bend", 11, -shape.scoop) and events[1][0] == "play"  # (flat as it starts: at once)
     assert bends[len(bends) // 2] != 0 and bends[-1] == 0  # (the vibrato going on, none as it ends)
-    later = bends[round((SCOOP_TIME + SQUEAL_GROWS) / 0.02) + 1:-1]
-    assert round(max(later), 1) == SQUEAL_WIDTH and round(min(later), 1) == -SQUEAL_WIDTH  # (wide, either way)
+    later = bends[round((shape.scoop_ms + shape.grows_ms) / 20) + 1:-1]
+    assert max(later) > 0.8 * shape.width and min(later) < -0.8 * shape.width  # (wide, either way)
     assert not [e for e in events if e[0] == "vibrato"]  # (pitch bend: not the chart's Modulation)
     bent = replace(squeal, bends=((1.5, 2.0),))  # (the chart's bend: a whole step, the vibrato over it)
     assert max(e[2] for e in controls(own, bent) if e[0] == "bend") > 2.0
     vibrato = [e[2] for e in controls(FakeVoices()) if e[0] == "vibrato"]  # (on the note's channel: Modulation)
     assert vibrato[0] == 0 and SQUEAL_VIBRATO in vibrato and vibrato[-1] == 0
     assert not [e for e in controls(FakeVoices()) if e[0] == "bend"]
+
+
+def test_a_squeals_vibrato_only_where_the_chart_has_it_if_so_set():
+    from rs_keylights.player import squeal_bends
+    from rs_keylights.sng import PINCH_HARMONIC
+    from rs_keylights.sound import Squeal
+    charted = Squeal(vibrato="charted", scoop=0.0)
+    plain = Light(1.0, 1.0, (), (71,), PINCH_HARMONIC, rings=(2.0,), extra=True)
+    assert all(up == 0 for _at, up in squeal_bends(plain, 2.0, charted))  # (no vibrato charted: none)
+    assert any(up != 0 for _at, up in squeal_bends(replace(plain, vibrato=True), 2.0, charted))
+    assert any(up != 0 for _at, up in squeal_bends(plain, 2.0, Squeal()))  # (always, as it starts)
+    wide = squeal_bends(plain, 2.0, Squeal(width=1.5, rate=3.0, scoop=0.0))
+    assert round(max(up for _at, up in wide), 1) == 1.5
+    keys = FakeKeys()
+    voices = FakeVoices()
+    voices.squeal_shape = charted
+    player = Player([Track([], voices, extras=[plain])], keys)  # (on the note's channel: no Modulation either)
+    for position in (0.9, 1.0, 1.5, 2.1):
+        player.advance(position)
+    assert not [e for e in keys.events if e[0] == "vibrato"]

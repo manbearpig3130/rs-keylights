@@ -208,7 +208,9 @@ def test_settings_are_kept(server, tmp_path):
         "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {}, "outputs_known": {},
         "most_lights": False, "beat_lights": False,
         "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8, "pedal_backup": "",
-        "pedal_favourites": [51, 187]}
+        "pedal_favourites": [51, 187], "pinch": {"up": 19, "velocity": 127, "note_velocity": 70, "scoop": 0.5,
+                                                 "scoop_ms": 80.0, "width": 1.05, "rate": 15.0, "grows_ms": 200.0,
+                                                 "vibrato": "always"}}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
@@ -1325,3 +1327,22 @@ def test_a_songs_theory_its_chords_as_numbers_its_sections_and_why_its_notes_wor
     assert [s["name"] for s in th["sections"]][:3] == ["Intro 1", "Verse 1", "Chorus 1"]
     assert th["notes"] and {n[4] for n in th["notes"]} <= {"chord", "scale", "outside"}
     assert call(server, f"/api/theory?id={urllib.request.quote(sid)}&part=rhythm")[1]["part"] == "rhythm"
+
+
+def test_pinch_harmonics_settings_are_kept_checked_and_tried(server, tmp_path, monkeypatch):
+    from rs_keylights import gui as gui_module
+    _, settings = call(server, "/api/settings", {"pinch": {"width": 1.1, "vibrato": "charted"}})
+    assert settings["pinch"]["width"] == 1.1 and settings["pinch"]["vibrato"] == "charted"
+    assert settings["pinch"]["up"] == 19  # (the rest as they were)
+    assert json.loads((tmp_path / "gui.json").read_text())["pinch"]["width"] == 1.1
+    status, said = call(server, "/api/settings", {"pinch": {"scoop": 9}})
+    assert status == 400 and "scoop goes from 0 to 2" in said["error"]
+    again = Gui(server.gui.index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    assert again._squeal().width == 1.1  # (kept)
+    tried = []
+    monkeypatch.setattr(gui_module, "_pinch_demo", lambda *args: tried.append(args))
+    _, said = call(server, "/api/pinch/try", {"pinch": {"up": 24}})
+    time.sleep(0.05)
+    assert said == {"playing": True} and tried[0][1].up == 24 and tried[0][1].width == 1.1  # (as given, over the kept)
+    assert tried[0][2].number == 79 and tried[0][3].number == 298  # (the lead parts' tones: as they start)
+    assert server.gui._squeal().up == 19  # (tried: not kept)

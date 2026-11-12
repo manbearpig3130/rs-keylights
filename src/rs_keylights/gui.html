@@ -567,6 +567,47 @@
       <div id="toneKinds" class="grid2"></div>
     </div>
 
+    <div class="card" id="pinchCard">
+      <h3>Pinch harmonics</h3>
+      <div class="muted small">How a pinch harmonic sounds: its fretted note, softer, under a squeal on the part's
+        pinch-harmonic tone, struck a little flat and scooped up to its pitch, then a wide vibrato. A quick one
+        (a riff's) is over before the vibrato comes in. <b>Try it</b> plays a riff with a quick one and a held one on
+        the lead parts' tones.</div>
+      <div class="grid2" id="pinchFields">
+        <label for="pinchUp">Squeal</label>
+        <select id="pinchUp" data-field="up">
+          <option value="12">an octave up</option>
+          <option value="19">an octave and a fifth up</option>
+          <option value="24">two octaves up</option>
+          <option value="28">two octaves and a third up</option>
+          <option value="31">two octaves and a fifth up</option>
+        </select>
+        <label for="pinchVelocity">Squeal loudness</label>
+        <span class="part-volume"><input type="range" id="pinchVelocity" data-field="velocity" min="1" max="127"><output></output></span>
+        <label for="pinchNote">Note under it</label>
+        <span class="part-volume"><input type="range" id="pinchNote" data-field="note_velocity" min="1" max="127"><output></output></span>
+        <label for="pinchScoop" title="Semitones flat it's struck, before it reaches its pitch">Scoop</label>
+        <span class="part-volume"><input type="range" id="pinchScoop" data-field="scoop" data-unit=" st" min="0" max="2" step="0.1"><output></output></span>
+        <label for="pinchScoopMs" title="How long it takes to get up to its pitch">Scoop time</label>
+        <span class="part-volume"><input type="range" id="pinchScoopMs" data-field="scoop_ms" data-unit=" ms" min="0" max="300" step="10"><output></output></span>
+        <label for="pinchWidth" title="Semitones the vibrato goes either way (with a bend: 2 at most in all, the keyboard's range)">Vibrato width</label>
+        <span class="part-volume"><input type="range" id="pinchWidth" data-field="width" data-unit=" st" min="0" max="2" step="0.05"><output></output></span>
+        <label for="pinchRate">Vibrato speed</label>
+        <span class="part-volume"><input type="range" id="pinchRate" data-field="rate" data-unit="/s" min="0.5" max="15" step="0.5"><output></output></span>
+        <label for="pinchGrows" title="How long the vibrato takes to grow to its width, once it's up to its pitch">Vibrato grows in</label>
+        <span class="part-volume"><input type="range" id="pinchGrows" data-field="grows_ms" data-unit=" ms" min="0" max="1000" step="20"><output></output></span>
+        <label for="pinchVibrato">Vibrato on</label>
+        <select id="pinchVibrato" data-field="vibrato">
+          <option value="always">every pinch harmonic</option>
+          <option value="charted">only those the chart has vibrato on</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="pinchTry">Try it</button>
+        <button id="pinchDefaults">Defaults</button>
+      </div>
+    </div>
+
     <div class="card" id="keysCard">
       <h3>Launchkey keys</h3>
       <div class="muted small">Its keys play the Casio (on channel 1, a part of their own) and light the keys they
@@ -3524,6 +3565,7 @@ async function loadSettings() {
   $("ring").checked = s.ring;
   $("overlap").value = s.overlap_ms;
   $("techniques").checked = s.techniques;
+  if (s.pinch) showPinch(s.pinch);
   $("mostLights").checked = !!s.most_lights;
   $("toneChanges").checked = s.tone_changes;
   $("listen").checked = s.listen;
@@ -3704,6 +3746,35 @@ function showPedal(p) {
     p.previous != null ? `Back goes to ${String(p.previous).padStart(3, "0")} ${p.previous_name}` : "";
 }
 
+// The pinch harmonics card: its fields (data-field: the setting), shown from the settings, sent as they change
+const PINCH_DEFAULTS = {up: 19, velocity: 127, note_velocity: 70, scoop: 0.5, scoop_ms: 80, width: 1.05, rate: 15,
+                        grows_ms: 200, vibrato: "always"};
+
+function pinchFields() {
+  return [...document.querySelectorAll("#pinchFields [data-field]")];
+}
+
+function showPinch(pinch) {
+  for (const input of pinchFields()) {
+    if (input === document.activeElement && input.type === "range") continue;  // (being dragged)
+    input.value = String(pinch[input.dataset.field]);
+    showPinchValue(input);
+  }
+}
+
+function showPinchValue(input) {
+  const out = input.parentElement.querySelector("output");
+  if (out) out.textContent = `${input.value}${input.dataset.unit || ""}`;
+}
+
+function pinchRequest() {
+  const out = {};
+  for (const input of pinchFields()) {
+    out[input.dataset.field] = input.dataset.field === "vibrato" ? input.value : Number(input.value);
+  }
+  return out;
+}
+
 function settingsRequest() {
   return {
     midi_port: $("midiPort").value,
@@ -3758,6 +3829,15 @@ $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("f
 $("launchkey").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("ring").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("techniques").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+for (const input of pinchFields()) {
+  input.addEventListener("input", () => showPinchValue(input));
+  input.addEventListener("change", () => act(() => api("/api/settings", {pinch: pinchRequest()})));
+}
+$("pinchTry").addEventListener("click", () => act(() => api("/api/pinch/try", {pinch: pinchRequest()})));
+$("pinchDefaults").addEventListener("click", () => act(async () => {
+  showPinch(PINCH_DEFAULTS);
+  await api("/api/settings", {pinch: PINCH_DEFAULTS});
+}));
 $("mostLights").addEventListener("change", () => act(async () => {
   await api("/api/settings", settingsRequest());
   if (selected) renderSong();  // (its parts' lit keys: on or off, or how many)

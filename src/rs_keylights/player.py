@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol, Sequence
 
 from .lights import MIN_PERIOD, KeyLight, Light, merge_keys
+from .sound import Squeal
 from .sng import PINCH_HARMONIC
 
 SEEK_BACK = 0.25  # seconds; going back further than this is a seek (riff repeat, restart)
@@ -15,11 +16,8 @@ KEY = -1  # the track index of a key's light in the actions
 BEND_STEP = 0.02  # seconds between a bend's pitch bends, as it moves
 BEND_MOVE = 0.15  # seconds a bend takes, at most, to reach each of its points
 VIBRATO_DEPTH = 64  # Modulation, for a note's vibrato
-# A pinch harmonic's squeal, on a channel of its own: SCOOP semitones flat as it sounds, up to its pitch over
-# SCOOP_TIME, then a wide vibrato (pitch bend, over the chart's bend): SQUEAL_WIDTH semitones either way, SQUEAL_RATE
-# times a second, growing in over SQUEAL_GROWS. On the note's own channel instead: Modulation, growing in
-SCOOP, SCOOP_TIME = 1.0, 0.08
-SQUEAL_WIDTH, SQUEAL_RATE, SQUEAL_GROWS = 0.6, 6.0, 0.2
+# A pinch harmonic's squeal on its note's own channel (none of its own: no pitch of its own, as squeal_bends gives
+# it): Modulation, growing in
 SQUEAL_VIBRATO, SQUEAL_VIBRATO_AFTER, SQUEAL_VIBRATO_GROWS = 90, 0.15, 0.45
 
 
@@ -278,10 +276,12 @@ class Player:
         for li, light in enumerate(sounds):
             end = self._sound_end(track, light)
             squeal = light.extra and bool(light.mask & PINCH_HARMONIC)
+            shape = getattr(track.voices, "squeal_shape", None) or Squeal()
+            wobbles = shape.vibrato == "always" or light.vibrato
             if squeal and end > light.on and getattr(track.voices, "squeal", None) is not None:
-                out += self._squeal(li, light, end)  # (its pitch, the chart's bend in it)
+                out += [(at, li, "bend", up) for at, up in squeal_bends(light, end, shape)]  # (the chart's bend in it)
                 continue
-            if squeal and end > light.on:
+            if squeal and end > light.on and wobbles:
                 out += self._squeal_vibrato(li, light.on, end)
             elif light.vibrato and end > light.on:
                 out += [(light.on, li, "vibrato", VIBRATO_DEPTH), (end, li, "vibrato", 0)]
@@ -295,35 +295,6 @@ class Player:
                             for k in range(steps)]
                 out += [(points[-1][0], li, "bend", points[-1][1]), (end, li, "bend", 0.0)]
         return sorted(out, key=lambda control: control[0])
-
-    @staticmethod
-    def _squeal(li: int, light: Light, end: float) -> list[tuple[float, int, str, float]]:
-        """A squeal's pitch on its own channel, a bend every BEND_STEP: scooped up into, the chart's bend (held,
-        then moved to each point), and the vibrato over it; none as it ends."""
-        curve = [(light.on, 0.0), *((at, up) for at, up in light.bends if at < end)]
-
-        def charted(t: float) -> float:
-            value = 0.0
-            for (start, was), (reach, target) in zip(curve, curve[1:]):
-                moving = max(start, reach - BEND_MOVE)
-                if t < moving:
-                    return was
-                if t < reach:
-                    return was + (target - was) * (t - moving) / (reach - moving)
-                value = target
-            return value
-
-        out: list[tuple[float, int, str, float]] = []
-        t = light.on
-        while t < end:
-            since = t - light.on
-            scoop = -SCOOP * max(0.0, 1.0 - since / SCOOP_TIME)
-            width = SQUEAL_WIDTH * min(max((since - SCOOP_TIME) / SQUEAL_GROWS, 0.0), 1.0)
-            wobble = width * math.sin(2 * math.pi * SQUEAL_RATE * max(since - SCOOP_TIME, 0.0))
-            out.append((t, li, "bend", charted(t) + scoop + wobble))
-            t += BEND_STEP
-        out.append((end, li, "bend", 0.0))
-        return out
 
     @staticmethod
     def _squeal_vibrato(li: int, on: float, end: float) -> list[tuple[float, int, str, float]]:
@@ -417,6 +388,38 @@ class Player:
             sound.all_off()
         self._sounding.clear()
         self._held.clear()
+
+
+def squeal_bends(light: Light, end: float, shape: Squeal = Squeal()) -> list[tuple[float, float]]:
+    """A squeal's pitch on its own channel, as it sounds until end: a bend (semitones) every BEND_STEP, scooped up
+    into, the chart's bend (held, then moved to each point), and the vibrato over it (the shape's: always, or where the
+    chart has vibrato); none as it ends."""
+    curve = [(light.on, 0.0), *((at, up) for at, up in light.bends if at < end)]
+
+    def charted(t: float) -> float:
+        value = 0.0
+        for (start, was), (reach, target) in zip(curve, curve[1:]):
+            moving = max(start, reach - BEND_MOVE)
+            if t < moving:
+                return was
+            if t < reach:
+                return was + (target - was) * (t - moving) / (reach - moving)
+            value = target
+        return value
+
+    scoop_time, grows = shape.scoop_ms / 1000, shape.grows_ms / 1000
+    width = shape.width if shape.vibrato == "always" or light.vibrato else 0.0
+    out: list[tuple[float, float]] = []
+    t = light.on
+    while t < end:
+        since = t - light.on
+        scoop = -shape.scoop * max(0.0, 1.0 - since / scoop_time) if scoop_time > 0 else 0.0
+        grown = min(max((since - scoop_time) / grows, 0.0), 1.0) if grows > 0 else float(since >= scoop_time)
+        wobble = width * grown * math.sin(2 * math.pi * shape.rate * max(since - scoop_time, 0.0))
+        out.append((t, charted(t) + scoop + wobble))
+        t += BEND_STEP
+    out.append((end, 0.0))
+    return out
 
 
 def play(

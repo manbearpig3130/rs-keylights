@@ -2,8 +2,8 @@ import pytest
 
 from rs_keylights.lights import Light
 from rs_keylights.sng import ACCENT, FRET_HAND_MUTE, PALM_MUTE, PINCH_HARMONIC
-from rs_keylights.sound import (DEAD_VELOCITY, PALM_VELOCITY, PINCH_UP, PLAIN_DEAD_VELOCITY, PINCHED_VELOCITY, SQUEAL_VELOCITY, UP_SOFTER,
-                                Voice, Voices, parse_note)
+from rs_keylights.sound import (DEAD_VELOCITY, PALM_VELOCITY, PLAIN_DEAD_VELOCITY, UP_SOFTER, Squeal, Voice, Voices,
+                                parse_note, squeal_from)
 from rs_keylights.tones import tone
 
 MAIN, PINCH, MUTE = Voice(11, tone(79)), Voice(12, tone(298)), Voice(13, tone(77))
@@ -89,10 +89,12 @@ def test_palm_mutes_a_little_softer_and_dead_notes_a_tick_without_a_palm_mute_to
 def test_a_pinch_harmonics_squeal_sounds_softer_over_its_note():
     note = light((52,), PINCH_HARMONIC)
     squeal = Light(0.0, 0.0, (), (52,), PINCH_HARMONIC, rings=(0.5,), extra=True)  # (lights.techniques')
-    assert Voices(MAIN).pick(note)[1:] == ((52,), PINCHED_VELOCITY)  # (the note, softer)
+    assert Voices(MAIN).pick(note)[1:] == ((52,), Squeal().note_velocity)  # (the note, softer)
     assert Voices(MAIN).pick(light((52,), PINCH_HARMONIC | ACCENT))[2] == 127
-    assert Voices(MAIN).pick(squeal)[1:] == ((52 + PINCH_UP,), SQUEAL_VELOCITY)
-    assert Voices(MAIN).for_arrangement(12).pick(squeal)[1] == (64 + PINCH_UP,)  # (over the note as it's moved)
+    assert Voices(MAIN).pick(squeal)[1:] == ((52 + Squeal().up,), Squeal().velocity)
+    assert Voices(MAIN).for_arrangement(12).pick(squeal)[1] == (64 + Squeal().up,)  # (over the note as it's moved)
+    shaped = Voices(MAIN, squeal_shape=Squeal(up=24, velocity=100, note_velocity=50))
+    assert shaped.pick(squeal)[1:] == ((76,), 100) and shaped.pick(note)[2] == 50
     assert Voices(MAIN, techniques=False).pick(squeal)[1:] == ((52,), 100)
 
 
@@ -102,3 +104,12 @@ def test_a_squeal_on_its_own_voice_when_there_is_one():
     assert voices.pick(squeal)[0] == 2
     assert voices.pick(light((52,), PINCH_HARMONIC | PALM_MUTE))[0] == 13  # (the note: as ever)
     assert Voices(MAIN, mute=MUTE).pick(squeal)[0] == 13  # (none: the note's own)
+
+
+def test_pinch_harmonics_settings_are_checked():
+    changed = squeal_from(Squeal(), {"up": 24, "width": "1.2", "vibrato": "charted"})
+    assert (changed.up, changed.width, changed.vibrato, changed.rate) == (24, 1.2, "charted", Squeal().rate)
+    assert squeal_from(Squeal(), {"velocity": 99.6}).velocity == 100  # (a whole velocity)
+    for bad in ({"up": 40}, {"width": "wide"}, {"vibrato": "sometimes"}, {"rate": 0}):
+        with pytest.raises(ValueError):
+            squeal_from(Squeal(), bad)

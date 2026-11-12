@@ -25,12 +25,53 @@ LEGATO_VELOCITY, DEAD_VELOCITY = 75, 50  # hammer-ons, pull-offs and a slide's s
 UP_SOFTER = 12  # a chord strummed up: this much softer (techniques)
 PALM_VELOCITY = 88  # palm mutes (techniques)
 PLAIN_DEAD_VELOCITY = 35  # dead notes on a part's own tone (no palm-mute tone: just a tick)
-PINCH_UP = 19  # semitones a pinch harmonic's squeal sounds over its fretted note (an octave and a fifth; techniques)
-SQUEAL_VELOCITY = 127  # and how hard: over the note, as a pinch harmonic sounds...
-PINCHED_VELOCITY = 70  # ...its note under it (unless accented)
 PINCH_TONE = 298  # GM GT HARMONICS: pinch harmonics' squeals' tone, unless a part has its own (or the same tone)
 GUITAR_TONE = 79  # DISTORTION GT
 BASS_TONE = 85  # FINGERED BASS
+
+
+@dataclass(frozen=True)
+class Squeal:
+    """How pinch harmonics sound (techniques; the page's Pinch harmonics card): the squeal UP semitones over the
+    fretted note, as hard as velocity, the note under it as hard as note_velocity (unless accented); the squeal
+    struck SCOOP semitones flat, up to its pitch over scoop_ms, then a vibrato of WIDTH semitones either way, RATE
+    times a second, growing in over grows_ms (pitch bend, on its own channel); always, or only where the chart has
+    vibrato ("charted")."""
+
+    up: int = 19  # (an octave and a fifth)
+    velocity: int = 127
+    note_velocity: int = 70
+    scoop: float = 0.5
+    scoop_ms: float = 80.0
+    width: float = 1.05
+    rate: float = 15.0
+    grows_ms: float = 200.0
+    vibrato: str = "always"
+
+
+SQUEAL_LIMITS = {"up": (0, 36), "velocity": (1, 127), "note_velocity": (1, 127), "scoop": (0.0, 2.0),
+                 "scoop_ms": (0.0, 500.0), "width": (0.0, 2.0), "rate": (0.5, 15.0), "grows_ms": (0.0, 2000.0)}
+SQUEAL_VIBRATO = ("always", "charted")
+
+
+def squeal_from(was: Squeal, change: Mapping[str, Any]) -> Squeal:
+    """A squeal's settings changed (those given; checked: a ValueError if one isn't a number in its range)."""
+    out: dict[str, Any] = {}
+    for name, (low, high) in SQUEAL_LIMITS.items():
+        if name not in change:
+            continue
+        try:
+            value = float(change[name])
+        except (TypeError, ValueError):
+            raise ValueError(f"Pinch harmonics: {name} isn't a number") from None
+        if not low <= value <= high:
+            raise ValueError(f"Pinch harmonics: {name} goes from {low:g} to {high:g}")
+        out[name] = round(value) if isinstance(low, int) else value
+    if "vibrato" in change:
+        if change["vibrato"] not in SQUEAL_VIBRATO:
+            raise ValueError("Pinch harmonics: vibrato is always or charted")
+        out["vibrato"] = change["vibrato"]
+    return replace(was, **out)
 
 
 @dataclass(frozen=True)
@@ -44,6 +85,7 @@ class Voices:
     main: Voice
     mute: Voice | None = None  # palm-muted notes
     squeal: Voice | None = None  # pinch harmonics' squeals (techniques; none: on the note's own voice)
+    squeal_shape: Squeal = Squeal()  # and how they sound
     real_pitch: bool = False  # sound the notes' own pitches, not the lit keys' (moved into range)
     key_range: KeyRange = KeyRange()
     shift: int = 0  # the arrangement's octave shift, for the lit keys' pitches
@@ -76,7 +118,7 @@ class Voices:
             voice = self.main
         velocity = self.velocity(light.mask)
         if self.techniques and light.extra and light.mask & PINCH_HARMONIC:
-            velocity = SQUEAL_VELOCITY
+            velocity = self.squeal_shape.velocity
         if self.techniques and light.mask & FRET_HAND_MUTE and voice is not self.mute:
             velocity = PLAIN_DEAD_VELOCITY
         if self.techniques and light.up and len(light.pitches) > 1:
@@ -94,7 +136,7 @@ class Voices:
         if mask & (ACCENT | SLAP | POP):
             return ACCENT_VELOCITY
         if mask & PINCH_HARMONIC:
-            return PINCHED_VELOCITY
+            return self.squeal_shape.note_velocity
         if mask & (HAMMER_ON | PULL_OFF):
             return LEGATO_VELOCITY
         return PALM_VELOCITY if mask & PALM_MUTE else VELOCITY
@@ -119,7 +161,7 @@ class Voices:
         sound, lights.techniques) over the note."""
         pitches = light.pitches or light.keys
         squeal = self.techniques and light.extra and light.mask & PINCH_HARMONIC
-        up = self.transpose + (PINCH_UP if squeal else 0)
+        up = self.transpose + (self.squeal_shape.up if squeal else 0)
         if self.real_pitch:
             return tuple(min(max(p + up, 0), 127) for p in pitches)
         return tuple(min(max(self.key_range.fit(p + self.shift) + up, 0), 127) for p in pitches)
@@ -157,8 +199,10 @@ class SoundChoice:
 
     def __init__(self, main: Mapping[str | None, Tone | None], pinch: Mapping[str | None, Tone | None],
                  mute: Mapping[str | None, Tone | None], real_pitch: bool, ring: bool = True,
-                 tone_map: Mapping[str, Tone] | None = None, techniques: bool = True, overlap: float = 0.0):
+                 tone_map: Mapping[str, Tone] | None = None, techniques: bool = True, overlap: float = 0.0,
+                 squeal: Squeal = Squeal()):
         self.main, self.pinch, self.mute, self.real_pitch = main, pinch, mute, real_pitch
+        self.squeal = squeal
         self.ring, self.tone_map, self.techniques = ring, tuple((tone_map or {}).items()), techniques
         self.overlap = overlap
 
@@ -175,6 +219,7 @@ class SoundChoice:
             main=Voice(channels[0], main or tone(BASS_TONE if ref.bass else GUITAR_TONE)),
             mute=Voice(channels[2], mute) if mute else None,
             squeal=Voice(channels[1], pinch) if pinch and self.techniques else None,
+            squeal_shape=self.squeal,
             real_pitch=self.real_pitch,
             ring=self.ring,
             tone_map=self.tone_map,

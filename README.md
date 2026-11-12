@@ -174,9 +174,10 @@ the commands do:
   (Modulation), tremolo picking (struck again every 75 ms), hammer-ons and pull-offs (softer), slaps and pops
   (as hard as accents), natural harmonics (their own pitch: a 7th-fret harmonic an octave and a fifth over the
   open string, lit there too), pinch harmonics (the fretted note, softer, under its squeal: an octave and a
-  fifth over it, struck at once a semitone flat and scooped up to its pitch, then a wide vibrato (pitch bend,
-  over the chart's bend) growing in, on the part's pinch-harmonic tone: GM GT HARMONICS unless chosen otherwise),
-  dead notes (a quiet click on the palm-mute tone, or a softer tick on the part's
+  fifth over it, struck at once half a semitone flat and scooped up to its pitch, then a fast, wide vibrato (pitch bend,
+  over the chart's bend) growing in, on the part's pinch-harmonic tone: GM GT HARMONICS unless chosen otherwise;
+  the **Pinch harmonics** card sets how high, how loud, the scoop and the vibrato, on every one or only where the
+  chart has vibrato, and **Try it** plays a riff with a quick one and a held one), dead notes (a quiet click on the palm-mute tone, or a softer tick on the part's
   own without one), palm mutes a little softer, and strums: a
   chord's strings one after another, down (low to high) on the beat and its eighths, up (high to low, a little
   softer) on the sixteenths between (the charts don't say which way: their pick direction is never set), 7 ms

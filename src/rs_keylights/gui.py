@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import replace
+from dataclasses import asdict, replace
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -29,10 +29,10 @@ from .follow import DEFAULT_OVERLAY_PORT, OverlayClient, PartsFor
 from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, KeyboardError, Synth, keyboard_name
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
-from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange
+from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light
 from . import drums, midiexport, theory
 from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
-from .player import Track
+from .player import Track, squeal_bends
 from .session import Following, Playback
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
@@ -45,7 +45,7 @@ from .sng import (BASS, BEND, GUITAR, HAMMER_ON, HARMONIC, PALM_MUTE, PINCH_HARM
 from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tones, tone_kind
 from .keyshow import KeyShow
 from .songkey import Key, find_key, scale_show, shapes, tuning_name
-from .sound import KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Voice, Voices
+from .sound import GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Squeal, Voice, Voices, squeal_from
 from .tones import TONES, Tone, tone
 from .watch import Watch
 
@@ -502,7 +502,7 @@ class Gui:
                                          "outputs": {}, "outputs_known": {}, "most_lights": False, "beat_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
-                                         "pedal_favourites": list(PEDAL_FAVOURITES)}
+                                         "pedal_favourites": list(PEDAL_FAVOURITES), "pinch": asdict(Squeal())}
         self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
         self.follow_version = 0  # changes with them, so pages know to show them again
         self._follow_saved = False
@@ -567,6 +567,10 @@ class Gui:
                 self.settings["pedal_favourites"] = _favourites(self.settings["pedal_favourites"])
             except (GuiError, TypeError, ValueError):
                 self.settings["pedal_favourites"] = list(PEDAL_FAVOURITES)
+            try:
+                self.settings["pinch"] = asdict(squeal_from(Squeal(), self.settings["pinch"]))
+            except (ValueError, TypeError, AttributeError):
+                self.settings["pinch"] = asdict(Squeal())
             try:
                 self.settings["outputs"] = _outputs({}, self.settings["outputs"])
             except (GuiError, TypeError, ValueError, AttributeError):
@@ -1497,7 +1501,7 @@ class Gui:
         choice = None if silent else SoundChoice(main, pinch, mute, bool(self.play_options["real_pitch"]),
                                                  ring=bool(self.settings["ring"]), tone_map=self._tones_for_kinds(),
                                                  techniques=bool(self.settings["techniques"]),
-                                                 overlap=self.settings["overlap_ms"] / 1000)
+                                                 overlap=self.settings["overlap_ms"] / 1000, squeal=self._squeal())
 
         def voices_for(ref: ArrangementRef, channels: tuple[int, int, int]) -> Voices:
             assert choice is not None
@@ -2589,7 +2593,7 @@ class Gui:
                                  {None: _tone(pick("mute_tone"))}, settings["real_pitch"],
                                  ring=bool(self.settings["ring"]),
                                  tone_map=self._tones_for_kinds(), techniques=bool(self.settings["techniques"]),
-                                 overlap=self.settings["overlap_ms"] / 1000).voices(ref, channels)
+                                 overlap=self.settings["overlap_ms"] / 1000, squeal=self._squeal()).voices(ref, channels)
             if pick("follow_tones") is False:
                 voices = replace(voices, tone_map=())
             return self._routed(replace(voices, volume=self._volume(self._slot(ref))), ref)
@@ -2795,16 +2799,20 @@ class Gui:
         for part, chosen in outputs.items():  # (and as they are now: remembered for their devices)
             known.setdefault(part, {})[chosen["port"]] = chosen
         tone_map = _tone_map(self.settings["tone_map"], body.get("tone_map") or {})
+        try:
+            pinch = asdict(squeal_from(self._squeal(), body.get("pinch") or {}))
+        except (ValueError, AttributeError) as exc:
+            raise GuiError(str(exc) if isinstance(exc, ValueError) else "Expected the pinch harmonics' settings") from None
         if not port:
             raise GuiError("Choose the keyboard's MIDI output")
         sounded = (self.settings["ring"], self.settings["tone_changes"], self.settings["tone_map"],
                    self.settings["techniques"], self.settings["outputs"], self.settings["overlap_ms"],
-                   self.settings["most_lights"])
+                   self.settings["most_lights"], self.settings["pinch"])
         changed = dict(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash, launchkey=launchkey,
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        outputs_known=known,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, pedal_backup=backup,
-                       pedal_favourites=favourites, most_lights=most_lights)
+                       pedal_favourites=favourites, most_lights=most_lights, pinch=pinch)
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
         self.settings.update(changed)
@@ -2816,13 +2824,34 @@ class Gui:
             if isinstance(session, (Playback, Following)) and session.running:
                 session.retime_lights(*self._light_timing())
         self.listen_now()  # (the guitar heard, or not)
-        if (ring, tone_changes, tone_map, played, outputs, overlap, most_lights) != sounded:  # (the notes ringing, tone
-            # changes, techniques, other MIDI devices and the lights pooled: at once)
+        if (ring, tone_changes, tone_map, played, outputs, overlap, most_lights, pinch) != sounded:  # (the notes
+            # ringing, tone changes, techniques, other MIDI devices, the lights pooled and pinch harmonics: at once)
             if isinstance(session, Following):
                 self._follow_on(session)
             elif self._playing:
                 self._play_on(self._playing["id"])
         return self.get_settings()
+
+    def _squeal(self) -> Squeal:
+        return Squeal(**self.settings["pinch"])
+
+    def try_pinch(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The pinch harmonics as set (or as given, not kept), heard on the keyboard: a riff's chugs, a quick pinch
+        harmonic, then a held one with vibrato (as charted), on the lead parts' tones (channels 9 and 2: those a
+        fourth part would take)."""
+        try:
+            shape = squeal_from(self._squeal(), body.get("pinch") or {})
+        except (ValueError, AttributeError) as exc:
+            raise GuiError(str(exc) if isinstance(exc, ValueError) else "Expected the pinch harmonics' settings") from None
+        lead = self.follow_settings["lead"]
+        main = _tone(lead.get("tone")) or tone(GUITAR_TONE)
+        pinch = _pinch(lead.get("pinch_tone"))
+        with self._keys_lock:
+            keyboard = self._keys_keyboard(open_one=True)
+        if keyboard is None:
+            raise GuiError(f"No {self._keyboard_name} to play it on")
+        threading.Thread(target=_pinch_demo, args=(keyboard, shape, main, pinch), daemon=True).start()
+        return {"playing": True}
 
     def _routed(self, voices: Voices, ref: ArrangementRef) -> Voices:
         """A part's voices on the MIDI device chosen for its kind of part (outputs), if it's there: all its notes on
@@ -3063,6 +3092,48 @@ def _tone(value: Any) -> Tone | None:
         return tone(int(value))
     except (KeyError, TypeError, ValueError):
         raise GuiError(f"No tone {value!r}") from None
+
+
+DEMO_NOTE, DEMO_SQUEAL = 9, 2  # the channels a pinch harmonic's tried on (try_pinch)
+
+
+def _pinch_demo(keyboard: Keyboard, shape: Squeal, main: Tone, pinch: Tone | None) -> None:
+    """Chugs, a quick pinch harmonic (no vibrato charted), chugs, then a held one (vibrato charted), as a song plays
+    them (the squeal on the note's channel if it has no tone of its own: without its own pitch)."""
+    squeal_channel = DEMO_SQUEAL if pinch is not None else DEMO_NOTE
+    keyboard.set_voice(DEMO_NOTE, main.program, main.bank)
+    if pinch is not None:
+        keyboard.set_voice(DEMO_SQUEAL, pinch.program, pinch.bank)
+    low, fretted = 40, 52  # (E2 chugs; E3 pinched)
+
+    def chugs(count: int) -> None:
+        for _ in range(count):
+            keyboard.play(DEMO_NOTE, (low,), 88)
+            time.sleep(0.12)
+            keyboard.stop(DEMO_NOTE, (low,))
+            time.sleep(0.06)
+
+    def pinched(length: float, vibrato: bool) -> None:
+        light = Light(0.0, 0.0, (), (fretted,), PINCH_HARMONIC, rings=(length,), vibrato=vibrato, extra=True)
+        bends = squeal_bends(light, length, shape) if pinch is not None else []
+        squeal = min(fretted + shape.up, 127)
+        if bends:
+            keyboard.bend(squeal_channel, bends[0][1])
+        keyboard.play(DEMO_NOTE, (fretted,), shape.note_velocity)
+        keyboard.play(squeal_channel, (squeal,), shape.velocity)
+        began = time.monotonic()
+        for at, up in bends[1:]:
+            time.sleep(max(0.0, at - (time.monotonic() - began)))
+            keyboard.bend(squeal_channel, up)
+        time.sleep(max(0.0, length - (time.monotonic() - began)))
+        keyboard.stop(DEMO_NOTE, (fretted,))
+        keyboard.stop(squeal_channel, (squeal,))
+        keyboard.bend(squeal_channel, 0.0)
+
+    chugs(3)
+    pinched(0.15, vibrato=False)
+    chugs(4)
+    pinched(1.2, vibrato=True)
 
 
 def _pinch(value: Any) -> Tone | None:
@@ -3362,6 +3433,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/scale": lambda: gui.show_scale(body),
             "/api/scale/stop": gui.stop_scale,
             "/api/settings": lambda: gui.set_settings(body),
+            "/api/pinch/try": lambda: gui.try_pinch(body),
             "/api/keys": lambda: gui.set_keys(body),
             "/api/volumes": lambda: gui.set_volumes(body.get("volumes") or {}),
             "/api/loop": lambda: gui.set_loop(body),
