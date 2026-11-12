@@ -123,6 +123,8 @@ class Voices:
             velocity = PLAIN_DEAD_VELOCITY
         if self.techniques and light.up and len(light.pitches) > 1:
             velocity = max(velocity - UP_SOFTER, 1)
+        if self.techniques and light.level != 1.0:
+            velocity = max(round(velocity * light.level), 1)
         return voice.channel, tuple(sorted(set(self.notes_for(light)))), velocity
 
     def velocity(self, mask: int) -> int:

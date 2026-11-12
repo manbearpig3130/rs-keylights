@@ -11,7 +11,8 @@ from rs_keylights.drums import Hit
 from rs_keylights.gui import Gui, GuiServer, song_id
 from rs_keylights.library import SongIndex
 from rs_keylights.midiexport import PPQ, ExportPart, Grid, file_name, key_signature, song_midi
-from rs_keylights.sng import ACCENT, PALM_MUTE, Arrangement, Chord, Note, Section, SongTone, Syllable
+from rs_keylights.sng import (ACCENT, FRET_HAND_MUTE, PALM_MUTE, PINCH_HARMONIC, Arrangement, Chord, Note, Section,
+                              SongTone, Syllable)
 
 
 def read(data):
@@ -88,7 +89,7 @@ def test_a_song_as_a_midi_file_its_parts_vocals_drums_key_and_sections():
                Note(3.0, 0.5, (52, 59), mask=PALM_MUTE), Note(4.0, 0.2, (60,), mask=ACCENT, vibrato=True)),
         tuning=(0,) * 6, capo=0, length=9.0, beats=beats, bars=beats[::4],
         chords=(Chord("E5", 3.0, 3.5), Chord("E5", 3.5, 4.0)), tone_changes=((3.0, 0),),
-        base_tone=SongTone("clean"), tones=(SongTone("dist"),), muted=(Note(5.0, 0.0, (45,)),))
+        base_tone=SongTone("clean"), tones=(SongTone("dist"),), muted=(Note(5.0, 0.0, (45,), FRET_HAND_MUTE),))
     bass = Arrangement(notes=(Note(1.0, 0.4, (28,)),), tuning=(0,) * 4, capo=0, length=9.0, beats=beats)
     sung = (Syllable("Hel-", 2.0, 2.4, 60), Syllable("lo+", 2.5, 3.0, 62), Syllable("you", 3.0, 3.2, 64),
             Syllable("there", 3.5, 4.0, 65))
@@ -101,14 +102,17 @@ def test_a_song_as_a_midi_file_its_parts_vocals_drums_key_and_sections():
     assert [round(at(t), 3) for t, _n in metas(conductor, 0x06)] == [1.0, 5.0]
     assert [k for _t, s, kind, k in conductor if s == 0xFF and kind == 0x59] == [b"\x01\x01"]  # (E minor: 1 sharp)
     assert metas(lead_track, 0x03) == [(0, "Lead")] and metas(bass_track, 0x03) == [(0, "Bass")]
+    # As the keyboard plays them (the live player's): a palm-muted chord strummed down and softer, an accent hardest,
+    # a dead note a quiet tick
     ons = [(round(at(t), 3), d[0], d[1], s & 0x0F) for t, s, _k, d in lead_track if s >> 4 == 9]
-    assert ons == [(1.0, 64, 96, 0), (1.5, 67, 96, 0), (3.0, 52, 64, 0), (3.0, 59, 64, 0), (4.0, 60, 120, 0),
-                   (5.0, 45, 36, 0)]
+    assert ons == [(1.0, 64, 100, 0), (1.5, 67, 100, 0), (3.0, 52, 88, 0), (3.007, 59, 88, 0), (4.0, 60, 127, 0),
+                   (5.0, 45, 35, 0)]
     offs = {d[0]: round(at(t), 3) for t, s, _k, d in lead_track if s >> 4 == 8}
-    assert offs[64] == 1.125 and offs[67] == 2.5 and offs[60] == 4.2  # (a picked note: a 16th)
+    assert offs[64] == 1.62 and offs[67] == 3.12  # (ringing until the next note, overlapping it a little)
+    assert offs[52] == offs[59] == 3.5 and offs[45] == 5.05  # (the palm mute held as charted; the tick)
     bends = [(round(at(t), 3), d[0] | d[1] << 7) for t, s, _k, d in lead_track if s >> 4 == 0xE]
-    assert bends[0] == (1.5, 8192) and (2.0, 16383) in bends and bends[-1] == (2.5, 8192)  # (up 2: the most, back)
-    assert [round(at(t), 2) for t, s, _k, d in lead_track if s >> 4 == 0xB and d[0] == 1] == [4.0, 4.2]  # vibrato
+    assert bends[0][1] == 8192 and (2.0, 16383) in bends and bends[-1] == (3.12, 8192)  # (up 2: the most, back)
+    assert [round(at(t), 2) for t, s, _k, d in lead_track if s >> 4 == 0xB and d[0] == 1] == [4.0, 8.0]  # vibrato
     assert [(round(at(t), 3), text) for t, text in metas(lead_track, 0x01)] == [
         (0.0, "Tone: clean"), (3.0, "Tone: dist"), (3.0, "E5")]  # (a chord held on: named once)
     assert [d for _t, s, _k, d in lead_track if s >> 4 == 0xC] == [b"\x1d"]  # (overdriven guitar)
@@ -127,6 +131,19 @@ def test_a_vocals_part_without_a_melody_gives_its_lyrics_alone_and_a_bend_past_2
     assert metas(lead_track, 0x03) == [(0, "Lead (bend range 3)")]
     assert [d[1] for _t, s, _k, d in lead_track if s >> 4 == 0xB and d[0] == 6] == [3]  # (sent as RPN 0 too)
     assert not [e for e in vocals if e[1] >> 4 == 9] and len(metas(vocals, 0x05)) == 3
+
+
+def test_a_parts_pinch_harmonics_squeal_on_a_channel_of_their_own():
+    pinched = Note(1.0, 0.8, (52,), mask=PINCH_HARMONIC, vibrato=True)
+    lead = Arrangement(notes=(pinched, Note(2.5, 0.0, (52,))), tuning=(0,) * 6, capo=0, length=4.0)
+    conductor, track = read(song_midi("S", [ExportPart("Lead", "lead", lead)]))
+    at = clock(conductor)
+    ons = [(round(at(t), 2), s & 0x0F, d[0]) for t, s, _k, d in track if s >> 4 == 9]
+    assert ons == [(1.0, 0, 52), (1.0, 1, 71), (2.5, 0, 52)]  # (the note, its squeal an octave and a fifth up)
+    assert [d for _t, s, _k, d in track if s >> 4 == 0xC] == [b"\x1d", b"\x1f"]  # (GT HARMONICS for the squeal)
+    squeal_bends = [d[0] | d[1] << 7 for _t, s, _k, d in track if s == 0xE1]
+    assert min(squeal_bends) < 8192 < max(squeal_bends) and squeal_bends[-1] == 8192  # (scooped, wobbling, back)
+    assert [d[1] for _t, s, _k, d in track if s == 0xB1 and d[0] == 6] == [2]  # (its vibrato fits the usual range)
 
 
 def test_key_signatures_and_file_names():

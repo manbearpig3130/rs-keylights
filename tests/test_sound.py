@@ -113,3 +113,9 @@ def test_pinch_harmonics_settings_are_checked():
     for bad in ({"up": 40}, {"width": "wide"}, {"vibrato": "sometimes"}, {"rate": 0}):
         with pytest.raises(ValueError):
             squeal_from(Squeal(), bad)
+
+
+def test_a_lights_level_makes_it_softer():
+    faded = Light(0.0, 0.0, (), (60,), 0, rings=(0.1,), extra=True, level=0.5)
+    assert Voices(MAIN).pick(faded)[2] == 50
+    assert Voices(MAIN, techniques=False).pick(faded)[2] == 100

@@ -8,12 +8,17 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from .drums import Hit
-from .sng import ACCENT, PALM_MUTE, Arrangement, Syllable
+from .lights import schedule, strums, techniques
+from .player import Player, Track
+from .sng import PINCH_HARMONIC, Arrangement, Syllable
+from .sound import GUITAR_TONE, PINCH_TONE, Squeal, Voice, Voices
+from .tones import tone
 
 # A song as a Standard MIDI File (type 1), for a DAW (Logic, GarageBand): its tempo map made from the chart's beats,
 # so its bars are the record's (a tempo a beat: the file's time is the song's, its audio laid under it lines up), its
 # time signatures from where the bars start, its key, and its sections as markers; a track a part (its notes at their
-# hardest, at the pitch they sound: bends, slides it can and vibrato too; its tones and chords named in text events),
+# hardest, as the keyboard plays them: ringing, strummed, with their techniques, at the pitch they sound; its tones
+# and chords named in text events),
 # the vocals (their lyrics, and their melody when the chart has one) and a drum part if one was made.
 
 PPQ = 480  # ticks a beat
@@ -21,11 +26,10 @@ STEADY = 120.0  # beats a minute, for a chart without beats
 LEAD_IN_MOST = 64  # beats the time before the chart's first beat is made into, at most
 BEND_RANGE = 2  # semitones a full pitch bend is, for a part that bends no further (MIDI's usual: an instrument that
 # ignores the range sent needs its own set to the part's: it's in its track's name when it isn't this)
-BEND_STEP = 0.015  # seconds between pitch bends as a bend or slide moves
-SHORTEST = PPQ // 4  # ticks a picked note (no sustain) lasts: a 16th, unless the next on its key comes sooner
-DEAD = PPQ // 8  # ticks a dead note (fret-hand mute) lasts
-VELOCITY, PALM_MUTED, ACCENTED, DEAD_VELOCITY = 96, 64, 120, 36
-VIBRATO_DEPTH = 64  # the mod wheel, while a note with vibrato rings
+DEAD = PPQ // 8  # ticks a drum hit lasts
+VELOCITY = 96  # a sung note's
+OVERLAP = 0.12  # seconds a ringing note sounds on after the next (the keyboard's, as it starts)
+SEEK_STEP = 0.9  # seconds the player's taken forward at most at once (further: a seek)
 PROGRAMS = {"lead": 29, "rhythm": 30, "bass": 33, "vocals": 53}  # General MIDI: overdriven and distortion guitar,
 # electric bass (finger), voice oohs
 LOWEST_SUNG = 36  # C2: a syllable charted lower has no pitch (some charts mark spoken ones C1)
@@ -157,52 +161,95 @@ def _bend_value(semitones: float, bend_range: int) -> int:
     return max(0, min(16383, round(8192 + semitones / bend_range * 8192)))
 
 
-def _part(part: ExportPart, channel: int, grid: Grid) -> _Track:
+class _Recorder:
+    """What a player sends the keyboard (KeysProtocol: its channels 1 to 16), as a track's events at the song's time
+    (now): notes, bends (each channel's range: ranges) and vibrato; the keys' lights and tones not."""
+
+    def __init__(self, track: _Track, grid: Grid, ranges: dict[int, int]):
+        self.track, self.grid, self.ranges = track, grid, ranges
+        self.now = 0.0
+        self._on: dict[tuple[int, int], int] = {}  # (channel, note) sounding -> the tick it started
+
+    def _tick(self) -> int:
+        return self.grid.tick(self.now)
+
+    def light(self, keys: tuple[int, ...]) -> None:
+        pass
+
+    def unlight(self, keys: tuple[int, ...]) -> None:
+        pass
+
+    def set_voice(self, channel: int, program: int, bank: int | None = None, ours: bool = True,
+                  volume: int = 100) -> None:
+        pass
+
+    def play(self, channel: int, notes: tuple[int, ...], velocity: int) -> None:
+        tick = self._tick()
+        for note in notes:
+            if (channel, note) in self._on:  # (struck again: the one sounding ended first)
+                self._off(channel, note, tick)
+            self.track.add(tick, ON, bytes([0x90 | (channel - 1), note, max(1, min(velocity, 127))]))
+            self._on[(channel, note)] = tick
+
+    def stop(self, channel: int, notes: tuple[int, ...]) -> None:
+        for note in notes:
+            if (channel, note) in self._on:
+                self._off(channel, note, self._tick())
+
+    def _off(self, channel: int, note: int, tick: int) -> None:
+        started = self._on.pop((channel, note))
+        self.track.add(max(tick, started + 1), OFF, bytes([0x80 | (channel - 1), note, 0]))
+
+    def all_off(self) -> None:
+        for channel, note in sorted(self._on):
+            self._off(channel, note, self._tick())
+
+    def bend(self, channel: int, semitones: float) -> None:
+        value = _bend_value(semitones, self.ranges.get(channel, BEND_RANGE))
+        self.track.add(self._tick(), META, bytes([0xE0 | (channel - 1), value & 0x7F, value >> 7]))
+
+    def modulate(self, channel: int, depth: int) -> None:
+        self.track.add(self._tick(), META, bytes([0xB0 | (channel - 1), 1, min(max(depth, 0), 127)]))
+
+
+def _part(part: ExportPart, channel: int, grid: Grid, squeal_channel: int | None = None) -> _Track:
+    """A part's track: its notes as the keyboard plays them (the live player's: ringing, strums, palm mutes, dead
+    notes, slides, bends, vibrato and pinch harmonics, at their own pitch), on its channel (0 to 15), its pinch
+    harmonics' squeals on squeal_channel (none: on its own); its bend range set for its biggest bend; its tones and
+    chords named."""
     a = part.arrangement
+    shape = Squeal()
+    pinched = squeal_channel is not None and any(n.mask & PINCH_HARMONIC for n in a.notes)
     most = max((up for n in a.notes for _at, up in n.bends), default=0.0)
     bend_range = max(BEND_RANGE, math.ceil(most - 1e-6))
+    ranges = {channel + 1: bend_range}
+    if pinched and squeal_channel is not None:
+        ranges[squeal_channel + 1] = max(BEND_RANGE, math.ceil(max(most + shape.width, shape.scoop) - 1e-6))
     track = _Track(part.name if bend_range == BEND_RANGE else f"{part.name} (bend range {bend_range})")
-    program = PROGRAMS.get(part.kind, PROGRAMS["lead"])
-    track.add(0, META, bytes([0xC0 | channel, program]))
-    for cc, value in ((101, 0), (100, 0), (6, bend_range), (38, 0), (101, 127), (100, 127)):  # (its bend range)
-        track.add(0, META, bytes([0xB0 | channel, cc, value]))
+    track.add(0, META, bytes([0xC0 | channel, PROGRAMS.get(part.kind, PROGRAMS["lead"])]))
+    if pinched and squeal_channel is not None:
+        track.add(0, META, bytes([0xC0 | squeal_channel, tone(PINCH_TONE).program]))
+    for number, semitones in ranges.items():  # (each channel's bend range: RPN 0)
+        for cc, value in ((101, 0), (100, 0), (6, semitones), (38, 0), (101, 127), (100, 127)):
+            track.add(0, META, bytes([0xB0 | (number - 1), cc, value]))
 
-    def bend(at: float, semitones: float) -> None:
-        track.add(grid.tick(at), META, bytes([0xE0 | channel]) + struct.pack(
-            "<BB", (v := _bend_value(semitones, bend_range)) & 0x7F, v >> 7))
-
-    def ramp(points: list[tuple[float, float]]) -> None:
-        """A bend's or slide's points, with the pitch moved between them in steps."""
-        for (t0, s0), (t1, s1) in zip(points, points[1:]):
-            steps = max(1, int((t1 - t0) / BEND_STEP))
-            for k in range(steps):
-                bend(t0 + (t1 - t0) * k / steps, s0 + (s1 - s0) * k / steps)
-        bend(*points[-1])
-
-    notes: list[tuple[int, int, int, int]] = []
-    for n in a.notes:
-        start = grid.tick(n.time)
-        end = grid.tick(n.time + n.sustain) if n.sustain > 0.01 else start + SHORTEST
-        velocity = ACCENTED if n.mask & ACCENT else PALM_MUTED if n.mask & PALM_MUTE else VELOCITY
-        notes += [(start, end, pitch, velocity) for pitch in n.pitches]
-        moved = False
-        if n.bends and n.sustain > 0.01:
-            points = [(at, up) for at, up in n.bends if at <= n.time + n.sustain]
-            if points:
-                ramp(([(n.time, 0.0)] if points[0][0] > n.time + 1e-3 else []) + points)
-                moved = True
-        elif n.slide and abs(n.slide) <= bend_range and n.sustain > 0.01:
-            ramp([(n.time, 0.0), (n.time + n.sustain, float(n.slide))])
-            moved = True
-        if moved:  # (back to its pitch as it ends)
-            track.add(end, OFF, bytes([0xE0 | channel, 0x00, 0x40]))
-        if n.vibrato:
-            track.add(start, META, bytes([0xB0 | channel, 1, VIBRATO_DEPTH]))
-            track.add(end, OFF, bytes([0xB0 | channel, 1, 0]))
-    for n in a.muted:  # (dead notes: short and quiet, for the riff's rhythm)
-        start = grid.tick(n.time)
-        notes += [(start, start + DEAD, pitch, DEAD_VELOCITY) for pitch in n.pitches]
-    _notes(track, channel, notes)
+    voices = Voices(Voice(channel + 1, tone(GUITAR_TONE)), real_pitch=True, overlap=OVERLAP, squeal_shape=shape,
+                    squeal=Voice(squeal_channel + 1, tone(PINCH_TONE)) if pinched and squeal_channel is not None
+                    else None)
+    lights = schedule(a.notes, shift=0, shapes=a.shapes, overlap=OVERLAP, anchors=a.anchors, capo=a.capo,
+                      arpeggios=a.arpeggios)
+    lights, extras = techniques(strums(lights, a.beats), a.muted)
+    recorder = _Recorder(track, grid, ranges)
+    player = Player([Track(lights, voices, lit=False, extras=extras)], recorder)
+    position = recorder.now = -SEEK_STEP
+    player.advance(position)
+    while (upcoming := player.next_time()) is not None:
+        while upcoming > position + SEEK_STEP:  # (a step at a time: a jump further would be a seek)
+            position = recorder.now = position + SEEK_STEP
+            player.advance(position)
+        position = recorder.now = upcoming
+        player.advance(position)
+    player.stop()
 
     tones = [(0.0, a.base_tone.name if a.base_tone else None)]
     for at, slot in a.tone_changes:
@@ -275,8 +322,11 @@ def song_midi(title: str, parts: Sequence[ExportPart], *, markers: Sequence[tupl
         conductor.add(grid.tick(at), META, _text(0x06, name))
     tracks = [conductor]
     channels = [c for c in range(16) if c != DRUM_CHANNEL]
+    taken = len(parts) + bool(lyrics)
+    spare = channels[taken:]  # (for the parts' pinch harmonics' squeals, in turn: none left, on the part's own)
     for i, part in enumerate(parts):
-        tracks.append(_part(part, channels[i % len(channels)], grid))
+        squeals = spare.pop(0) if spare and any(n.mask & PINCH_HARMONIC for n in part.arrangement.notes) else None
+        tracks.append(_part(part, channels[i % len(channels)], grid, squeals))
     if lyrics:
         tracks.append(_vocals(lyrics, channels[len(parts) % len(channels)], grid))
     if drums:

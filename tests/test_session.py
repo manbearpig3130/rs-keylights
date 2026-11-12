@@ -73,6 +73,25 @@ def test_a_part_with_pinch_harmonics_has_a_channel_for_their_squeals(tmp_path):
     assert SoundChoice({}, {None: tone(PINCH_TONE)}, {}, False, techniques=False).voices(refs["lead"]).squeal is None
 
 
+def test_a_parts_channels_get_the_bend_range_its_bends_need(tmp_path):
+    from rs_keylights.parts import bend_ranges
+    from rs_keylights.sound import Squeal
+    path = tmp_path / "a_m.psarc"
+    bent = Song(levels={0: [N(1.0, string=0, fret=3, bends=1, bend_points=[(1.2, 3.0)]),
+                            N(2.0, string=0, fret=3, mask=PINCH_HARMONIC)]})
+    plain = Song(levels={0: [N(1.0, string=0, fret=3)]})
+    path.write_bytes(song_archive("a", {"lead": ("L", bent), "rhythm": ("R", plain)}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    parts = [Part(refs["lead"], refs["lead"].load(), 2), Part(refs["rhythm"], refs["rhythm"].load(), 2)]
+    choice = SoundChoice({}, {None: tone(PINCH_TONE)}, {}, False, squeal=Squeal(width=1.05))
+    planned = plan(parts, choice.voices)
+    assert bend_ranges(planned[0]) == {11: 3, 12: 5}  # (a minor third; the squeal's 1.05 vibrato over it)
+    assert bend_ranges(planned[1]) == {13: 2}  # (no bends: as it starts)
+    k, out = keyboard()
+    player_for(planned, k)
+    assert [0xBA, 6, 3] in out.sent and [0xBB, 6, 5] in out.sent and [0xBC, 6, 2] not in out.sent
+
+
 def test_a_parts_sound_stays_in_its_octave_however_many_keys_the_parts_light(tmp_path):
     path = tmp_path / "a_m.psarc"
     low = Song(levels={0: [N(1.0, string=0, fret=0)]}, tuning=(-5,) * 6)  # B1

@@ -259,3 +259,23 @@ def test_a_guitars_keys_heard_light_first():
     assert keyboard._on == {40, 47, 60, 64}  # (what's lit)
     keyboard.hear(())
     assert keyboard._on == {60, 64, 67, 72}
+
+
+def test_a_channels_bend_range_is_set_once_and_its_bends_scaled_to_it():
+    out = FakeMidiOut()
+    keyboard = Keyboard(midi_out_factory=lambda: out)
+    keyboard.open()
+    keyboard.bend_range(11, 5)
+    rpn = [[0xBA, 101, 0], [0xBA, 100, 0], [0xBA, 6, 5], [0xBA, 38, 0], [0xBA, 101, 127], [0xBA, 100, 127]]
+    assert out.sent[-6:] == rpn
+    sent = len(out.sent)
+    keyboard.bend_range(11, 5)  # (as it is: nothing sent)
+    assert len(out.sent) == sent
+    keyboard.bend(11, 2.5)  # (half its range up)
+    assert out.sent[-1] == [0xEA, 0, 96]
+    keyboard.bend(12, 2.5)  # (another channel's: 2, the most)
+    assert out.sent[-1] == [0xEB, 127, 127]
+    keyboard.bend_range(11, 99)  # (24 at most)
+    assert out.sent[-4] == [0xBA, 6, 24]
+    keyboard.close()
+    assert [0xBA, 6, 2] in out.sent[-12:]  # (as it starts, as it closes)

@@ -28,7 +28,8 @@ MAX_LIT = 4  # keys lit at once, at most (on both navigate channels together)
 NORMAL_VOLUME = 100
 VELOCITY = 100
 SILENCE_EVERY = 5.0  # seconds; the keyboard forgets the volume when it's switched off and on
-BEND_RANGE = 2  # semitones a pitch bend goes either way (as General MIDI keyboards start, the LK-170 too)
+BEND_RANGE = 2  # semitones a pitch bend goes either way (as General MIDI keyboards start, the LK-170 too)...
+MOST_BEND_RANGE = 24  # ...and at most, set wider for a part's bends (RPN 0: the LK-170 takes it)
 MODULATION = 1  # its Control Change: vibrato
 LISTEN_EVERY = 0.002  # seconds between looks at a MIDI input for what came (a remote's keys: about 1 ms late)
 HEARD_EVERY = 0.02  # for a key pressed on the keyboard (stopping a show)
@@ -98,6 +99,7 @@ class Keyboard:
         self._played: dict[int, set[int]] = {}  # channel -> notes from another keyboard
         self._controls: set[tuple[int, int]] = set()  # another keyboard's pedal down or modulation: (channel, number)
         self._bent: set[int] = set()  # the song's channels bent or with vibrato (put back as everything stops)
+        self._ranges: dict[int, int] = {}  # channel -> its pitch-bend range set (none: BEND_RANGE)
         self._guitar: tuple[int, ...] = ()  # keys played on a guitar, heard (listen): lit first too
         self._silenced_at = float("-inf")
 
@@ -161,6 +163,9 @@ class Keyboard:
             if self._out is None:
                 return
             self.all_off()
+            for channel in sorted(self._ranges):  # (the bend ranges as the keyboard starts)
+                self._send_range(channel, BEND_RANGE)
+            self._ranges.clear()
             self._send([0xB0 | (self.channel - 1), VOLUME, NORMAL_VOLUME])
             self._out.close_port()
             self._out = None
@@ -235,11 +240,28 @@ class Keyboard:
                 played.discard(note)
 
     def bend(self, channel: int, semitones: float) -> None:
-        """A song's channel's pitch bend (a note bent: semitones up, or down; BEND_RANGE at most; 0: none)."""
-        value = min(max(8192 + round(semitones / BEND_RANGE * 8192), 0), 16383)
+        """A song's channel's pitch bend (a note bent: semitones up, or down; its range at most; 0: none)."""
+        value = min(max(8192 + round(semitones / self._ranges.get(channel, BEND_RANGE) * 8192), 0), 16383)
         with self._lock:
             self._send([0xE0 | (channel - 1), value & 0x7F, value >> 7])
             self._bent.add(channel)
+
+    def bend_range(self, channel: int, semitones: int) -> None:
+        """A song's channel's pitch-bend range (RPN 0, then none chosen: BEND_RANGE to MOST_BEND_RANGE; sent only
+        as it changes), put back as the keyboard closes."""
+        semitones = min(max(semitones, BEND_RANGE), MOST_BEND_RANGE)
+        with self._lock:
+            if self._ranges.get(channel, BEND_RANGE) == semitones:
+                return
+            self._send_range(channel, semitones)
+            if semitones == BEND_RANGE:
+                self._ranges.pop(channel, None)
+            else:
+                self._ranges[channel] = semitones
+
+    def _send_range(self, channel: int, semitones: int) -> None:
+        for number, value in ((101, 0), (100, 0), (6, semitones), (38, 0), (101, 127), (100, 127)):
+            self._send([0xB0 | (channel - 1), number, value])
 
     def modulate(self, channel: int, depth: int) -> None:
         """A song's channel's vibrato (Modulation, 0: none)."""

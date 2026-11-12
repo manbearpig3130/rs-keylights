@@ -1,4 +1,7 @@
-from rs_keylights.lights import (GAP, MIN_LIGHT, PALM_LEAST, PALM_MOST, RING_MAX, TREMOLO_EVERY, KeyRange, Light, rings,
+from dataclasses import replace
+
+from rs_keylights.lights import (GAP, MIN_LIGHT, PALM_LEAST, PALM_MOST, RING_MAX, SLIDE_OFF_FADE, SLIDE_OFF_STEPS,
+                                 TREMOLO_EVERY, KeyRange, Light, rings,
                                  schedule, strums,
                                  techniques)
 from rs_keylights.sng import CHILD, FRET_HAND_MUTE, HAMMER_ON, PALM_MUTE, PINCH_HARMONIC, TREMOLO, Note
@@ -141,6 +144,11 @@ def test_techniques_sound_besides_the_lights():
     assert [x.pitches for x in techniques([slid, into])[1]] == [(61,)]
     off = Light(1.0, 1.1, (60,), (60,), rings=(2.0,), slide_off=-3)  # slid off at its end, quickly
     assert [round(x.on, 2) for x in techniques([off])[1]] == [1.85, 1.9, 1.95]
+    assert [x.pitches for x in techniques([off])[1]] == [(59,), (58,), (57,)]
+    levels = [x.level for x in techniques([off])[1]]
+    assert levels == sorted(levels, reverse=True) and round(levels[-1], 2) == SLIDE_OFF_FADE  # (fading)
+    far = techniques([replace(off, slide_off=-12)])[1]  # (a long one: a smear, not a run of twelve)
+    assert [x.pitches[0] for x in far] == [58, 56, 54, 52, 50, 48] and len(far) == SLIDE_OFF_STEPS
     tremolo = Light(1.0, 1.1, (60,), (60,), mask=TREMOLO, rings=(1.4,))
     assert [round(x.on, 3) for x in techniques([tremolo])[1]] == [round(1.0 + TREMOLO_EVERY * k, 3) for k in (1, 2, 3, 4)]
     dead = techniques([], [Note(3.0, 0, (43,), FRET_HAND_MUTE)])[1]

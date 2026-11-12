@@ -20,7 +20,9 @@ PALM_SHARE = 0.6  # of the time to the part's next note a palm mute sounds (a ch
 PALM_LEAST, PALM_MOST = 0.05, 0.2  # ...but at least and at most this (seconds)
 # Techniques (techniques): the notes besides a part's own sounding them
 GLIDE_LEAST = 0.12  # seconds a slide takes at least (its steps a semitone each, over the note's sustain)
-SLIDE_OFF = 0.15  # seconds a slide off takes at most, at the note's end
+SLIDE_OFF = 0.15  # seconds a slide off takes at most, at the note's end...
+SLIDE_OFF_STEPS = 6  # ...in this many steps at most (spread over its semitones: a smear, not a run)...
+SLIDE_OFF_FADE = 0.35  # ...fading to this much of the note's loudness, as the hand comes off
 TREMOLO_EVERY = 0.075  # seconds between a tremolo-picked note's strikes
 DEAD = 0.05  # seconds a dead note (fret-hand muted) sounds
 # Strums (strums): a chord's strings one after another, down (low to high) on the beat and its eighths, up (high to
@@ -68,6 +70,7 @@ class Light:
     vibrato: bool = False
     extra: bool = False  # sound alone, from a technique (no keys): a slide's step, a tremolo's strike, a dead note
     strum: tuple[float, ...] = ()  # seconds after on each pitch sounds, strummed (as the pitches are; none: at once)
+    level: float = 1.0  # how loud, of how it's played (a slide off's steps fading)
     up: bool = False  # strummed (or picked) up: softer
 
 
@@ -190,7 +193,8 @@ def schedule(notes: Sequence[Note], keys: KeyRange = KeyRange(), shift: int | No
 def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[list[Light], list[Light]]:
     """A part's sound with its techniques: its lights (those sliding or tremolo-picked stopping as their first step
     or strike sounds), and what sounds besides them (extra, no keys): a slide's steps, a semitone at a time over its
-    sustain (the last left to the note it slides into, if it's linked to it); a slide off's, quicker, at its end;
+    sustain (the last left to the note it slides into, if it's linked to it); a slide off's, quicker, at its end,
+    fading (SLIDE_OFF_STEPS at most);
     a tremolo's strikes; a pinch harmonic's squeal (sounding with its note: Voices puts it above); and dead notes
     (muted: palm-muted, for the palm-mute tone if there is one). Bends and vibrato are the
     player's, as controls."""
@@ -201,6 +205,7 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
         end = max(ends, default=light.off)
         times: list[float] = []
         offsets: list[int] = []
+        levels: list[float] = []
         if light.slide:
             linked = i + 1 < len(lights) and bool(lights[i + 1].mask & CHILD) and \
                 lights[i + 1].pitches == tuple(p + light.slide for p in light.pitches)
@@ -208,10 +213,11 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
             times = [light.on + span * k / (steps + 1) for k in range(1, steps + 1 - linked)]
             offsets = [k * (1 if light.slide > 0 else -1) for k in range(1, len(times) + 1)]
         elif light.slide_off:
-            steps = abs(light.slide_off)
+            semitones, steps = abs(light.slide_off), min(abs(light.slide_off), SLIDE_OFF_STEPS)
             begin = max(end - min(SLIDE_OFF, (end - light.on) / 2), light.on)
             times = [begin + (end - begin) * k / steps for k in range(steps)]
-            offsets = [k * (1 if light.slide_off > 0 else -1) for k in range(1, steps + 1)]
+            offsets = [round(semitones * k / steps) * (1 if light.slide_off > 0 else -1) for k in range(1, steps + 1)]
+            levels = [1.0 - (1.0 - SLIDE_OFF_FADE) * k / steps for k in range(1, steps + 1)]
         elif light.mask & TREMOLO:
             count = max(int((end - light.on) / TREMOLO_EVERY) - 1, 0)
             times = [light.on + TREMOLO_EVERY * k for k in range(1, count + 1)]
@@ -228,7 +234,7 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
             until = times[k + 1] if k + 1 < len(times) else max(end, at + MIN_LIGHT)
             mask = light.mask & ~(ACCENT | PINCH_HARMONIC) | (HAMMER_ON if offset else 0)  # (a slide's steps: legato)
             extras.append(Light(at, at, (), tuple(p + offset for p in light.pitches), mask,
-                                (until,) * len(light.pitches), extra=True))
+                                (until,) * len(light.pitches), extra=True, level=levels[k] if levels else 1.0))
     for note in muted:
         extras.append(Light(note.time, note.time, (), note.pitches, note.mask | PALM_MUTE,
                             (note.time + DEAD,) * len(note.pitches), extra=True))

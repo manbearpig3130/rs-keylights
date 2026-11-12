@@ -236,6 +236,9 @@ class FakeSoundKeys(FakeKeys):
     def set_voice(self, channel, program, bank=None, volume=100):
         self.voices.append((channel, program, bank))
 
+    def bend_range(self, channel, semitones):
+        pass
+
     def play(self, channel, notes, velocity):
         self.played.append((channel, notes, velocity))
 

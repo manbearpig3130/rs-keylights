@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from .drums import CLOSED_HAT, CRASH, DRUM_CHANNEL, KICK, OPEN_HAT, RIDE, SNARE, TOMS, Hit
-from .keyboard import NORMAL_VOLUME, Keyboard
+from .keyboard import BEND_RANGE, NORMAL_VOLUME, Keyboard
 from .library import ArrangementRef
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, strums, techniques
 from .player import Player, Track
@@ -212,9 +212,26 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
             p.voices.output.program(p.voices.main.channel, p.voices.program)
         for voice in p.voices.all():
             sound.set_voice(voice.channel, voice.tone.program, voice.tone.bank, volume=p.voices.volume)
+        if p.voices.output is None:  # (the keyboard's: another device's as it is)
+            for channel, semitones in bend_ranges(p).items():
+                keyboard.bend_range(channel, semitones)
     tracks = [cache.track(p) if cache is not None else _track(p) for p in planned]
     return Player([*tracks, *extra], keyboard, lead=lead, min_period=min_period, most_keys=MOST_LIT,
                   cache=cache.player if cache is not None else None)  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
+
+
+def bend_ranges(p: PlannedPart) -> dict[int, int]:
+    """The pitch-bend range a part's channels need (semitones, whole): its biggest bend (with techniques), its
+    squeals' with their vibrato over it and their scoop under; BEND_RANGE at least."""
+    voices = p.voices
+    if voices is None or not voices.techniques:
+        return {}
+    most = max((up for n in p.part.arrangement.notes for _at, up in n.bends), default=0.0)
+    out = {voice.channel: max(BEND_RANGE, math.ceil(most - 1e-6)) for voice in (voices.main, voices.mute) if voice}
+    if voices.squeal is not None:
+        shape = voices.squeal_shape
+        out[voices.squeal.channel] = max(BEND_RANGE, math.ceil(max(most + shape.width, shape.scoop) - 1e-6))
+    return out
 
 
 def _track(p: PlannedPart) -> Track:

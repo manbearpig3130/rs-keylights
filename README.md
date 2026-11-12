@@ -169,8 +169,8 @@ the commands do:
   ten at a time). Not connected, the keyboard plays the part. Knob 7 picking an arrangement with no chords (a
   bass) shows the note it plays instead ("G1").
 - **Techniques** as the charts have them: bends (pitch bend, following the chart's bend: held, then moved to
-  each point; the keyboard's ±2 semitones at most), slides (a semitone at a time over the note's sustain,
-  chords too; the last left to the note it slides into), slides off (quickly, at the note's end), vibrato
+  each point; as far as the chart bends: each channel's bend range set to the part's biggest bend), slides (a semitone at a time over the note's sustain,
+  chords too; the last left to the note it slides into), slides off (quickly, at the note's end, fading, a smear of 6 steps at most), vibrato
   (Modulation), tremolo picking (struck again every 75 ms), hammer-ons and pull-offs (softer), slaps and pops
   (as hard as accents), natural harmonics (their own pitch: a 7th-fret harmonic an octave and a fifth over the
   open string, lit there too), pinch harmonics (the fretted note, softer, under its squeal: an octave and a
@@ -540,10 +540,13 @@ without it). `--undo` gives the list back as the game has it. Needs RS Re-ARMed'
   where the bars start, so the bars line up with the band as it speeds up and slows down. The time before the chart's
   first beat is made into a bar or so of its own, so the file starts when the song does.
 - **A track for each part**, at its hardest difficulty, at the pitch it sounds (a song for a pedal tuned down sounds
-  down): picked notes a 16th long, palm mutes softer, accents harder, dead notes short and quiet. Bends, and slides
-  within the bend range, are pitch bends; vibrato is the mod wheel. The bend range is sent as RPN 0: 2 semitones,
-  unless a part bends further. Then the track's name says it, "Lead (bend range 3)", for an instrument that ignores
-  RPN and needs its own setting changed. Its tones ("Tone: …") and chord names are text events.
+  down), played as the keyboard plays it (the same player, recorded): notes ringing as a guitar's strings do,
+  chords strummed, palm mutes a chug long, accents harder, dead notes a quiet tick, slides a semitone at a time,
+  slides off fading, tremolo picking. Bends are pitch bends; vibrato is the mod wheel. Pinch harmonics squeal on a
+  channel of their own in the part's track (GM GT HARMONICS, scooped and with their vibrato as pitch bends), when
+  one's free. The bend range is sent as RPN 0: 2 semitones, unless a part bends further. Then the track's name says
+  it, "Lead (bend range 3)", for an instrument that ignores RPN and needs its own setting changed. Its tones
+  ("Tone: …") and chord names are text events.
 - **The sections** are markers (Intro 1, Verse 1…). **The key** is a key signature: a mode's is its major's.
 - **The vocals:** their lyrics as lyric events, and their melody as notes when the chart has one (about half of
   them; the rest give every syllable a pitch or two as placeholders).
