@@ -11,7 +11,8 @@ import pytest
 from builders import N, Song, song_archive
 from test_pedal import backup
 
-from rs_keylights.gui import GAME_SONGS_EVERY, GAME_SONGS_OWN, GAME_TIME_EVERY, Gui, GuiServer, _guitar, default_lights
+from rs_keylights.gui import (GAME_SONGS_EVERY, GAME_SONGS_OWN, GAME_TIME_EVERY, Gui, GuiError, GuiServer, _guitar,
+                              default_lights)
 from rs_keylights.sng import PINCH_HARMONIC
 from rs_keylights.songtones import KINDS as TONE_KINDS
 from rs_keylights.keyboard import Keyboard
@@ -207,7 +208,7 @@ def test_settings_are_kept(server, tmp_path):
         "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
         "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {}, "outputs_known": {},
         "most_lights": False, "beat_lights": False,
-        "keys_tone": 1, "keys_volume": 100, "volumes": [100] * 8, "pedal_backup": "",
+        "keys_tone": 1, "keys_volume": 100, "keys_output": None, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187], "pinch": {"up": 19, "velocity": 127, "note_velocity": 70, "scoop": 0.5,
                                                  "scoop_ms": 80.0, "width": 1.05, "rate": 15.0, "grows_ms": 200.0,
                                                  "vibrato": "always"}}
@@ -729,7 +730,8 @@ def test_a_remotes_keys_play_the_keyboard_and_light_first(server):
     gui._keys_queue.join()
     assert idle[-2:] == [[0x83, 60, 0], [0x80, 60, 0]]
     assert call(server, "/api/keys", {"tone": 79, "lights": False})[1] == {
-        "sound": True, "lights": False, "tone": 79, "name": "079 DISTORTION GT", "volume": 100}
+        "sound": True, "lights": False, "tone": 79, "name": "079 DISTORTION GT", "volume": 100, "output": None,
+        "output_there": True}
     call(server, "/api/keys", {"tone": 1})
     gui.play_keys([0x94, 62, 90])  # (its tone on its channel)
     gui.play_keys([0x84, 62, 0])
@@ -953,6 +955,44 @@ def test_a_songs_tone_changes_switch_its_parts_tone(tmp_path):
     assert wait_for(lambda: not gui._session.player.tracks[0].changes, bool)
     assert gui.remote_info()["song"]["arrangements"][0]["tone_changes"] == ()
     gui.stop()
+
+
+def test_a_remotes_keys_can_play_another_midi_device_and_light_the_keyboard(tmp_path):
+    from rs_keylights.keyboard import Synth
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+
+    class SynthOut(FakeMidiOut):
+        def get_ports(self):
+            return ["IAC Driver Bus 1"]
+
+    synth_out, keyboard_outs = SynthOut(), []
+
+    def keyboard(port, channel):
+        keyboard_outs.append(FakeMidiOut())
+        return Keyboard(port, channel, midi_out_factory=lambda: keyboard_outs[-1])
+
+    gui = Gui(index, keyboard_factory=keyboard, settings_file=tmp_path / "gui.json", list_ports=list,
+              other_follow=lambda: False, synth_factory=lambda port: Synth(port, midi_out_factory=lambda: synth_out))
+    info = gui.set_keys({"output": {"port": "IAC Driver Bus 1", "channel": 3}})
+    assert info["output"] == {"port": "IAC Driver Bus 1", "channel": 3} and info["output_there"]
+    assert "output_there" not in gui.keys_info()  # (asked often: not opened to know)
+    gui.play_keys([0x90, 60, 90])
+    gui.play_keys([0xB0, 64, 127])  # (its sustain pedal: there too)
+    gui._keys_queue.join()
+    assert synth_out.sent[-2:] == [[0x92, 60, 90], [0xB2, 64, 127]]
+    lit = keyboard_outs[-1].sent
+    assert [0x93, 60, 100] in lit and [0x90, 60, 90] not in lit  # (its key lit on the keyboard, not sounding there)
+    gui.set_keys({"output": None})  # (back to the keyboard: what sounded there stopped, its pedal up)
+    assert synth_out.sent[-2:] == [[0x82, 60, 0], [0xB2, 64, 0]]
+    gui.play_keys([0x90, 62, 90])
+    gui._keys_queue.join()
+    assert [0x90, 62, 90] in keyboard_outs[-1].sent
+    for bad in ({"port": ""}, {"port": "IAC Driver Bus 1", "channel": 17}, "IAC"):
+        with pytest.raises(GuiError):
+            gui.set_keys({"output": bad})
+    again = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    assert again.keys_info()["output"] is None
+    gui.close()
 
 
 def test_a_kind_of_part_can_sound_on_another_midi_device(tmp_path):
@@ -1346,3 +1386,53 @@ def test_pinch_harmonics_settings_are_kept_checked_and_tried(server, tmp_path, m
     assert said == {"playing": True} and tried[0][1].up == 24 and tried[0][1].width == 1.1  # (as given, over the kept)
     assert tried[0][2].number == 79 and tried[0][3].number == 298  # (the lead parts' tones: as they start)
     assert server.gui._squeal().up == 19  # (tried: not kept)
+
+
+def test_the_songs_own_audio_plays_with_it_where_it_is(server, monkeypatch):
+    import numpy as np
+    from rs_keylights import gui as gui_module
+    gui, sid = server.gui, first_song(server)
+    streams = []
+
+    class Stream:
+        def __init__(self, **kwargs):
+            self.kwargs, self.closed = kwargs, False
+            streams.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    decoded = []
+    monkeypatch.setattr(gui_module, "song_samples",
+                        lambda ref, game: decoded.append(ref) or (np.ones((44100 * 30, 2), dtype=np.float32) * 0.1, 44100))
+    gui._audio_stream = Stream
+    _, options = call(server, "/api/play/options", {"audio": True, "audio_volume": 50})
+    assert options["audio"] and options["audio_volume"] == 50 and options["audio_error"] is None
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    assert wait_for(lambda: gui._song_audio, bool)
+    audio = gui._song_audio
+    assert audio.volume == 0.5 and streams[-1].kwargs["samplerate"] == 44100
+    assert audio.fill(441).any()  # (playing: where the song is)
+    call(server, "/api/pause", {})
+    assert not audio.fill(441).any()  # (paused: silence)
+    call(server, "/api/play/options", {"audio_volume": 20})
+    assert audio.volume == 0.2
+    call(server, "/api/play/options", {"audio": False})  # (off as it plays)
+    assert gui._song_audio is None and streams[-1].closed
+    call(server, "/api/play/options", {"audio": True})
+    call(server, "/api/resume", {})
+    assert wait_for(lambda: gui._song_audio, bool) and len(decoded) == 1  # (decoded once: kept)
+    call(server, "/api/play/options", {"audio_device": "Speakers"})  # (another output: played there at once)
+    assert wait_for(lambda: gui._song_audio and streams[-1].kwargs.get("device") == "Speakers", bool)
+    call(server, "/api/stop", {})
+    assert gui._song_audio is None and streams[-1].closed
+    assert call(server, "/api/play/options", {"audio_volume": 101})[0] == 400
+    assert call(server, "/api/play/options", {"audio_device": 3})[0] == 400
+    again = Gui(gui.index, settings_file=gui.settings_file, list_ports=list, other_follow=lambda: False)
+    assert not again.play_options["audio"] and again.play_options["audio_device"] == "Speakers"  # (off as it starts)

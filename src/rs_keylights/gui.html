@@ -34,6 +34,7 @@
   button:disabled { opacity: .45; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   #muteBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* muted */
+  #audioBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* the song's audio */
   input, select { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
   select { max-width: 100%; }
   main { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr) minmax(260px, 330px); gap: 12px; padding: 12px; align-items: start; }
@@ -364,6 +365,7 @@
   <button id="playBtn" class="primary icon" title="Play" disabled>▶</button>
   <button id="stopBtn" class="icon" title="Stop" disabled>■</button>
   <button id="muteBtn" class="icon" title="The sound on the keyboard, playing or following (muted: just the lights)">🔊</button>
+  <button id="audioBtn" class="icon" title="The song's own audio, from the Mac, with the song you play (slowed down: at its pitch)">🎵</button>
   <button id="followBtn" title="Follow Rocksmith: light the keys along with the song the game plays (red while it does)">Follow Rocksmith</button>
   <button id="layoutBtn" class="icon" title="Layout: move, add and remove the cards (kept in this browser)">✎</button>
   <button id="sideBtn" class="icon" title="The settings column: hide it (the middle gets its room) or show it">⚙</button>
@@ -610,7 +612,8 @@
 
     <div class="card" id="keysCard">
       <h3>Launchkey keys</h3>
-      <div class="muted small">Its keys play the Casio (on channel 1, a part of their own) and light the keys they
+      <div class="muted small">Its keys play the Casio (on channel 1, a part of their own), or another MIDI output
+        (Plays on), and light the keys they
         play: first, a song's lights getting the rest until you let go. On the Launchkey, knob 7 steps through the
         tones (knob 8 through their groups while one shows), and the pads under it turn them on and off and choose
         whether they light the keys.</div>
@@ -618,7 +621,12 @@
         <label><input type="checkbox" id="keysSound"> Sound</label>
         <label><input type="checkbox" id="keysLights"> Light the keys</label>
       </div>
-      <div class="grid2"><label>Tone</label><span id="keysTone"></span>
+      <div class="grid2">
+        <label for="keysOutput" title="Where the keys sound: the Casio (with the tone below), or another MIDI output (IAC Driver Bus 1: an app on this Mac, such as Komplete Kontrol), with its own sound. They light the Casio's keys either way">Plays on</label>
+        <span><select id="keysOutput"></select>
+          <label id="keysChannelBox" title="The channel they play on there">channel <input id="keysChannel" type="number" min="1" max="16" style="width:56px"></label>
+          <span id="keysOutputStatus" class="muted small"></span></span>
+        <label>Tone</label><span id="keysTone"></span>
         <label for="keysVolume">Volume</label>
         <span class="part-volume"><input type="range" id="keysVolume" min="0" max="127"><output id="keysVolumeShown"></output></span></div>
     </div>
@@ -641,6 +649,10 @@
           <input type="checkbox" id="mostLights"> Most lights: the parts share the 4 lit keys</label><br>
           <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range), playing a song or following the game">
           <input type="checkbox" id="realPitch"> Real pitch</label><br>
+          <label title="The song's own audio (🎵 at the top), played from the Mac with a song you play: how loud">
+          Song's audio <input type="range" id="audioVolume" min="0" max="100" style="width:110px; vertical-align:middle">
+          <output id="audioVolumeShown"></output></label>
+          <label title="The audio output the song's own audio plays on">on <select id="audioDevice"></select></label><br>
           <label title="Bends (pitch bend), slides (a semitone at a time), vibrato, tremolo picking, hammer-ons and pull-offs (softer), slaps and pops (harder), harmonics' own pitches, and dead notes (a click, with a palm-mute tone). Off: accents alone">
           <input type="checkbox" id="techniques"> Play techniques: bends, slides, vibrato&hellip;</label></span>
         <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
@@ -3088,7 +3100,28 @@ function showOptions() {
   } else if (playOptions) {
     $("realPitch").checked = playOptions.real_pitch;
   }
+  if (playOptions) {  // the song's own audio: on or off, how loud, and why it can't play (if it can't)
+    const on = !!playOptions.audio;
+    $("audioBtn").classList.toggle("on", on);
+    $("audioBtn").disabled = !playOptions.audio_there;
+    $("audioBtn").title = !playOptions.audio_there ? "The song's own audio needs the drum tools (tools/drums-setup.sh)" :
+      playOptions.audio_error ? `The song's audio couldn't play: ${playOptions.audio_error}` :
+      on ? "The song's own audio plays with the song you play: off" :
+      "The song's own audio, from the Mac, with the song you play (slowed down: at its pitch; off each time rs-keylights starts)";
+    if (document.activeElement !== $("audioVolume")) $("audioVolume").value = String(playOptions.audio_volume);
+    $("audioVolumeShown").textContent = `${$("audioVolume").value}%`;
+    const chosen = playOptions.audio_device;
+    const outputs = playOptions.audio_outputs || [];
+    const listed = chosen && !outputs.includes(chosen) ? [chosen, ...outputs] : outputs;
+    $("audioDevice").innerHTML = '<option value="">the Mac\'s output</option>' +
+      listed.map((d) => `<option>${esc(d)}</option>`).join("");
+    $("audioDevice").value = chosen || "";
+  }
 }
+$("audioBtn").addEventListener("click", () => changeOptions({audio: !(playOptions && playOptions.audio)}));
+$("audioVolume").addEventListener("input", () => { $("audioVolumeShown").textContent = `${$("audioVolume").value}%`; });
+$("audioVolume").addEventListener("change", () => changeOptions({audio_volume: Number($("audioVolume").value)}));
+$("audioDevice").addEventListener("change", () => changeOptions({audio_device: $("audioDevice").value || null}));
 
 function checkLights() {
   const message = selected.parts.some((p) => p.play) ? "" : "Every part is muted: it plays on as you unmute them.";
@@ -3295,6 +3328,7 @@ function showState(st) {
   }
   if (playOptions && st.play_version !== songShown && !songBusy) {
     songShown = st.play_version;
+    loadPlayOptions().catch(() => {});  // (the song's audio, failing as it starts, says why)
     songBusy = true;
     refreshSong().catch(() => {}).finally(() => { songBusy = false; });
   }
@@ -3511,6 +3545,7 @@ function fullScreen(on) {
 
 let shownKeys = "";
 let keysSelect = null;
+let midiPorts = [], midiPort = "";  // the MIDI outputs there are, and the keyboard's (the settings')
 
 function showKeys(keys) {
   if (!keys || !toneOptions || JSON.stringify(keys) === shownKeys) return;
@@ -3528,7 +3563,25 @@ function showKeys(keys) {
   }
   keysSelect.value = String(keys.tone);
   keysSelect.dispatchEvent(new Event("input"));  // its box shows it
+  const out = keys.output;
+  const known = midiPorts.filter((p) => p !== midiPort);
+  const ports = out && !known.includes(out.port) ? [out.port, ...known] : known;
+  $("keysOutput").innerHTML = `<option value="">the ${esc(KB())}</option>` +
+    ports.map((p) => `<option>${esc(p)}</option>`).join("");
+  $("keysOutput").value = out ? out.port : "";
+  if (document.activeElement !== $("keysChannel")) $("keysChannel").value = String(out ? out.channel : 1);
+  $("keysChannelBox").hidden = !out;
+  if ("output_there" in keys || !out) {  // (known as it's chosen)
+    $("keysOutputStatus").textContent = out && !keys.output_there ? `not there: on the ${KB()} until it is` : "";
+  }
 }
+
+function keysOutputChange() {
+  const port = $("keysOutput").value;
+  changeKeys({output: port ? {port, channel: Number($("keysChannel").value) || 1} : null});
+}
+$("keysOutput").addEventListener("change", keysOutputChange);
+$("keysChannel").addEventListener("change", keysOutputChange);
 
 $("keysVolume").addEventListener("input", () => { $("keysVolumeShown").textContent = `${$("keysVolume").value}%`; });
 $("keysVolume").addEventListener("change", () => changeKeys({volume: Number($("keysVolume").value)}));
@@ -3558,6 +3611,9 @@ async function loadSettings() {
   const ports = s.ports.includes(s.midi_port) ? s.ports : [s.midi_port, ...s.ports];
   $("midiPort").innerHTML = ports.map((p) => `<option>${esc(p)}</option>`).join("");
   $("midiPort").value = s.midi_port;
+  midiPorts = s.ports;
+  midiPort = s.midi_port;
+  shownKeys = "";  // (the keys' outputs shown again, with these)
   $("channel").value = s.channel;
   $("lightsEarly").value = s.lights_early_ms;
   $("fastestFlash").value = s.fastest_flash_ms;

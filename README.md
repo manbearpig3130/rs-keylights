@@ -196,7 +196,11 @@ the commands do:
   following at once.
 - **The header**: the song's time slider (where it is, moved while it plays; else where it starts) and its
   speed (25% to 200%), ▶ (❚❚ while it plays; ▶ again resumes), ■, Mute 🔊 (the sound on the keyboard,
-  playing or following: muted 🔇, just the lights), **Follow Rocksmith** (red while following), ⚙ to fold the
+  playing or following: muted 🔇, just the lights), 🎵 the song's own audio (decoded from its archive in a
+  fraction of a second, played from the Mac's output with a song you play: paused, moved and looped with it, and
+  slowed or sped up at its own pitch, a time-stretch; off each time rs-keylights starts, and not while following;
+  how loud and on which audio output: **Song's audio** in the Keyboard card),
+  **Follow Rocksmith** (red while following), ⚙ to fold the
   settings column away (the middle gets its room) or bring it back, and full screen ⛶. They keep their
   widths, so nothing moves as they change.
 - **The song** in the middle: its art, title and artist, its key and scale in the top right, and a line for each arrangement (lit
@@ -288,7 +292,9 @@ song playing, else the active one:
   keys at most, so while you hold keys the song's lights get the room left, their lowest, and come back as
   you let go), and **knob 7** steps through their tone (knob 8 its group, while it shows; or choose it
   under **Launchkey keys** on the page). Mute mutes them too. The octave buttons, a sustain pedal, the
-  modulation strip and its own Scale mode (snapping to the song's key) work as usual.
+  modulation strip and its own Scale mode (snapping to the song's key) work as usual. **Plays on** (on the page)
+  sends them to another MIDI output instead, on a channel you choose (IAC Driver Bus 1: an app on this Mac, such
+  as Komplete Kontrol with a guitar into Guitar Rig), with its own sound; they still light the Casio's keys.
 - **Playing the song** (▼ beside the knobs, lit): **knobs 1 and 2** move the A-B loop's start and end
   (above pads 1 and 2, which set them; see below), **knob 3** moves through the song (or, while nothing
   plays, where the active song starts: a handle moves along the song screen's progress line and its time
