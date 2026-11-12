@@ -112,7 +112,8 @@ def test_a_song_as_a_midi_file_its_parts_vocals_drums_key_and_sections():
     assert offs[52] == offs[59] == 3.5 and offs[45] == 5.05  # (the palm mute held as charted; the tick)
     bends = [(round(at(t), 3), d[0] | d[1] << 7) for t, s, _k, d in lead_track if s >> 4 == 0xE]
     assert bends[0][1] == 8192 and (2.0, 16383) in bends and bends[-1] == (3.12, 8192)  # (up 2: the most, back)
-    assert [round(at(t), 2) for t, s, _k, d in lead_track if s >> 4 == 0xB and d[0] == 1] == [4.0, 8.0]  # vibrato
+    assert [round(at(t), 2) for t, s, _k, d in lead_track if s >> 4 == 0xB and d[0] == 1] == [4.0, 5.12]  # vibrato,
+    # until the dead note after it (the fretting hand off it)
     assert [(round(at(t), 3), text) for t, text in metas(lead_track, 0x01)] == [
         (0.0, "Tone: clean"), (3.0, "Tone: dist"), (3.0, "E5")]  # (a chord held on: named once)
     assert [d for _t, s, _k, d in lead_track if s >> 4 == 0xC] == [b"\x1d"]  # (overdriven guitar)

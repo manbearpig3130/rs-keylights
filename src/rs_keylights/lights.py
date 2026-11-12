@@ -101,7 +101,8 @@ def _strung(note: Note) -> list[tuple[int, int, int]]:
 
 def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (), overlap: float = 0.0,
           anchors: Sequence[tuple[float, int]] = (), capo: int = 0,
-          arpeggios: Sequence[tuple[float, float]] | None = None) -> list[tuple[float, ...]]:
+          arpeggios: Sequence[tuple[float, float]] | None = None,
+          muted: Sequence[Note] = ()) -> list[tuple[float, ...]]:
     """When each note's pitches stop sounding, letting them ring as a guitar's strings do: until the string is
     played again (and overlap after, smoothing it: but a pitch played again stops as it is); held in a hand
     shape (shapes: start, end), until it ends, or the fretting hand moves first (anchors: from when, its fret): any
@@ -110,8 +111,24 @@ def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (), ove
     else a fretted note until the part's next note (overlap after), an open string (or a harmonic) on under the
     notes after it, until a chord (DAMPING strings) or a palm mute stops it. RING_MAX at most, the note's own
     sustain at least (unless it's played again first). Palm mutes don't ring: a chug, PALM_SHARE of the time to the
-    next note (PALM_LEAST to PALM_MOST), or its sustain if the chart holds it (until the next note)."""
+    next note (PALM_LEAST to PALM_MOST), or its sustain if the chart holds it (until the next note). Dead notes
+    (muted: fret-hand mutes) stop their strings, a dead chord (DAMPING strings) the open strings too, and count as
+    the next note for a fretted one (the fretting hand off it)."""
     starts = [start for start, _end in shapes]
+    dead = sorted(n.time for n in muted)
+    dead_chords = sorted(n.time for n in muted if len(n.pitches) >= DAMPING)
+    dead_on: dict[int, list[float]] = {}
+    for n in muted:
+        for _pitch, string, _fret in _strung(n):
+            if string >= 0:
+                dead_on.setdefault(string, []).append(n.time)
+    for times in dead_on.values():
+        times.sort()
+
+    def after(times: Sequence[float], t: float) -> float:
+        i = bisect_right(times, t + 1e-6)
+        return times[i] if i < len(times) else math.inf
+
     let_ring = set(shapes) if arpeggios is None else set(arpeggios)
     muted_at = [note.time for note in notes if note.mask & PALM_MUTE]
     riffs = {shape for shape in shapes if shape not in let_ring
@@ -123,10 +140,11 @@ def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (), ove
     following = math.inf  # the part's next note
     damped = math.inf  # the part's next chord or palm mute
     for note in reversed(notes):
+        next_sound = min(following, after(dead, note.time))  # (the part's next note, or dead note)
         if note.mask & PALM_MUTE:
-            gap = following - note.time
+            gap = next_sound - note.time
             chug = note.time + min(max(gap * PALM_SHARE, PALM_LEAST), PALM_MOST)
-            held_to = min(note.time + note.sustain, following)
+            held_to = min(note.time + note.sustain, next_sound)
             out.append((max(chug, held_to),) * len(note.pitches))
         else:
             k = bisect_right(starts, note.time) - 1
@@ -139,14 +157,15 @@ def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (), ove
             ends = []
             for pitch, string, fret in _strung(note):
                 pitched = next_pitch.get(pitch, math.inf)
-                again = min(next_string.get(string, math.inf) + overlap if string >= 0 else math.inf, pitched)
+                again = min(next_string.get(string, math.inf) + overlap if string >= 0 else math.inf, pitched,
+                            after(dead_on.get(string, ()), note.time))
                 open_string = 0 <= fret <= max(capo, 0) or bool(note.mask & HARMONIC)  # (no capo: -1)
                 if held is not None:
                     natural = min(held if open_string else min(held, moved), again)
                 elif open_string and string >= 0:
-                    natural = min(damped + overlap, again)
+                    natural = min(min(damped, after(dead_chords, note.time)) + overlap, again)
                 else:
-                    natural = min(following + overlap, again)
+                    natural = min(next_sound + overlap, again)
                 ends.append(max(min(least, again), min(note.time + RING_MAX, natural)))
             out.append(tuple(ends))
         for pitch, string, _fret in _strung(note):
@@ -163,14 +182,15 @@ def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (), ove
 def schedule(notes: Sequence[Note], keys: KeyRange = KeyRange(), shift: int | None = None,
              shapes: Sequence[tuple[float, float]] = (), overlap: float = 0.0,
              anchors: Sequence[tuple[float, int]] = (), capo: int = 0,
-             arpeggios: Sequence[tuple[float, float]] | None = None) -> list[Light]:
+             arpeggios: Sequence[tuple[float, float]] | None = None, muted: Sequence[Note] = ()) -> list[Light]:
     """Each note's light (and how long its pitches ring: rings, with the arrangement's hand shapes and positions, its
-    capo and the overlap after the next note; arpeggios: those of the shapes that are, None: all)."""
+    capo and the overlap after the next note; arpeggios: those of the shapes that are, None: all; muted: its dead
+    notes)."""
     if shift is None:
         shift = keys.octave_shift(notes)
     lights: list[Light] = []
     grouped = together(notes)
-    for note, ends in zip(grouped, rings(grouped, shapes, overlap, anchors, capo, arpeggios)):
+    for note, ends in zip(grouped, rings(grouped, shapes, overlap, anchors, capo, arpeggios, muted)):
         lit = tuple(sorted({keys.fit(p + shift) for p in note.pitches}))[: keys.max_lit]
         end = note.time + max(note.sustain, MIN_LIGHT)
         if lights and note.mask & CHILD and lights[-1].keys == lit:

@@ -4,7 +4,7 @@ from rs_keylights.lights import (GAP, MIN_LIGHT, PALM_LEAST, PALM_MOST, RING_MAX
                                  TREMOLO_EVERY, KeyRange, Light, rings,
                                  schedule, strums,
                                  techniques)
-from rs_keylights.sng import CHILD, FRET_HAND_MUTE, HAMMER_ON, PALM_MUTE, PINCH_HARMONIC, TREMOLO, Note
+from rs_keylights.sng import CHILD, FRET_HAND_MUTE, HAMMER_ON, HARMONIC, PALM_MUTE, PINCH_HARMONIC, TREMOLO, Note
 
 
 def test_octave_shift_moves_low_parts_up_while_the_top_fits():
@@ -269,3 +269,19 @@ def test_a_pinch_harmonic_has_its_squeal_with_it():
     _lights, extras = techniques([sliding])
     assert [(x.mask & PINCH_HARMONIC, round(x.rings[0], 3)) for x in extras] == [(PINCH_HARMONIC, 1.2), (0, 1.4), (0, 1.6)]
     # (the squeal until the slide's first step: the steps, the note's)
+
+
+def test_dead_notes_stop_their_strings_and_the_fretted_note_before_them():
+    held = Note(1.0, 0, (57,), strings=(3,), frets=(2,))  # (fretted)
+    drone = Note(1.0, 0, (40,), strings=(0,), frets=(0,))  # (open)
+    later = Note(3.0, 0, (64,), strings=(5,), frets=(0,))
+    dead = Note(2.0, 0, (45,), FRET_HAND_MUTE, strings=(1,))
+    assert rings([held, later], muted=[dead])[0] == (2.0,)  # (the hand off it: no overlap, none given)
+    assert rings([held, later], overlap=0.1, muted=[dead])[0] == (2.1,)
+    assert rings([drone, later], muted=[dead])[0] == (1.0 + RING_MAX,)  # (another string's: the open one rings on)
+    assert rings([drone, later], muted=[replace(dead, strings=(0,))])[0] == (2.0,)  # (its own string: stopped)
+    chord = Note(2.0, 0, (45, 50, 55), FRET_HAND_MUTE, strings=(1, 2, 3))  # (a dead strum: every string)
+    assert rings([drone, later], muted=[chord])[0] == (2.0,)
+    chug = Note(1.0, 0, (40,), PALM_MUTE, strings=(0,))
+    assert round(rings([chug, later], muted=[replace(dead, time=1.1)])[0][0], 3) == 1.06  # (0.6 of its gap: to the
+    # dead note, not the next note)

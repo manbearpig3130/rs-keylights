@@ -2996,7 +2996,7 @@ function partBlock(o) {
   fold.type = "button";
   fold.className = "part-fold";
   fold.textContent = "Tones";
-  fold.title = "Its tones: palm mutes and pinch harmonics' squeals (and the song's tone changes)";
+  fold.title = "Its tones: palm mutes, and harmonics (natural ones, and pinch harmonics' squeals) (and the song's tone changes)";
   const head = document.createElement("div");
   head.className = "part-head";
   head.append(name, lit, volume, fold);
@@ -3018,7 +3018,7 @@ function partBlock(o) {
   const tones = document.createElement("div");
   tones.className = "part-tones";
   tones.append(field("Tone", tone("tone")), field("Palm mutes", tone("mute_tone")),
-               field("Pinch harmonics", tone("pinch_tone")));
+               field("Harmonics", tone("pinch_tone")));
   const more = document.createElement("div");
   more.append(tones);
   if (o.songTones && o.songTones.length) {
@@ -3424,7 +3424,7 @@ function toneSet(o) {
   if (o.controls) title.appendChild(o.controls);
   box.appendChild(title);
   const own = o.tones || {};
-  for (const [text, field] of [["Tone", "tone"], ["Palm mutes", "mute_tone"], ["Pinch harmonics", "pinch_tone"]]) {
+  for (const [text, field] of [["Tone", "tone"], ["Palm mutes", "mute_tone"], ["Harmonics", "pinch_tone"]]) {
     const same = field === "pinch_tone";  // (its own default: "Same tone" is a choice over it)
     const select = toneSelect(o.defaults[field], own[field],
                               () => o.change(field, select.value === "" ? null : Number(select.value) || (same ? 0 : null)),

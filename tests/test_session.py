@@ -11,7 +11,7 @@ from rs_keylights.player import Player, Track
 from rs_keylights.lights import Light
 from rs_keylights.parts import Part, PlanCache, plan, player_for
 from rs_keylights.session import LOOP_LEAD_IN, Playback
-from rs_keylights.sng import PINCH_HARMONIC
+from rs_keylights.sng import HARMONIC, PINCH_HARMONIC
 from rs_keylights.sound import PINCH_TONE, SoundChoice
 from rs_keylights.tones import tone
 
@@ -71,6 +71,11 @@ def test_a_part_with_pinch_harmonics_has_a_channel_for_their_squeals(tmp_path):
     assert planned[1].voices.squeal is None and planned[1].channels == (13,)  # (none to squeal: no channel for them)
     assert plan(parts, SoundChoice({}, {}, {}, False).voices)[0].voices.squeal is None  # (on the note's own tone)
     assert SoundChoice({}, {None: tone(PINCH_TONE)}, {}, False, techniques=False).voices(refs["lead"]).squeal is None
+    chimes = Song(levels={0: [N(1.0, string=0, fret=12, mask=HARMONIC)]})  # (natural harmonics: a channel too)
+    path.write_bytes(song_archive("a", {"lead": ("L", chimes), "rhythm": ("R", plain)}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    parts = [Part(refs["lead"], refs["lead"].load(), 2), Part(refs["rhythm"], refs["rhythm"].load(), 2)]
+    assert plan(parts, choice.voices)[0].channels == (11, 12)
 
 
 def test_a_parts_channels_get_the_bend_range_its_bends_need(tmp_path):

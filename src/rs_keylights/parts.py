@@ -11,8 +11,8 @@ from .keyboard import BEND_RANGE, NORMAL_VOLUME, Keyboard
 from .library import ArrangementRef
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, strums, techniques
 from .player import Player, Track
-from .sng import PINCH_HARMONIC, Arrangement
-from .sound import KEYBOARD_CHANNELS, Voices
+from .sng import Arrangement
+from .sound import HARMONICS, KEYBOARD_CHANNELS, Voices
 
 # The parts of a song played together, as play, the page and following make them: each part's lights
 # and voices, and one player for them all.
@@ -71,7 +71,7 @@ class PlanCache:
         if got is not None and got[0] is arrangement:
             return got[1]
         lights = schedule(arrangement.notes, keys, shift, arrangement.shapes, overlap, arrangement.anchors,
-                          arrangement.capo, arrangement.arpeggios)
+                          arrangement.capo, arrangement.arpeggios, arrangement.muted)
         self._keep(self._lights)[key] = (arrangement, lights)
         return lights
 
@@ -123,7 +123,7 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
         if voices_for:
             wanted = voices_for(part.ref, (0, 0, 0))  # (its voices: which it has)
             squeals = wanted.squeal is not None and wanted.output is None and \
-                any(n.mask & PINCH_HARMONIC for n in part.arrangement.notes)
+                any(n.mask & HARMONICS for n in part.arrangement.notes)
             if squeals and channels_needed(wanted) > len(free):
                 squeals = False  # (on the note's own tone, rather than not at all)
             if not squeals:
@@ -143,7 +143,8 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
         overlap = voices.overlap if voices is not None else 0.0
         lights = cache.lights(part.arrangement, KeyRange(max_lit=most), shift, overlap) if cache is not None else \
             schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes, overlap,
-                     part.arrangement.anchors, part.arrangement.capo, part.arrangement.arpeggios)
+                     part.arrangement.anchors, part.arrangement.capo, part.arrangement.arpeggios,
+                     part.arrangement.muted)
         planned.append(PlannedPart(part, shift, lights, voices, channels, pooled and bool(part.lights),
                                    ranked.index(i)))
     return planned

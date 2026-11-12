@@ -820,6 +820,12 @@ class Gui:
         place = min(len(arrangements), DRUMS_PLACE_MOST)
         return [*arrangements[:place], entry, *arrangements[place:]]
 
+    def _drum_hits(self, sid: str) -> list[drums.Hit] | None:
+        """A song's drum part, if it's made: on its chart (made before that was: aligned now, and kept so)."""
+        loaded = self._load(sid)
+        beats = next((a.beats for _r, a in loaded if a.beats), ())
+        return drums.kept(loaded[0][0], beats=beats)
+
     def _drum_tracks(self, sid: str) -> list[Track]:
         """A song's drum part as a track, if it's made and played (and there's sound): on the keyboard's drum
         channel, or the device chosen for drums (outputs), its notes mapped."""
@@ -827,7 +833,7 @@ class Gui:
         if self.play_options["silent"] or not chosen["play"]:
             return []
         try:
-            hits = drums.kept(self._load(sid)[0][0])
+            hits = self._drum_hits(sid)
         except (GuiError, OSError, ValueError):
             return []
         if not hits:
@@ -868,7 +874,7 @@ class Gui:
         """A song's drum part for the page's drums card: its hits ([seconds, General MIDI note, velocity], none if it
         isn't made), and where it plays: the keyboard's drum channel, or the device chosen for drums (its port, channel
         and its notes for each drum)."""
-        hits = drums.kept(self._load(sid)[0][0]) or []
+        hits = self._drum_hits(sid) or []
         chosen = self.settings["outputs"].get("drums")
         there = chosen is not None and self._synth(chosen["port"]) is not None
         mapped, _patches = _drum_voicing(chosen) if chosen and there else ({}, {})
@@ -3043,7 +3049,9 @@ def song_export(loaded: list[tuple[ArrangementRef, Arrangement]], vocals: Arrang
     key = find_key([a for _r, a in loaded], [r.bass for r, _a in loaded])
     raw = next((a.sections for _r, a in loaded if a.sections), ())
     data = midiexport.song_midi(named.title, parts, markers=[(s["start"], s["name"]) for s in _sections(raw)],
-                                lyrics=vocals.lyrics if vocals else (), drums=drums.kept(loaded[0][0]) or (),
+                                lyrics=vocals.lyrics if vocals else (),
+                                drums=drums.kept(loaded[0][0], beats=next((a.beats for _r, a in loaded if a.beats), ()))
+                                or (),
                                 key=(key.tonic, key.mode) if key else None)
     return midiexport.file_name(named.title, ".mid"), data
 

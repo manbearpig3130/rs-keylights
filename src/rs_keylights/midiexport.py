@@ -10,8 +10,8 @@ from typing import Sequence
 from .drums import Hit
 from .lights import schedule, strums, techniques
 from .player import Player, Track
-from .sng import PINCH_HARMONIC, Arrangement, Syllable
-from .sound import GUITAR_TONE, PINCH_TONE, Squeal, Voice, Voices
+from .sng import Arrangement, Syllable
+from .sound import GUITAR_TONE, HARMONICS, PINCH_TONE, Squeal, Voice, Voices
 from .tones import tone
 
 # A song as a Standard MIDI File (type 1), for a DAW (Logic, GarageBand): its tempo map made from the chart's beats,
@@ -219,7 +219,7 @@ def _part(part: ExportPart, channel: int, grid: Grid, squeal_channel: int | None
     chords named."""
     a = part.arrangement
     shape = Squeal()
-    pinched = squeal_channel is not None and any(n.mask & PINCH_HARMONIC for n in a.notes)
+    pinched = squeal_channel is not None and any(n.mask & HARMONICS for n in a.notes)
     most = max((up for n in a.notes for _at, up in n.bends), default=0.0)
     bend_range = max(BEND_RANGE, math.ceil(most - 1e-6))
     ranges = {channel + 1: bend_range}
@@ -237,7 +237,7 @@ def _part(part: ExportPart, channel: int, grid: Grid, squeal_channel: int | None
                     squeal=Voice(squeal_channel + 1, tone(PINCH_TONE)) if pinched and squeal_channel is not None
                     else None)
     lights = schedule(a.notes, shift=0, shapes=a.shapes, overlap=OVERLAP, anchors=a.anchors, capo=a.capo,
-                      arpeggios=a.arpeggios)
+                      arpeggios=a.arpeggios, muted=a.muted)
     lights, extras = techniques(strums(lights, a.beats), a.muted)
     recorder = _Recorder(track, grid, ranges)
     player = Player([Track(lights, voices, lit=False, extras=extras)], recorder)
@@ -325,7 +325,7 @@ def song_midi(title: str, parts: Sequence[ExportPart], *, markers: Sequence[tupl
     taken = len(parts) + bool(lyrics)
     spare = channels[taken:]  # (for the parts' pinch harmonics' squeals, in turn: none left, on the part's own)
     for i, part in enumerate(parts):
-        squeals = spare.pop(0) if spare and any(n.mask & PINCH_HARMONIC for n in part.arrangement.notes) else None
+        squeals = spare.pop(0) if spare and any(n.mask & HARMONICS for n in part.arrangement.notes) else None
         tracks.append(_part(part, channels[i % len(channels)], grid, squeals))
     if lyrics:
         tracks.append(_vocals(lyrics, channels[len(parts) % len(channels)], grid))

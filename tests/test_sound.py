@@ -1,7 +1,7 @@
 import pytest
 
 from rs_keylights.lights import Light
-from rs_keylights.sng import ACCENT, FRET_HAND_MUTE, PALM_MUTE, PINCH_HARMONIC
+from rs_keylights.sng import ACCENT, FRET_HAND_MUTE, HARMONIC, PALM_MUTE, PINCH_HARMONIC, TAP
 from rs_keylights.sound import (DEAD_VELOCITY, PALM_VELOCITY, PLAIN_DEAD_VELOCITY, UP_SOFTER, Squeal, Voice, Voices,
                                 parse_note, squeal_from)
 from rs_keylights.tones import tone
@@ -119,3 +119,11 @@ def test_a_lights_level_makes_it_softer():
     faded = Light(0.0, 0.0, (), (60,), 0, rings=(0.1,), extra=True, level=0.5)
     assert Voices(MAIN).pick(faded)[2] == 50
     assert Voices(MAIN, techniques=False).pick(faded)[2] == 100
+
+
+def test_taps_are_legato_and_natural_harmonics_chime_on_the_harmonics_voice():
+    assert Voices(MAIN).pick(light((52,), TAP))[2] == Voices(MAIN).pick(light((52,), 0x200))[2] < 100  # (a hammer-on's)
+    voices = Voices(MAIN, mute=MUTE, squeal=PINCH)
+    assert voices.pick(light((64,), HARMONIC))[:2] == (12, (64,))  # (at its own pitch: no squeal's step up)
+    assert Voices(MAIN).pick(light((64,), HARMONIC))[0] == 11  # (none: the part's own)
+    assert Voices(MAIN, squeal=PINCH, techniques=False).pick(light((64,), HARMONIC))[0] == 11

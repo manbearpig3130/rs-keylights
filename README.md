@@ -127,12 +127,12 @@ the commands do:
   second…, in every song, playing or following), its mute (🔇: it doesn't play, sound or lit keys; the
   Launchkey's pad on top for it, in the mixer or not, is the same switch; a song with every part muted still
   plays, so they can be unmuted as it goes), and under them its
-  tone, palm-mute tone and pinch-harmonic tone (from the keyboard's tone list; pinch harmonics GM GT
+  tone, palm-mute tone and harmonics tone (from the keyboard's tone list; pinch harmonics GM GT
   HARMONICS unless you choose another, or "Same tone"). Until you change them, every
   part plays and lights a key, the keys left over going to the lead and rhythm parts (lead, rhythm and
   bass: 2, 1 and 1; lead and bass: 3 and 1). A song with more than 4 parts starts with its first lead,
   rhythm and bass; the others can play too, each taking the keyboard's channels its tones need (12 in all:
-  one a part, and one more each for palm-mute and pinch-harmonic tones of their own (pinch harmonics only
+  one a part, and one more each for palm-mute and harmonics tones of their own (pinch harmonics only
   for a part that has them; short of channels, they squeal on the part's own tone); none for a part on another
   MIDI device). Too many, and it says so.
 - **Tone changes**: when a song switches tone (as the game does: its arrangements have up to four tones,
@@ -142,7 +142,7 @@ the commands do:
   CLEAN GUITAR, 296 GM OVERDRIVE GT, 297 GM DISTORTION GT and so on: the LK-170's own guitar tones sound
   an octave below the keys); back to the song's first tone, to the part's own tone (so
   the part's tone is the one for the song's start). Kinds it doesn't know, or set to "No change", leave the
-  tone as it is; palm-mute and pinch-harmonic tones stay. The Launchkey says each change as it comes ("Lead:
+  tone as it is; palm-mute and harmonics tones stay. The Launchkey says each change as it comes ("Lead:
   distortion", the arrangement whose chords show) and keeps the tone it's on lit up at the right of the
   artist's line ("Clean", "Dist"; in the lyrics, before the time). On the page, each part with tone changes
   lists them under its tones ("Song's tones: clean · 0:54 distortion · 1:23 clean", tones of no kind it
@@ -171,14 +171,16 @@ the commands do:
 - **Techniques** as the charts have them: bends (pitch bend, following the chart's bend: held, then moved to
   each point; as far as the chart bends: each channel's bend range set to the part's biggest bend), slides (a semitone at a time over the note's sustain,
   chords too; the last left to the note it slides into), slides off (quickly, at the note's end, fading, a smear of 6 steps at most), vibrato
-  (Modulation), tremolo picking (struck again every 75 ms), hammer-ons and pull-offs (softer), slaps and pops
+  (Modulation), tremolo picking (struck again every 75 ms), hammer-ons, pull-offs and taps (softer), slaps and pops
   (as hard as accents), natural harmonics (their own pitch: a 7th-fret harmonic an octave and a fifth over the
-  open string, lit there too), pinch harmonics (the fretted note, softer, under its squeal: an octave and a
+  open string, lit there too, and on the part's harmonics tone: GM GT HARMONICS unless chosen otherwise), pinch
+  harmonics (the fretted note, softer, under its squeal: an octave and a
   fifth over it, struck at once half a semitone flat and scooped up to its pitch, then a fast, wide vibrato (pitch bend,
-  over the chart's bend) growing in, on the part's pinch-harmonic tone: GM GT HARMONICS unless chosen otherwise;
+  over the chart's bend) growing in, on the part's harmonics tone: GM GT HARMONICS unless chosen otherwise;
   the **Pinch harmonics** card sets how high, how loud, the scoop and the vibrato, on every one or only where the
   chart has vibrato, and **Try it** plays a riff with a quick one and a held one), dead notes (a quiet click on the palm-mute tone, or a softer tick on the part's
-  own without one), palm mutes a little softer, and strums: a
+  own without one; each stops what's ringing on its string, and the fretted note before it), palm mutes a little
+  softer, and strums: a
   chord's strings one after another, down (low to high) on the beat and its eighths, up (high to low, a little
   softer) on the sixteenths between (the charts don't say which way: their pick direction is never set), 7 ms
   a string, tighter when the next chord comes quickly. **Keyboard** › Sound turns them off (accents alone).
@@ -260,8 +262,8 @@ song playing, else the active one:
   song takes them once the taps stop (each change plays the parts again, stopping the notes sounding).
   **Knobs 1–5**: each steps through its arrangement's tones; the screen (that tone, and what the knobs do)
   and the page show each, and the song plays with the one it stops on. **▲ again** (beside the knobs) goes
-  from tones to palm-mute tones to pinch-harmonic tones and back, three squares at the top right of the tone's
-  screen showing which. Palm-mute and pinch-harmonic tones start with "Same tone" (the tone the rest plays with,
+  from tones to palm-mute tones to harmonics tones and back, three squares at the top right of the tone's
+  screen showing which. Palm-mute and harmonics tones start with "Same tone" (the tone the rest plays with,
   even over a default) and, when their kind has a default, "Default", a group by themselves, so knob 8
   gets back to them in a step. The page's palm-mute and pinch-harmonic choices have "Same tone" under the
   default too, when there is one. Switching to the arrangements (▲) shows what the knobs do for a few
@@ -444,9 +446,11 @@ How it's made: the song's audio taken from its archive and decoded, its drums se
 model rearmed-mods' Song Stems runs on the Neural Engine), transcribed with [ADTOF](https://github.com/MZehren/ADTOF)
 (its [PyTorch port](https://github.com/xavriley/ADTOF-pytorch): kick, snare, tom, hi-hat, cymbal), then refined: each
 hit's velocity from how loud it is, the toms low, mid or high by their pitch, the cymbals crash or ride (a ride's hits
-come in steady runs), and each hit kept where the record has it (one within 12 ms of the chart's 16th notes put on
-it: a chart's beats can be tens of milliseconds off its audio, custom ones especially, so they're not followed
-further). It plays on the song's clock, so it keeps time with the game (Riff Repeater and speed changes too). Hi-hats are all closed: open ones can't be told from the cymbals' wash. Parts are kept in
+come in steady runs), and each hit kept where the record has it, but moved with the rest onto the chart: a chart's
+beats can be tens of milliseconds off its audio (custom ones especially: Rime of the Ancient Mariner's are 48 ms
+late), and the other parts play by the chart, so the whole drum part is moved by as much as most of its kicks and
+snares are off the chart's 16ths (half a 16th, 80 ms, at most). Then one within 12 ms of a 16th is put on it. A part
+made before this is moved the first time it's used. It plays on the song's clock, so it keeps time with the game (Riff Repeater and speed changes too). Hi-hats are all closed: open ones can't be told from the cymbals' wash. Parts are kept in
 `~/Library/Caches/rs-keylights/drums/`.
 
 The tools: `tools/drums-setup.sh` (once) builds Song Stems' helper with the drums as a part it takes out, from

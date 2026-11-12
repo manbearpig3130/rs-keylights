@@ -6,7 +6,8 @@ from typing import Any, Mapping
 
 from .library import ArrangementRef
 from .lights import KeyRange, Light
-from .sng import ACCENT, FRET_HAND_MUTE, HAMMER_ON, NAMES, PALM_MUTE, PINCH_HARMONIC, POP, PULL_OFF, SLAP, Arrangement
+from .sng import (ACCENT, FRET_HAND_MUTE, HAMMER_ON, HARMONIC, NAMES, PALM_MUTE, PINCH_HARMONIC, POP, PULL_OFF, SLAP,
+                  TAP, Arrangement)
 from .songtones import kind_changes
 from .tones import Tone, tone
 
@@ -25,7 +26,9 @@ LEGATO_VELOCITY, DEAD_VELOCITY = 75, 50  # hammer-ons, pull-offs and a slide's s
 UP_SOFTER = 12  # a chord strummed up: this much softer (techniques)
 PALM_VELOCITY = 88  # palm mutes (techniques)
 PLAIN_DEAD_VELOCITY = 35  # dead notes on a part's own tone (no palm-mute tone: just a tick)
-PINCH_TONE = 298  # GM GT HARMONICS: pinch harmonics' squeals' tone, unless a part has its own (or the same tone)
+PINCH_TONE = 298  # GM GT HARMONICS: pinch harmonics' squeals' tone, and natural harmonics', unless a part has its own
+# (or the same tone)
+HARMONICS = PINCH_HARMONIC | HARMONIC  # a part with these has a channel for them (parts.plan)
 GUITAR_TONE = 79  # DISTORTION GT
 BASS_TONE = 85  # FINGERED BASS
 
@@ -84,7 +87,7 @@ class Voice:
 class Voices:
     main: Voice
     mute: Voice | None = None  # palm-muted notes
-    squeal: Voice | None = None  # pinch harmonics' squeals (techniques; none: on the note's own voice)
+    squeal: Voice | None = None  # pinch harmonics' squeals and natural harmonics (techniques; none: the note's voice)
     squeal_shape: Squeal = Squeal()  # and how they sound
     real_pitch: bool = False  # sound the notes' own pitches, not the lit keys' (moved into range)
     key_range: KeyRange = KeyRange()
@@ -110,7 +113,7 @@ class Voices:
     def pick(self, light: Light) -> tuple[int, tuple[int, ...], int]:
         """(channel, notes, velocity) for a light."""
         squeal = self.techniques and light.extra and light.mask & PINCH_HARMONIC
-        if self.squeal and squeal:
+        if self.squeal and (squeal or self.techniques and light.mask & HARMONIC):  # (natural harmonics too: chiming)
             voice = self.squeal
         elif self.mute and light.mask & PALM_MUTE:
             voice = self.mute
@@ -129,7 +132,8 @@ class Voices:
 
     def velocity(self, mask: int) -> int:
         """How hard a note's played: accented (slapped or popped too) hardest, palm-muted a little softer,
-        hammered-on or pulled-off softer still, a pinch harmonic's note (under its squeal) and a dead note softest
+        hammered-on, pulled-off or tapped softer still, a pinch harmonic's note (under its squeal) and a dead note
+        softest
         (the techniques: else accents alone)."""
         if not self.techniques:
             return ACCENT_VELOCITY if mask & ACCENT else VELOCITY
@@ -139,7 +143,7 @@ class Voices:
             return ACCENT_VELOCITY
         if mask & PINCH_HARMONIC:
             return self.squeal_shape.note_velocity
-        if mask & (HAMMER_ON | PULL_OFF):
+        if mask & (HAMMER_ON | PULL_OFF | TAP):  # (no pick: legato)
             return LEGATO_VELOCITY
         return PALM_VELOCITY if mask & PALM_MUTE else VELOCITY
 

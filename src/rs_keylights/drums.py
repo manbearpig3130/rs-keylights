@@ -38,6 +38,9 @@ COMBINE = 0.02  # seconds: one drum's peaks this close, one hit
 SNAP_MOST = 0.012  # seconds a hit's moved to the chart's grid at most (about the model's own precision: further,
 # left where the record has it)
 DRUM_CHANNEL = 10  # General MIDI's drums
+ALIGN_MOST = 0.08  # seconds a song's drum part is moved at most, onto its chart (align)...
+ALIGN_LEAST = 40  # ...from this many kicks and snares near its 16ths at least (fewer: as it is)
+CLUSTER = 0.012  # seconds: the kicks' and snares' offsets this close together, one cluster (align)
 
 
 @dataclass(frozen=True)
@@ -61,29 +64,33 @@ def _cache_file(ref: ArrangementRef, cache: Path | None = None) -> Path:
     return (cache or cache_dir()) / f"{Path(ref.archive).name}#{ref.song_key}.json"
 
 
-_read: dict[Path, tuple[float, int, int, list[Hit] | None]] = {}  # (parts read: by file, as it was then: its time
-# and size, and the version read for)
+_read: dict[Path, tuple[float, int, int, list[Hit] | None, bool]] = {}  # (parts read: by file, as it was then: its
+# time and size, the version read for, and whether it's aligned)
 
 
-def kept(ref: ArrangementRef, cache: Path | None = None) -> list[Hit] | None:
+def kept(ref: ArrangementRef, cache: Path | None = None, beats: Sequence[float] | None = None) -> list[Hit] | None:
     """A song's drum part, made already; None if it hasn't one. (Read once, again only when its file changes: a
-    remote asks often.)"""
+    remote asks often.) With the song's beats, one made before it was aligned to its chart is aligned, and kept so."""
     path = _cache_file(ref, cache)
     try:
         stat = path.stat()
     except OSError:
         return None
     seen = _read.get(path)
-    if seen is not None and seen[:3] == (stat.st_mtime, stat.st_size, DRUMS_VERSION):
+    if seen is not None and seen[:3] == (stat.st_mtime, stat.st_size, DRUMS_VERSION) and (seen[4] or not beats):
         return seen[3]
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
-    hits = None
+    hits, aligned = None, False
     if isinstance(data, dict) and data.get("version") == DRUMS_VERSION:
-        hits = [Hit(float(t), int(n), int(v)) for t, n, v in data.get("hits", [])]
-    _read[path] = (stat.st_mtime, stat.st_size, DRUMS_VERSION, hits)
+        hits, aligned = [Hit(float(t), int(n), int(v)) for t, n, v in data.get("hits", [])], bool(data.get("aligned"))
+        if not aligned and beats:
+            hits = align(hits, beats)
+            keep(ref, hits, cache)
+            return hits
+    _read[path] = (stat.st_mtime, stat.st_size, DRUMS_VERSION, hits, aligned)
     return hits
 
 
@@ -96,7 +103,7 @@ def keep(ref: ArrangementRef, hits: Sequence[Hit], cache: Path | None = None) ->
     path = _cache_file(ref, cache)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps({"version": DRUMS_VERSION, "song": ref.title,
+    temp.write_text(json.dumps({"version": DRUMS_VERSION, "song": ref.title, "aligned": True,
                                 "hits": [[round(h.time, 4), h.note, h.velocity] for h in hits]}))
     temp.replace(path)
 
@@ -197,19 +204,52 @@ def refine(picked: Sequence[tuple[float, int, float]], audio: Any, rate: int) ->
     return out
 
 
-def snap(hits: Sequence[Hit], beats: Sequence[float]) -> list[Hit]:
-    """The hits as the record has them, tidied: one within SNAP_MOST of the chart's 16th notes (between its beats)
-    put on it, the rest left where they are, and one drum twice on a time once (the louder). Not moved to the chart:
-    a song's chart can be tens of milliseconds off its audio (custom ones especially), and the part plays with the
-    audio, not the chart."""
+def _sixteenths(beats: Sequence[float]) -> Any:
+    """The chart's 16th notes (between its beats), in time; none without two beats."""
     import numpy as np
     b = np.array(sorted(beats), dtype=np.float64)
-    if len(b) < 2 or not hits:
-        return list(hits)
-    grid = np.concatenate([np.linspace(b0, b1, 5)[:-1] for b0, b1 in zip(b, b[1:])] + [b[-1:]])
-    t = np.array([h.time for h in hits])
+    if len(b) < 2:
+        return np.array([])
+    return np.concatenate([np.linspace(b0, b1, 5)[:-1] for b0, b1 in zip(b, b[1:])] + [b[-1:]])
+
+
+def _nearest(grid: Any, t: Any) -> Any:
+    import numpy as np
     i = np.clip(np.searchsorted(grid, t), 1, len(grid) - 1)
-    at = np.where(np.abs(grid[i] - t) < np.abs(grid[i - 1] - t), grid[i], grid[i - 1])
+    return np.where(np.abs(grid[i] - t) < np.abs(grid[i - 1] - t), grid[i], grid[i - 1])
+
+
+def align(hits: Sequence[Hit], beats: Sequence[float]) -> list[Hit]:
+    """The hits moved onto the chart, then snapped: a song's chart can be tens of milliseconds off its audio (custom
+    ones especially), and the parts play by the chart, so the drums, made from the audio, are moved by as much as
+    its kicks and snares are off the chart's 16ths: where most of them are (the median of the densest CLUSTER of
+    their offsets, within half a 16th and ALIGN_MOST; from ALIGN_LEAST of them at least)."""
+    import numpy as np
+    grid = _sixteenths(beats)
+    if not len(grid) or not hits:
+        return list(hits)
+    t = np.array([h.time for h in hits if h.note in (KICK, SNARE)])
+    off = t - _nearest(grid, t) if len(t) else np.array([])
+    step = float(np.median(np.diff(grid)))
+    near = np.sort(off[np.abs(off) <= min(ALIGN_MOST, 0.5 * step)])
+    shift = 0.0
+    if len(near) >= ALIGN_LEAST:
+        counts = np.searchsorted(near, near + CLUSTER) - np.arange(len(near))  # (each one's, and those just after it)
+        first = int(np.argmax(counts))
+        shift = float(np.median(near[first:first + counts[first]]))
+    return snap([Hit(round(h.time - shift, 4), h.note, h.velocity) for h in hits], beats)
+
+
+def snap(hits: Sequence[Hit], beats: Sequence[float]) -> list[Hit]:
+    """The hits as the record has them, tidied: one within SNAP_MOST of the chart's 16th notes (between its beats)
+    put on it, the rest left where they are, and one drum twice on a time once (the louder). (A chart off its
+    audio: align moves them first.)"""
+    import numpy as np
+    grid = _sixteenths(beats)
+    if not len(grid) or not hits:
+        return list(hits)
+    t = np.array([h.time for h in hits])
+    at = _nearest(grid, t)
     kept_hits: dict[tuple[float, int], Hit] = {}
     for h, m, g in zip(hits, t, at):
         when = float(g) if abs(g - m) <= SNAP_MOST else float(m)
@@ -323,7 +363,8 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
          cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None) -> list[Hit]:
     """A song's drum part made (a minute or so) and kept: its audio from its archive, decoded and its drums separated
     (drums-setup.sh's rs-stems-drums, with Song Stems' model), transcribed (ADTOF, in drums-setup.sh's Python),
-    refined and snapped to beats (the chart's). How far along it is goes to progress (0 to 1) as it goes."""
+    refined, aligned to the chart and snapped to its beats. How far along it is goes to progress (0 to 1) as it
+    goes."""
     import numpy as np
     tools = tools or tools_dir()
     stems_home = stems_home or Path.home() / "Library" / "Application Support" / "RS Re-ARMed" / "stems"
@@ -389,7 +430,7 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
         progress(TRANSCRIBED)
         strengths = np.load(work / "act.npy").astype(np.float32)
         mono = drums.astype(np.float32).mean(axis=1) / 32768.0
-        hits = snap(refine(pick(strengths), mono, rate), beats)
+        hits = align(refine(pick(strengths), mono, rate), beats)
     keep(ref, hits, cache)
     progress(1.0)
     return hits

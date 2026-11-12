@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from rs_keylights import drums
-from rs_keylights.drums import CRASH, KICK, RIDE, SNARE, TOMS, Hit, pick, refine, snap
+from rs_keylights.drums import ALIGN_LEAST, CRASH, KICK, RIDE, SNARE, TOMS, Hit, align, pick, refine, snap
 from rs_keylights.library import ArrangementRef
 from rs_keylights.parts import DrumVoices, drum_track
 from rs_keylights.player import Player
@@ -69,6 +69,39 @@ def test_a_drum_part_is_kept_by_its_song_and_made_again_with_another_version(tmp
     assert drums.kept(ref) == [Hit(1.0, KICK, 100), Hit(1.5, SNARE, 80)]
     monkeypatch.setattr(drums, "DRUMS_VERSION", drums.DRUMS_VERSION + 1)
     assert drums.kept(ref) is None
+
+
+def a_beat(early=0.045, count=ALIGN_LEAST + 10):
+    """Kicks on the beat and snares on the 16th after, as audio 45 ms ahead of its chart has them (and a hi-hat)."""
+    beats = [1.0 + 0.5 * i for i in range(count + 2)]
+    hits = [Hit(round(b - early, 4), KICK, 100) for b in beats[:count]]
+    hits += [Hit(round(b + 0.125 - early, 4), SNARE, 90) for b in beats[:count]] + [Hit(2.0 - early, 42, 70)]
+    return beats, sorted(hits, key=lambda h: h.time)
+
+
+def test_a_drum_part_is_moved_onto_its_chart():
+    beats, hits = a_beat()
+    aligned = align(hits, beats)
+    assert {h.time for h in aligned if h.note == KICK} == set(beats[:ALIGN_LEAST + 10])  # (on the beats)
+    assert [h.time for h in aligned if h.note == 42] == [2.0]  # (everything moved alike)
+    _beats, few = a_beat(count=ALIGN_LEAST // 4)  # (too few to tell: as it is, snapped)
+    assert align(few, beats) == snap(few, beats)
+    _beats, late = a_beat(early=-0.03)
+    assert {h.time for h in align(late, beats) if h.note == KICK} == set(beats[:ALIGN_LEAST + 10])
+
+
+def test_one_made_before_drum_parts_were_aligned_is_aligned_once_it_has_the_beats(tmp_path):
+    import json
+    ref = ArrangementRef("ID", str(tmp_path / "song_m.psarc"), "songs/bin/macos/song_lead.sng", "SongKey", "Lead")
+    beats, hits = a_beat()
+    drums.keep(ref, hits)
+    path = drums._cache_file(ref)
+    old = json.loads(path.read_text())
+    del old["aligned"]  # (as an earlier version kept it)
+    path.write_text(json.dumps(old))
+    assert drums.kept(ref) == hits  # (without the beats: as it is)
+    assert drums.kept(ref, beats=beats) == align(hits, beats)
+    assert json.loads(path.read_text())["aligned"] is True and drums.kept(ref) == align(hits, beats)  # (kept so)
 
 
 def test_making_one_says_what_its_tools_lack(tmp_path):

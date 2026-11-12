@@ -121,7 +121,7 @@ SECTION_COLOURS = {"intro": (100, 100, 100), "outro": (100, 100, 100), "verse": 
 OTHER_SECTION, SECTION_DIM = (70, 70, 110), 0.12  # (the others: grey-blue), and the kinds it's not in
 LOOP_SET, LOOP_UNSET, LOOP_ON, LOOP_OFF, LOOPED, NOT_LOOPED = 9, 11, 21, 23, 37, 39  # the loop's pads: palette colours
 VOLUME_STEP = 1  # the mixer's knobs: a step, of a volume (0 to 127, 100 as it starts)
-FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("pinch_tone", "pinch harmonics"))  # the tones knobs 1 to 6
+FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("pinch_tone", "harmonics"))  # the tones knobs 1 to 6
 # step through, the up arrow (again) going from one to the next
 STRIP_MIDDLE = 8192  # the pitch strip springs back here when let go (and a slide can pass through it)
 SONGS_PER_STEP = 0.25  # slid slowly (a step: a 128th of the strip)
