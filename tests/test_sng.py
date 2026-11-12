@@ -134,3 +134,18 @@ def test_techniques_slides_bends_vibrato_harmonics_and_dead_notes():
     assert harmonic.pitches == (50 + 19,)
     assert chord.pitches == (45, 52) and chord.slide == 2
     assert [(n.time, n.pitches) for n in a.muted] == [(5.0, (43,))]  # (not among the notes: no keys)
+
+
+def test_hand_positions_and_pick_direction():
+    song = Song(levels={0: [N(1.0, fret=3), N(2.0, fret=7, pick=1)]}, anchors={0: [(0.0, 1), (1.5, 5)]})
+    arrangement = load(song)
+    assert arrangement.anchors == ((0.0, 1), (1.5, 5))
+    assert [n.up for n in arrangement.notes] == [False, True]
+
+
+def test_which_hand_shapes_are_arpeggios():
+    song = Song(levels={0: [N(1.0)]}, chords=[(3, 2, 0, 0, 0, 3), (0, 2, 2, 1, 0, 0)], chord_masks=[0, 1],
+                shapes={0: [(0, 1.0, 2.0), (1, 5.0, 6.0)]}, arpeggios={0: [(0, 3.0, 4.0)]})
+    arrangement = load(song)
+    assert arrangement.shapes == ((1.0, 2.0), (3.0, 4.0), (5.0, 6.0))
+    assert arrangement.arpeggios == ((3.0, 4.0), (5.0, 6.0))  # (listed as one, or its chord template's an arpeggio's)

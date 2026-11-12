@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 from rs_keylights.lights import Light
 from rs_keylights.player import Player, Track, play
@@ -249,3 +250,56 @@ def test_a_part_can_sound_on_another_device_its_lights_on_the_keyboard():
     assert synth.events[-1] == ("stop", 11, (40,))
     player.stop()
     assert keys.events[-1] == ("all off",) and synth.events[-1] == ("all off",)
+
+
+def test_a_strummed_chords_strings_sound_one_after_another():
+    chord = Light(1.0, 1.5, (40, 47, 52), (40, 47, 52), rings=(2.0, 2.0, 2.0), strum=(0.0, 0.01, 0.02))
+
+    def sounds(*positions):
+        keys = FakeKeys()
+        player = Player([Track([chord], FakeVoices())], keys)
+        for position in positions:
+            player.advance(position)
+        return [e for e in keys.events if e[0] in ("play", "stop")]
+
+    assert sounds(0.9, 1.0, 1.015, 1.03, 2.01) == [("play", 11, (40,), 100), ("play", 11, (47,), 100),
+                                                  ("play", 11, (52,), 100), ("stop", 11, (40, 47, 52))]
+    assert sounds(1.015, 1.03, 2.01) == [("play", 11, (40, 47), 100), ("play", 11, (52,), 100),
+                                        ("stop", 11, (40, 47, 52))]  # (from mid-strum: those started, then the rest)
+    short = Light(1.0, 1.015, (40, 47, 52), (40, 47, 52), strum=(0.0, 0.01, 0.02))  # (not ringing: as lit)
+    keys = FakeKeys()
+    player = Player([Track([short], FakeVoices(ring=False))], keys)
+    for position in (0.9, 1.0, 1.01, 1.02, 1.1):
+        player.advance(position)
+    assert [e for e in keys.events if e[0] in ("play", "stop")] == [
+        ("play", 11, (40,), 100), ("play", 11, (47,), 100), ("stop", 11, (40, 47))]  # (the last never starts)
+
+
+def test_a_pinch_harmonics_squeal_scoops_up_into_its_pitch_with_a_wide_vibrato():
+    from rs_keylights.player import SCOOP, SCOOP_TIME, SQUEAL_GROWS, SQUEAL_VIBRATO, SQUEAL_WIDTH
+    from rs_keylights.sng import PINCH_HARMONIC
+    squeal = Light(1.0, 1.0, (), (71,), PINCH_HARMONIC, rings=(2.0,), vibrato=True, extra=True)
+
+    def controls(voices, light=squeal):
+        keys = FakeKeys()
+        player = Player([Track([], voices, extras=[light])], keys)
+        position = 0.9
+        while position < 2.1:
+            player.advance(position)
+            position += 0.01
+        return [e for e in keys.events if e[0] in ("vibrato", "bend", "play")]
+
+    own = FakeVoices()
+    own.squeal = object()  # (a channel of its own)
+    events = controls(own)
+    bends = [e[2] for e in events if e[0] == "bend"]
+    assert events[0] == ("bend", 11, -SCOOP) and events[1][0] == "play"  # (flat as it starts: the attack at once)
+    assert bends[len(bends) // 2] != 0 and bends[-1] == 0  # (the vibrato going on, none as it ends)
+    later = bends[round((SCOOP_TIME + SQUEAL_GROWS) / 0.02) + 1:-1]
+    assert round(max(later), 1) == SQUEAL_WIDTH and round(min(later), 1) == -SQUEAL_WIDTH  # (wide, either way)
+    assert not [e for e in events if e[0] == "vibrato"]  # (pitch bend: not the chart's Modulation)
+    bent = replace(squeal, bends=((1.5, 2.0),))  # (the chart's bend: a whole step, the vibrato over it)
+    assert max(e[2] for e in controls(own, bent) if e[0] == "bend") > 2.0
+    vibrato = [e[2] for e in controls(FakeVoices()) if e[0] == "vibrato"]  # (on the note's channel: Modulation)
+    assert vibrato[0] == 0 and SQUEAL_VIBRATO in vibrato and vibrato[-1] == 0
+    assert not [e for e in controls(FakeVoices()) if e[0] == "bend"]

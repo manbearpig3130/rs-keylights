@@ -16,6 +16,7 @@ from .chords import NAMES, chord_name
 from .lyrics import Line
 from .pedal import SLOTS as PEDAL_SLOTS
 from .sng import Chord, note_name
+from .sound import PINCH_TONE
 from .tones import TONES, tone
 
 # While the page runs: keeps a Launchkey MK4 as a remote, in step with the page, for the song followed, else
@@ -120,7 +121,7 @@ SECTION_COLOURS = {"intro": (100, 100, 100), "outro": (100, 100, 100), "verse": 
 OTHER_SECTION, SECTION_DIM = (70, 70, 110), 0.12  # (the others: grey-blue), and the kinds it's not in
 LOOP_SET, LOOP_UNSET, LOOP_ON, LOOP_OFF, LOOPED, NOT_LOOPED = 9, 11, 21, 23, 37, 39  # the loop's pads: palette colours
 VOLUME_STEP = 1  # the mixer's knobs: a step, of a volume (0 to 127, 100 as it starts)
-FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("low_tone", "low notes"))  # the tones knobs 1 to 6
+FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("pinch_tone", "pinch harmonics"))  # the tones knobs 1 to 6
 # step through, the up arrow (again) going from one to the next
 STRIP_MIDDLE = 8192  # the pitch strip springs back here when let go (and a slide can pass through it)
 SONGS_PER_STEP = 0.25  # slid slowly (a step: a 128th of the strip)
@@ -172,7 +173,7 @@ ON_THE_SONG = (None, "speed", "position", "section", "loop", "chords")  # the so
 # shows
 TONE_NUMBERS = [t.number for t in TONES]
 GROUPS = [t.number for i, t in enumerate(TONES) if i == 0 or TONES[i - 1].group != t.group]  # each one's first
-SAME, DEFAULT = 0, -1  # palm mutes and low notes: the tone the rest has (as the page keeps it: over a default), or
+SAME, DEFAULT = 0, -1  # palm mutes and pinch harmonics: the tone the rest has (as the page keeps it: over a default), or
 # none of their own (their kind's default, when it has one); first, a group by themselves
 
 
@@ -1705,19 +1706,23 @@ class Watch:
         return pending if pending is not None else (arrangement.get("output") or {}).get("program")
 
     def _choices(self, arrangement: dict[str, Any], field: str) -> list[int]:
-        """What a knob has before the tones: palm mutes and low notes, the same tone as the rest, and their kind's
-        default if it has one."""
+        """What a knob has before the tones: palm mutes and pinch harmonics, the same tone as the rest, and their
+        kind's default if it has one."""
         if field == "tone":
             return []
         return [SAME, DEFAULT] if self._default_of(arrangement, field) else [SAME]
 
     def _default_of(self, arrangement: dict[str, Any], field: str) -> int | None:
-        """An arrangement's kind's default tone for a field (lead, rhythm or bass parts), if it has one."""
-        return ((self._info or {}).get(arrangement["kind"]) or {}).get(field) or None
+        """An arrangement's kind's default tone for a field (lead, rhythm or bass parts), if it has one (pinch
+        harmonics: GM GT HARMONICS, unless the kind's is the same tone as the rest)."""
+        value = ((self._info or {}).get(arrangement["kind"]) or {}).get(field)
+        if field == "pinch_tone" and value is None:
+            return PINCH_TONE
+        return value or None
 
     def _knob_tone(self, arrangement: dict[str, Any], field: str) -> int:
-        """Where an arrangement's knob is for a field (turns not applied yet too): its tone; palm mutes and low
-        notes, SAME for the same tone as the rest, else with none of their own, DEFAULT (or SAME, without one)."""
+        """Where an arrangement's knob is for a field (turns not applied yet too): its tone; palm mutes and pinch
+        harmonics, SAME for the same tone as the rest, else with none of their own, DEFAULT (or SAME, without one)."""
         pending = self._pending.get((arrangement["id"], field))
         if pending is not None:
             return pending

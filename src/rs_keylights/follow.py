@@ -16,7 +16,7 @@ from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .parts import Part, PlanCache, PlannedPart, VoicesFor, plan, player_for
 from .player import Player, Track
-from .sng import Arrangement, note_name
+from .sng import Arrangement
 from .tones import Tone
 
 # Follows the song Rocksmith plays through RS Companion's stream overlay API (RockSniffer's API,
@@ -750,7 +750,7 @@ class Follower:
                 "octaves": p.shift // 12,
                 "tone": _tone_text(voices.main.tone) if voices else None,
                 "mute": _tone_text(voices.mute.tone) if voices and voices.mute else None,
-                "low": f"{_tone_text(voices.low.tone)} below {note_name(voices.split)}" if voices and voices.low else None,
+                "pinch": _tone_text(voices.squeal.tone) if voices and voices.squeal else None,
             })
         return out
 

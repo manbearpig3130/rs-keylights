@@ -11,7 +11,8 @@ from rs_keylights.player import Player, Track
 from rs_keylights.lights import Light
 from rs_keylights.parts import Part, PlanCache, plan, player_for
 from rs_keylights.session import LOOP_LEAD_IN, Playback
-from rs_keylights.sound import SoundChoice
+from rs_keylights.sng import PINCH_HARMONIC
+from rs_keylights.sound import PINCH_TONE, SoundChoice
 from rs_keylights.tones import tone
 
 
@@ -46,7 +47,7 @@ def test_plan_shares_the_lit_parts_shift_and_gives_each_part_its_channels(tmp_pa
     path.write_bytes(song_archive("a", {"lead": ("L", high), "rhythm": ("R", low)}))
     refs = {r.part: r for r in read_arrangements(path)}
     parts = [Part(refs["lead"], refs["lead"].load(), 2), Part(refs["rhythm"], refs["rhythm"].load(), 2)]
-    choice = SoundChoice({"lead": tone(178)}, {}, {}, {}, False)
+    choice = SoundChoice({"lead": tone(178)}, {}, {}, False)
     planned = plan(parts, choice.voices)
     assert planned[0].shift == planned[1].shift == 12
     assert [v.channel for v in planned[0].voices.all()] == [11]
@@ -55,13 +56,30 @@ def test_plan_shares_the_lit_parts_shift_and_gives_each_part_its_channels(tmp_pa
     assert plan(parts, None)[0].voices is None
 
 
+def test_a_part_with_pinch_harmonics_has_a_channel_for_their_squeals(tmp_path):
+    path = tmp_path / "a_m.psarc"
+    pinched = Song(levels={0: [N(1.0, string=0, fret=3, mask=PINCH_HARMONIC)]})
+    plain = Song(levels={0: [N(1.0, string=0, fret=3)]})
+    path.write_bytes(song_archive("a", {"lead": ("L", pinched), "rhythm": ("R", plain)}))
+    refs = {r.part: r for r in read_arrangements(path)}
+    parts = [Part(refs["lead"], refs["lead"].load(), 2), Part(refs["rhythm"], refs["rhythm"].load(), 2)]
+    choice = SoundChoice({}, {None: tone(PINCH_TONE)}, {}, False)
+    planned = plan(parts, choice.voices)
+    squeal = planned[0].voices.squeal
+    assert squeal is not None and squeal.channel == 12 and squeal.tone.number == PINCH_TONE  # (its set's second)
+    assert planned[0].channels == (11, 12) and squeal in planned[0].voices.all()
+    assert planned[1].voices.squeal is None and planned[1].channels == (13,)  # (none to squeal: no channel for them)
+    assert plan(parts, SoundChoice({}, {}, {}, False).voices)[0].voices.squeal is None  # (on the note's own tone)
+    assert SoundChoice({}, {None: tone(PINCH_TONE)}, {}, False, techniques=False).voices(refs["lead"]).squeal is None
+
+
 def test_a_parts_sound_stays_in_its_octave_however_many_keys_the_parts_light(tmp_path):
     path = tmp_path / "a_m.psarc"
     low = Song(levels={0: [N(1.0, string=0, fret=0)]}, tuning=(-5,) * 6)  # B1
     high = Song(levels={0: [N(1.0, string=5, fret=12)]})  # E5
     path.write_bytes(song_archive("a", {"lead": ("L", high), "rhythm": ("R", low)}))
     refs = {r.part: r for r in read_arrangements(path)}
-    choice = SoundChoice({}, {}, {}, {}, False)
+    choice = SoundChoice({}, {}, {}, False)
 
     def sounds(lead_keys, rhythm_keys):
         parts = [Part(refs["lead"], refs["lead"].load(), lead_keys), Part(refs["rhythm"], refs["rhythm"].load(), rhythm_keys)]
@@ -88,7 +106,7 @@ def test_a_change_to_one_part_remakes_just_its_lights_and_track_and_plays_the_sa
     path.write_bytes(song_archive("a", {"lead": ("L", song), "rhythm": ("R", song)}))
     refs = {r.part: r for r in read_arrangements(path)}
     loaded = {name: refs[name].load() for name in refs}
-    choice = SoundChoice({}, {}, {}, {}, False)
+    choice = SoundChoice({}, {}, {}, False)
     cache = PlanCache()
 
     def parts(lead_keys):
@@ -109,18 +127,19 @@ def test_a_change_to_one_part_remakes_just_its_lights_and_track_and_plays_the_sa
 
 def test_plan_gives_each_part_the_channels_its_voices_need_so_five_or_more_can_play(tmp_path):
     path = tmp_path / "a_m.psarc"
-    song = Song(levels={0: [N(1.0, string=0, fret=3)]})
+    song = Song(levels={0: [N(1.0, string=0, fret=3, mask=PINCH_HARMONIC)]})
     names = ("lead", "rhythm", "bass", "combo", "lead2")
     path.write_bytes(song_archive("a", {name: (name[0].upper() + name[-1], song) for name in names}))
     refs = {r.part: r for r in read_arrangements(path)}
     parts = [Part(refs[name], refs[name].load(), 0) for name in refs]
     assert len(parts) == 5
-    mutes = SoundChoice({}, {}, {None: tone(295)}, {}, False)  # (a palm-mute tone each: two channels a part)
+    mutes = SoundChoice({}, {}, {None: tone(295)}, False)  # (a palm-mute tone each: two channels a part)
     planned = plan(parts, mutes.voices)
     assert [p.channels for p in planned] == [(11, 12), (13, 14), (15, 16), (5, 6), (7, 8)]
     assert [(p.voices.main.channel, p.voices.mute.channel) for p in planned] == [(11, 12), (13, 14), (15, 16), (5, 6),
                                                                                   (7, 8)]
-    lows = SoundChoice({}, {None: tone(33)}, {None: tone(295)}, {}, False)  # (three a part: 12 for four)
+    lows = SoundChoice({}, {None: tone(PINCH_TONE)}, {None: tone(295)}, False)  # (three a part, pinch harmonics
+    # too: 12 for four)
     with pytest.raises(ValueError, match="channels are used up"):
         plan(parts, lows.voices)
     unfit = plan(parts, lows.voices, strict=False)  # (following: the last one just lights its keys)

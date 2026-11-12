@@ -248,7 +248,7 @@ def parts_picture(title: str, number: int | None, group: str, name: str, knobs: 
                   muted: bool = False) -> Bitmap:
     """The knobs on the song's arrangements' tones: the one turned's (title: whose and which, e.g. "Lead tone"),
     what the knobs (as many as there are arrangements, and 8) do, and which of its tones they're on (field: the
-    tone, palm mutes or low notes, a square each at the top right, the up arrow again going through them)."""
+    tone, palm mutes or pinch harmonics, a square each at the top right, the up arrow again going through them)."""
     picture = _tone_picture(wrap(title, WIDTH - 24, 1)[0], number, group, name, muted)
     picture.knob(0, 37, "1")
     after = 11

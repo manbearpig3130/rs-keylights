@@ -10,7 +10,7 @@ import wave
 from pathlib import Path
 from typing import Sequence
 
-from . import dnafxtone, drums, midiexport, pcsongs
+from . import dnafxtone, drums, midiexport, pcsongs, songlistfix
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
 from .gui import DEFAULT_GUI_PORT, part_order, song_export
 from .pedal import remember_names
@@ -25,7 +25,7 @@ from .riffloop import RiffLoop
 from .tonemessages import SOURCE, ToneSender, read_rig, virtual_source
 from .parts import Part, plan, player_for
 from .sng import SngError, note_name
-from .sound import BASS_TONE, DEFAULT_SPLIT, GUITAR_TONE, KEYBOARD_CHANNELS, SoundChoice, parse_note
+from .sound import BASS_TONE, GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice
 from .tones import TONES, Tone, find_tones, tone
 
 GAME_DIR_ENV = "RS_KEYLIGHTS_GAME_DIR"
@@ -123,6 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--dry-run", action="store_true", help="just say what it would make and remove")
     pc.set_defaults(handler=run_pc_songs)
 
+    scroll = commands.add_parser("song-list-fix", help="make the song list's scroll bar grabbable wherever it is "
+                                                       "(in RS Re-ARMed's menu overlay; cache.psarc isn't changed; "
+                                                       "quick when it's done already)")
+    scroll.add_argument("--undo", action="store_true", help="the song list as the game has it again")
+    scroll.set_defaults(handler=run_song_list_fix)
+
     index = commands.add_parser("index", help="update the index of the game's songs")
     index.set_defaults(handler=run_index)
 
@@ -184,11 +190,9 @@ def add_sound_options(parser: argparse.ArgumentParser, when: str) -> None:
                              f"{tone(GUITAR_TONE).name}, or {BASS_TONE} {tone(BASS_TONE).name} for bass){each}; see 'tones'")
     parser.add_argument("--mute-tone", action="append", metavar="[PART=]TONE",
                         help=f"{when}a tone for palm-muted notes, e.g. 077 MUTE GUITAR{each}")
-    parser.add_argument("--low-tone", action="append", metavar="[PART=]TONE",
-                        help=f"{when}a tone for notes below --split{each}")
-    parser.add_argument("--split", action="append", metavar="[PART=]NOTE",
-                        help=f"with --low-tone, the lowest note of the other tones (default: {note_name(DEFAULT_SPLIT)}; "
-                             f"a name such as B1 or F#2, or a MIDI note number){each}")
+    parser.add_argument("--pinch-tone", action="append", metavar="[PART=]TONE",
+                        help=f"{when}a tone for pinch harmonics' squeals (default: {PINCH_TONE} {tone(PINCH_TONE).name}; "
+                             f"0 for the part's own){each}")
     parser.add_argument("--real-pitch", action="store_true",
                         help=f"{when}sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range)")
 
@@ -203,35 +207,28 @@ def for_part(value: str) -> tuple[str | None, str]:
 
 def sound_choice(args: argparse.Namespace, sound: bool, without: str) -> SoundChoice | None:
     """The checked sound options, or None after printing why they can't be used."""
-    given = [name for name, value in (("--tone", args.tone), ("--mute-tone", args.mute_tone), ("--low-tone", args.low_tone),
-                                      ("--split", args.split), ("--real-pitch", args.real_pitch)) if value]
+    given = [name for name, value in (("--tone", args.tone), ("--mute-tone", args.mute_tone),
+                                      ("--pinch-tone", args.pinch_tone), ("--real-pitch", args.real_pitch)) if value]
     if not sound:
         if given:
             print(f"rs-keylights: {given[0]} {without}", file=sys.stderr)
             return None
-        return SoundChoice({}, {}, {}, {}, False)
-    if args.split and not args.low_tone:
-        print("rs-keylights: --split needs --low-tone", file=sys.stderr)
-        return None
-    tables: list[dict[str | None, Tone]] = []
-    for values in (args.tone, args.low_tone, args.mute_tone):
-        table: dict[str | None, Tone] = {}
+        return SoundChoice({}, {}, {}, False)
+    tables: list[dict[str | None, Tone | None]] = []
+    for values in (args.tone, args.pinch_tone, args.mute_tone):
+        table: dict[str | None, Tone | None] = {}
         for value in values or []:
             part, text = for_part(value)
+            if values is args.pinch_tone and text in ("0", "same"):  # (on the part's own tone)
+                table[part] = None
+                continue
             chosen = choose_tone(text, bass=False)
             if chosen is None:
                 return None
             table[part] = chosen
         tables.append(table)
-    splits: dict[str | None, int] = {}
-    try:
-        for value in args.split or []:
-            part, text = for_part(value)
-            splits[part] = parse_note(text)
-    except ValueError as exc:
-        print(f"rs-keylights: {exc}", file=sys.stderr)
-        return None
-    return SoundChoice(tables[0], tables[1], tables[2], splits, args.real_pitch)
+    tables[1].setdefault(None, tone(PINCH_TONE))
+    return SoundChoice(tables[0], tables[1], tables[2], args.real_pitch)
 
 
 def lights_for(spec: str | None, parts: list[str]) -> dict[str, int] | None:
@@ -711,6 +708,22 @@ def run_pc_songs(args: argparse.Namespace) -> int:
     for failed in report.failed:
         print(f"rs-keylights: {failed}", file=sys.stderr)
     return 1 if report.failed else 0
+
+
+def run_song_list_fix(args: argparse.Namespace) -> int:
+    try:
+        report = songlistfix.fix(game_dir(args), undo=args.undo)
+    except (songlistfix.FixError, ValueError) as exc:
+        print(f"rs-keylights: {exc}", file=sys.stderr)
+        return 1
+    where = f"{songlistfix.OVERLAY} ({report.archive})"
+    if args.undo:
+        print(f"The song list is the game's own again: {where}" if report.changed else "The song list wasn't changed")
+    elif report.changed:
+        print(f"The song list's scroll bar fixed: {where}. The game has it the next time it starts")
+    else:
+        print(f"The song list's scroll bar is fixed already: {where}")
+    return 0
 
 
 def run_midi(args: argparse.Namespace) -> int:

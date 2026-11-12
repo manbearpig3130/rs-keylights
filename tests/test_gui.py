@@ -12,6 +12,7 @@ from builders import N, Song, song_archive
 from test_pedal import backup
 
 from rs_keylights.gui import GAME_SONGS_EVERY, GAME_SONGS_OWN, GAME_TIME_EVERY, Gui, GuiServer, _guitar, default_lights
+from rs_keylights.sng import PINCH_HARMONIC
 from rs_keylights.songtones import KINDS as TONE_KINDS
 from rs_keylights.keyboard import Keyboard
 from rs_keylights.tones import tone
@@ -219,15 +220,15 @@ def test_a_songs_choices_are_kept_on_the_mac_for_every_page(server, tmp_path):
         ("lead", True, 2, {}), ("rhythm", True, 2, {})]  # every part plays, sharing the keys
     assert (song["start"], song["saved"]) == (0, False)
     _, song = call(server, "/api/song/settings", {"song": sid, "start": 12, "parts": {
-        "lead": {"lights": 3, "tone": 296}, "rhythm": {"play": True, "lights": 1, "split": "B1"}}})
+        "lead": {"lights": 3, "tone": 296}, "rhythm": {"play": True, "lights": 1, "pinch_tone": 0}}})
     assert [(p["play"], p["lights"], p["tones"]) for p in song["parts"]] == [
-        (True, 3, {"tone": 296}), (True, 1, {"split": "B1"})]
+        (True, 3, {"tone": 296}), (True, 1, {"pinch_tone": 0})]  # (pinch harmonics on its own tone)
     assert (song["start"], song["saved"]) == (12, True)
     _, options = call(server, "/api/play/options", {"speed": 0.5, "real_pitch": True, "song": sid})
     assert (options["speed"], options["real_pitch"], options["silent"], options["song"]) == (0.5, True, False, sid)
     assert call(server, "/api/play/options", {"speed": 9})[0] == 400
     again = Gui(server.gui.index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
-    assert again.song(sid)["parts"][1]["tones"] == {"split": "B1"} and again.song(sid)["start"] == 12
+    assert again.song(sid)["parts"][1]["tones"] == {"pinch_tone": 0} and again.song(sid)["start"] == 12
     assert again.play_options_info()["speed"] == 0.5 and again.play_options_info()["song"] == sid
 
 
@@ -310,7 +311,7 @@ def test_the_library_is_in_the_games_order_sorted_by_artist(tmp_path):
 def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_take(server, tmp_path):
     names = ("lead", "rhythm", "bass", "combo", "lead2")
     (tmp_path / "game" / "dlc" / "five_m.psarc").write_bytes(song_archive(
-        "five", {name: (name[0].upper() + name[-1], Song(levels={0: [N(1.0)]})) for name in names},
+        "five", {name: (name[0].upper() + name[-1], Song(levels={0: [N(1.0, mask=PINCH_HARMONIC)]})) for name in names},
         song="Down in a Hole", artist="A Band"))
     server.gui.index.refresh()
     server.gui._library = None
@@ -318,7 +319,7 @@ def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_ta
     status, _ = call(server, "/api/song/settings", {"song": sid, "parts": {name: {"play": True} for name in names}})
     assert status == 200 and len(call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["parts"]) == 5
     status, said = call(server, "/api/song/settings", {"song": sid, "parts": {  # three channels each: 15 of 12
-        name: {"low_tone": 33, "mute_tone": 29, "split": "E2"} for name in names}})
+        name: {"pinch_tone": 33, "mute_tone": 29} for name in names}})
     assert status == 400 and "channels are used up" in said["error"]
     lit = {"song": sid, "parts": {name: {"lights": 1} for name in names}}  # all five lighting keys:
     assert call(server, "/api/song/settings", lit)[0] == 400  # 5 of the 4 keys, each its own share
@@ -403,20 +404,20 @@ def test_follow_settings_are_kept_and_checked(server, tmp_path):
     status, info = call(server, "/api/follow")
     assert status == 200 and info == {"version": 0, "saved": False, "real_pitch": False,
                                       "offset_ms": 0, "show_key": True, "lead": {}, "rhythm": {}, "bass": {}, "song": None}
-    _, info = call(server, "/api/follow/settings", {"offset_ms": 20, "lead": {"tone": 178, "split": " B1 "},
+    _, info = call(server, "/api/follow/settings", {"offset_ms": 20, "lead": {"tone": 178, "pinch_tone": 0},
                                                      "arrangements": {"r": {"mute_tone": 77, "tone": ""}}})
     assert (info["version"], info["saved"], info["offset_ms"]) == (1, True, 20)
-    assert info["lead"] == {"tone": 178, "split": "B1"}
+    assert info["lead"] == {"tone": 178, "pinch_tone": 0}
     assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {"R": {"mute_tone": 77}}
     # Field by field: an empty one goes back to the default; an arrangement with none left goes
-    _, info = call(server, "/api/follow/settings", {"lead": {"split": ""}, "arrangements": {"R": {"mute_tone": None}}})
+    _, info = call(server, "/api/follow/settings", {"lead": {"pinch_tone": None}, "arrangements": {"R": {"mute_tone": None}}})
     assert info["lead"] == {"tone": 178}
     assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {}
     _, info = call(server, "/api/follow/settings", {"arrangements": {"R": {"follow_tones": False}}})  # (its tone stays)
     assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {"R": {"follow_tones": False}}
     _, info = call(server, "/api/follow/settings", {"arrangements": {"R": {"follow_tones": None}}})
     assert json.loads((tmp_path / "gui.json").read_text())["follow"]["arrangements"] == {}
-    for bad in ({"rhythm": {"tone": 999}}, {"bass": {"split": "H2"}}, {"offset_ms": 5000},
+    for bad in ({"rhythm": {"tone": 999}}, {"bass": {"pinch_tone": 999}}, {"offset_ms": 5000},
                 {"arrangements": {"../x": {}}}, {"arrangements": []}, {"bass": "loud"}):
         assert call(server, "/api/follow/settings", bad)[0] == 400, bad
     assert call(server, "/api/follow")[1]["version"] == 4  # none of those changed anything

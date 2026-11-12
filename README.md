@@ -42,7 +42,7 @@ runs only read new or changed archives. The game folder is RS Re-ARMed's, unless
 .venv/bin/rs-keylights play ~/Downloads/Some-Song_m.psarc rhythm --silent
 .venv/bin/rs-keylights play alicroos --tone "saw lead 1"  # one of the keyboard's tones
 .venv/bin/rs-keylights tones organ                 # list tones (all of them without a word)
-.venv/bin/rs-keylights play amonpurs --mute-tone 77 --low-tone 80 --split E2   # a tone per kind of note
+.venv/bin/rs-keylights play amonpurs --mute-tone 77 --pinch-tone 298   # a tone per kind of note
 .venv/bin/rs-keylights play amonpurs lead rhythm --tone lead=178 --lights lead=2,rhythm=2   # two parts together
 .venv/bin/rs-keylights index                       # update the index now
 .venv/bin/rs-keylights midi amontwil --audio -o ~/Music   # a MIDI file and its audio, for a DAW
@@ -50,8 +50,8 @@ runs only read new or changed archives. The game folder is RS Re-ARMed's, unless
 
 `play` takes a `.psarc` file, or part of a song's name, artist or file name. With no part it plays
 the lead, else the rhythm, else the bass. Name more parts to play them together, each on
-channels of its own: as many as its voices need (one, and one more each for palm mutes and low notes with tones
-of their own), from the keyboard's 12 (none for a part on another MIDI device), so five or more fit. The keyboard lights 4 keys at most in all (on both navigate channels together), so
+channels of its own: as many as its voices need (one, and one more each for palm mutes and pinch harmonics with
+tones of their own: pinch harmonics only for a part that has them), from the keyboard's 12 (none for a part on another MIDI device), so five or more fit. The keyboard lights 4 keys at most in all (on both navigate channels together), so
 by default only the first part lights them; `--lights lead=2,rhythm=2` shares them (each part's lowest
 notes), `--lights lead,rhythm` shares them evenly, `--lights rhythm` lights another part, and
 `--lights none` none. Lit parts share an octave shift so their keys line up, and a key two parts hold
@@ -63,9 +63,8 @@ another of its 426 tones by number or name: `--tone 178`, `--tone "saw lead 1"`,
 only for the keys you play; the song plays on its own channel.
 
 Some notes can have tones of their own. `--mute-tone` plays palm-muted notes with another tone (for
-example 077 MUTE GUITAR), and `--low-tone` the notes below `--split` (E2 by default: a note name such
-as B1 or F#2, or a MIDI note number), for when a tone sounds muddy low down. A palm mute takes the mute
-tone wherever it is. In The Pursuit of Vikings, every low B is a palm-muted chug, so `--mute-tone` alone
+example 077 MUTE GUITAR), and `--pinch-tone` pinch harmonics' squeals (298 GM GT HARMONICS by default; 0
+for the part's own tone). A palm mute takes the mute tone wherever it is. In The Pursuit of Vikings, every low B is a palm-muted chug, so `--mute-tone` alone
 changes all of them. Accented notes play louder. `--real-pitch` sounds the notes at their own pitch,
 which the keyboard plays over MIDI even below its lowest key, instead of the lit keys' pitch (moved up
 into the keys' range); each tone has a range of its own, though, and some (077 MUTE GUITAR) don't go as
@@ -89,7 +88,7 @@ Each tone option can be for one part: `--tone lead=178 --tone rhythm=79 --mute-t
 | `play --lights` | the first part, 4 keys | which parts light keys, and how many each |
 | `--tone` | 079, or 085 for bass | the keyboard's tone, by number or name (`tones` lists them); `PART=` for one part |
 | `--mute-tone` | the main tone | a tone for palm-muted notes |
-| `--low-tone`, `--split` | the main tone; E2 | a tone for notes below the split note |
+| `--pinch-tone` | 298 GM GT HARMONICS | a tone for pinch harmonics' squeals (0: the part's own) |
 | `--real-pitch` | off | sound the notes' own pitch, not the lit keys' |
 | `--lights-early` | 15 ms | light the keys this much before the notes (`play` and `follow`) |
 | `--fastest-flash` | 70 ms | a key's repeats closer than this flash on every other note (`play` and `follow`) |
@@ -128,11 +127,13 @@ the commands do:
   second…, in every song, playing or following), its mute (🔇: it doesn't play, sound or lit keys; the
   Launchkey's pad on top for it, in the mixer or not, is the same switch; a song with every part muted still
   plays, so they can be unmuted as it goes), and under them its
-  tone, palm-mute tone, low tone and split note (from the keyboard's tone list). Until you change them, every
+  tone, palm-mute tone and pinch-harmonic tone (from the keyboard's tone list; pinch harmonics GM GT
+  HARMONICS unless you choose another, or "Same tone"). Until you change them, every
   part plays and lights a key, the keys left over going to the lead and rhythm parts (lead, rhythm and
   bass: 2, 1 and 1; lead and bass: 3 and 1). A song with more than 4 parts starts with its first lead,
   rhythm and bass; the others can play too, each taking the keyboard's channels its tones need (12 in all:
-  one a part, and one more each for palm-mute and low-note tones of their own; none for a part on another
+  one a part, and one more each for palm-mute and pinch-harmonic tones of their own (pinch harmonics only
+  for a part that has them; short of channels, they squeal on the part's own tone); none for a part on another
   MIDI device). Too many, and it says so.
 - **Tone changes**: when a song switches tone (as the game does: its arrangements have up to four tones,
   named and with their gear), the part switches with it, to the keyboard tone for that kind of tone (clean,
@@ -141,7 +142,7 @@ the commands do:
   CLEAN GUITAR, 296 GM OVERDRIVE GT, 297 GM DISTORTION GT and so on: the LK-170's own guitar tones sound
   an octave below the keys); back to the song's first tone, to the part's own tone (so
   the part's tone is the one for the song's start). Kinds it doesn't know, or set to "No change", leave the
-  tone as it is; palm-mute and low-note tones stay. The Launchkey says each change as it comes ("Lead:
+  tone as it is; palm-mute and pinch-harmonic tones stay. The Launchkey says each change as it comes ("Lead:
   distortion", the arrangement whose chords show) and keeps the tone it's on lit up at the right of the
   artist's line ("Clean", "Dist"; in the lyrics, before the time). On the page, each part with tone changes
   lists them under its tones ("Song's tones: clean · 0:54 distortion · 1:23 clean", tones of no kind it
@@ -172,12 +173,22 @@ the commands do:
   chords too; the last left to the note it slides into), slides off (quickly, at the note's end), vibrato
   (Modulation), tremolo picking (struck again every 75 ms), hammer-ons and pull-offs (softer), slaps and pops
   (as hard as accents), natural harmonics (their own pitch: a 7th-fret harmonic an octave and a fifth over the
-  open string, lit there too), and dead notes (a quiet click, for parts with a palm-mute tone). **Keyboard** ›
-  Sound turns them off (accents alone).
+  open string, lit there too), pinch harmonics (the fretted note, softer, under its squeal: an octave and a
+  fifth over it, struck at once a semitone flat and scooped up to its pitch, then a wide vibrato (pitch bend,
+  over the chart's bend) growing in, on the part's pinch-harmonic tone: GM GT HARMONICS unless chosen otherwise),
+  dead notes (a quiet click on the palm-mute tone, or a softer tick on the part's
+  own without one), palm mutes a little softer, and strums: a
+  chord's strings one after another, down (low to high) on the beat and its eighths, up (high to low, a little
+  softer) on the sixteenths between (the charts don't say which way: their pick direction is never set), 7 ms
+  a string, tighter when the next chord comes quickly. **Keyboard** › Sound turns them off (accents alone).
 - **Notes ring** as a guitar's strings do: each one sounds until its string is played again, a chord's or
-  arpeggio's until its hand shape ends (as the chart has them), else until the part's next note, and on a
+  arpeggio's until its hand shape ends (as the chart has them) or the fretting hand moves (its fretted strings:
+  the chart's hand positions), but not single notes in a chord's shape with palm mutes in it too (a riff: the
+  shape is its fingering, as in Guardians of Asgaard's lead), an open string on under the notes after it until a chord or a palm mute stops
+  it (a drone under a riff), else until the part's next note, and on a
   little after it, overlapping (120 ms as it starts, set beside it; a note played again stops as it is); 4 seconds
-  at most (longer if the chart holds it), its own length at least, and palm mutes stay short. The tone's own
+  at most (longer if the chart holds it), its own length at least, and palm mutes stay short: a chug, 0.6 of
+  the time to the next note (50 to 200 ms), or as long as the chart holds it. The tone's own
   decay does the rest. **Keyboard** › Sound turns it off (each note as long as its key is lit), playing and
   following at once.
 - **The header**: the song's time slider (where it is, moved while it plays; else where it starts) and its
@@ -203,8 +214,8 @@ the commands do:
   gone through, but other songs can't be picked meanwhile), with each of its arrangements; the speed and where it starts are the game's. The one you
   play plays on every key; unmute others to play along (the backing band), and choose the keys each lights
   (4 in all). Those choices are kept for the song and the arrangement you play: playing the bass instead
-  starts from just the bass again. Any arrangement can have tones of its own (tone, palm mutes, low notes
-  and split), or stay on the default tones. It says when another
+  starts from just the bass again. Any arrangement can have tones of its own (tone, palm mutes, pinch
+  harmonics), or stay on the default tones. It says when another
   `rs-keylights follow` (such as the RS Re-ARMed sidekick) is running, since both would light the keys.
 - **Default tones**: one set each for lead, rhythm and bass parts (combos count as lead), for parts
   without tones of their own, playing a song or following the game. Greyed choices are defaults.
@@ -248,10 +259,10 @@ song playing, else the active one:
   song takes them once the taps stop (each change plays the parts again, stopping the notes sounding).
   **Knobs 1–5**: each steps through its arrangement's tones; the screen (that tone, and what the knobs do)
   and the page show each, and the song plays with the one it stops on. **▲ again** (beside the knobs) goes
-  from tones to palm-mute tones to low-note tones and back, three squares at the top right of the tone's
-  screen showing which. Palm-mute and low-note tones start with "Same tone" (the tone the rest plays with,
+  from tones to palm-mute tones to pinch-harmonic tones and back, three squares at the top right of the tone's
+  screen showing which. Palm-mute and pinch-harmonic tones start with "Same tone" (the tone the rest plays with,
   even over a default) and, when their kind has a default, "Default", a group by themselves, so knob 8
-  gets back to them in a step. The page's palm-mute and low-note choices have "Same tone" under the
+  gets back to them in a step. The page's palm-mute and pinch-harmonic choices have "Same tone" under the
   default too, when there is one. Switching to the arrangements (▲) shows what the knobs do for a few
   seconds. While a tone shows, **knob 8** steps through the groups of tones (piano, organ, guitar…).
 - **The guitar** (column 6, yellow): **knob 6** steps through the guitar pedal's presets (a Harley Benton
@@ -500,6 +511,25 @@ game's `dlc/from-pc/`, which RS Re-ARMed's updates leave alone.
 To have it run as the game starts, add it to RS Re-ARMed's `sidekicks.conf` (rearmed-sidekicks): new PC songs show
 the next time the game starts.
 
+### The song list's scroll bar
+
+In Learn a Song's song list, the scroll bar's thumb can be dragged only from the top of the list: once it's further
+down, a click on it does nothing. The list's menu (a Scaleform movie, `las_songslist.gfx`, in `cache.psarc`) tells the
+game where it can be clicked: its buttons, each row of songs, and the thumb, where it's drawn, each with its depth, and
+the game takes the one drawn on top of those the mouse is in. The rows reach over the scroll bar, and those in the
+list's lower panel are drawn above the thumb, so it gets no click in the lower half of the screen. And the game asks
+only now and then, not as the list scrolls (the rows stay where they are), so the thumb can be clicked only where it
+was then. `rs-keylights song-list-fix` makes that part the scroll bar's whole track, which doesn't move, above
+everything else (a few bytes of the menu's ActionScript, the same length: nothing else in it moves). A click anywhere
+on the bar grabs the thumb, and the list follows the mouse from there.
+
+`cache.psarc` isn't changed (RS Re-ARMed's Metal renderer loads more slowly with a changed one): the fixed archive
+(`cache8.7z`) goes into RS Re-ARMed's menu overlay, `Update/patcharchives.psarc`, which the game reads first, next to
+RS Re-ARMed's own archives there. RS Re-ARMed makes its overlay again when it copies or refreshes the game files, so
+running the command from `sidekicks.conf` keeps the fix (quick when it's there; the first start after a refresh is
+without it). `--undo` gives the list back as the game has it. Needs RS Re-ARMed's overlay hook (on unless
+`RS_MODS_OVERLAY=0`).
+
 ### A song in a DAW
 
 **MIDI file** under the song's title saves it as a MIDI file for Logic or GarageBand (`Artist - Title.mid`), or
@@ -602,7 +632,7 @@ still lights them with the channel's volume at 0, so the lights are always silen
 at once, and the keys run from C2 to C7.
 
 **The sound.** The keyboard plays all 16 MIDI channels at once, each with a tone of its own. The first
-part's notes sound on channel 11 (the main tone), 12 (the low tone) and 13 (palm mutes), the second
+part's notes sound on channel 11 (the main tone), 12 (pinch harmonics' squeals) and 13 (palm mutes), the second
 part's on 14 to 16, the third's on 5 to 7 and the fourth's on 8, 9 and 2: clear of the navigate channels,
 the keyboard's own part (1) and the drums (10). A chord sounds all its notes, even when only some of them
 light.

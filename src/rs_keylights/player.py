@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol, Sequence
 
 from .lights import MIN_PERIOD, KeyLight, Light, merge_keys
+from .sng import PINCH_HARMONIC
 
 SEEK_BACK = 0.25  # seconds; going back further than this is a seek (riff repeat, restart)
 SEEK_AHEAD = 1.0  # going forward further than this is a seek too, not a burst of notes
@@ -14,6 +15,12 @@ KEY = -1  # the track index of a key's light in the actions
 BEND_STEP = 0.02  # seconds between a bend's pitch bends, as it moves
 BEND_MOVE = 0.15  # seconds a bend takes, at most, to reach each of its points
 VIBRATO_DEPTH = 64  # Modulation, for a note's vibrato
+# A pinch harmonic's squeal, on a channel of its own: SCOOP semitones flat as it sounds, up to its pitch over
+# SCOOP_TIME, then a wide vibrato (pitch bend, over the chart's bend): SQUEAL_WIDTH semitones either way, SQUEAL_RATE
+# times a second, growing in over SQUEAL_GROWS. On the note's own channel instead: Modulation, growing in
+SCOOP, SCOOP_TIME = 1.0, 0.08
+SQUEAL_WIDTH, SQUEAL_RATE, SQUEAL_GROWS = 0.6, 6.0, 0.2
+SQUEAL_VIBRATO, SQUEAL_VIBRATO_AFTER, SQUEAL_VIBRATO_GROWS = 90, 0.15, 0.45
 
 
 class KeysProtocol(Protocol):
@@ -41,6 +48,7 @@ class KeysProtocol(Protocol):
 
     def modulate(self, channel: int, depth: int) -> None:
         ...
+
 
 
 class VoicesProtocol(Protocol):
@@ -114,9 +122,9 @@ class Player:
         self._longest = [m[2] for m in made]  # (how far back a seek looks for notes still sounding)
         self._controls = [m[3] for m in made]
         # (time, 0 for off / 1 for a tone change / 2 for a control (bend, vibrato) / 3 for on, KEY or a track, index,
-        # the places of the pitches ending): at the same time offs come first, then tones and controls. A light (or
-        # a pitch) that ends as it starts would have its off before its on, so it isn't played. (Each track's are
-        # in order already: sorting them all together merges them.)
+        # the places of the pitches ending, or starting, strummed: none, all of them): at the same time offs come
+        # first, then tones and controls. A light (or a pitch) that ends as it starts would have its off before its
+        # on, so it isn't played. (Each track's are in order already: sorting them all together merges them.)
         actions = sorted((time, kind, KEY, i, ()) for i, k in enumerate(self.display)
                          for time, kind in ((k.off, 0), (k.on, 3)))
         for m in made:
@@ -146,7 +154,7 @@ class Player:
             actions += [(control[0], 2, ti, ci, ()) for ci, control in enumerate(controls)]
             for li, light in enumerate(sounds):
                 if self._sound_end(t, light) > light.on:
-                    actions.append((light.on, 3, ti, li, ()))
+                    actions += self._ons_of(ti, li, light)
                     actions += self._offs_of(t, ti, li, light)
         actions.sort()
         made = (sounds, ons, longest, controls, actions)
@@ -186,7 +194,7 @@ class Player:
         while self._next < len(self._actions) and self._actions[self._next][0] <= position:
             _time, kind, ti, i, ending = self._actions[self._next]
             if kind == 3:
-                self._start(ti, i)
+                self._start(ti, i, places=ending)
             elif kind == 2:
                 self._control(ti, i)
             elif kind == 1:
@@ -229,6 +237,16 @@ class Player:
     def done(self) -> bool:
         return self._next >= len(self._actions)
 
+    @staticmethod
+    def _ons_of(ti: int, li: int, light: Light) -> list[tuple[float, int, int, int, tuple[int, ...]]]:
+        """A light's notes' ons: at once, or strummed, one for each time some of its pitches start (their places)."""
+        if not light.strum:
+            return [(light.on, 3, ti, li, ())]
+        by_start: dict[float, list[int]] = {}
+        for k, delay in enumerate(light.strum):
+            by_start.setdefault(light.on + delay, []).append(k)
+        return [(at, 3, ti, li, tuple(ks)) for at, ks in sorted(by_start.items())]
+
     def _offs_of(self, track: Track, ti: int, li: int, light: Light) -> list[tuple[float, int, int, int,
                                                                                   tuple[int, ...]]]:
         """A light's notes' offs: one for each time some of its pitches end (the places of those)."""
@@ -252,13 +270,20 @@ class Player:
 
     def _controls_of(self, track: Track, sounds: Sequence[Light]) -> list[tuple[float, int, str, float]]:
         """A part's bends and vibrato, as its notes sound (with techniques): when, the note (its place in sounds),
-        "bend" (semitones) or "vibrato" (depth), and back to none as the note stops; by when."""
+        "bend" (semitones) or "vibrato" (depth), and back to none as the note stops; by when. A pinch harmonic's
+        squeal gets a pitch of its own (_squeal), or on its note's channel, vibrato growing in."""
         if track.voices is None or not track.voices.techniques:
             return []
         out: list[tuple[float, int, str, float]] = []
         for li, light in enumerate(sounds):
             end = self._sound_end(track, light)
-            if light.vibrato and end > light.on:
+            squeal = light.extra and bool(light.mask & PINCH_HARMONIC)
+            if squeal and end > light.on and getattr(track.voices, "squeal", None) is not None:
+                out += self._squeal(li, light, end)  # (its pitch, the chart's bend in it)
+                continue
+            if squeal and end > light.on:
+                out += self._squeal_vibrato(li, light.on, end)
+            elif light.vibrato and end > light.on:
                 out += [(light.on, li, "vibrato", VIBRATO_DEPTH), (end, li, "vibrato", 0)]
             points = [(at, semitones) for at, semitones in light.bends if at < end]
             if points and end > light.on:
@@ -270,6 +295,45 @@ class Player:
                             for k in range(steps)]
                 out += [(points[-1][0], li, "bend", points[-1][1]), (end, li, "bend", 0.0)]
         return sorted(out, key=lambda control: control[0])
+
+    @staticmethod
+    def _squeal(li: int, light: Light, end: float) -> list[tuple[float, int, str, float]]:
+        """A squeal's pitch on its own channel, a bend every BEND_STEP: scooped up into, the chart's bend (held,
+        then moved to each point), and the vibrato over it; none as it ends."""
+        curve = [(light.on, 0.0), *((at, up) for at, up in light.bends if at < end)]
+
+        def charted(t: float) -> float:
+            value = 0.0
+            for (start, was), (reach, target) in zip(curve, curve[1:]):
+                moving = max(start, reach - BEND_MOVE)
+                if t < moving:
+                    return was
+                if t < reach:
+                    return was + (target - was) * (t - moving) / (reach - moving)
+                value = target
+            return value
+
+        out: list[tuple[float, int, str, float]] = []
+        t = light.on
+        while t < end:
+            since = t - light.on
+            scoop = -SCOOP * max(0.0, 1.0 - since / SCOOP_TIME)
+            width = SQUEAL_WIDTH * min(max((since - SCOOP_TIME) / SQUEAL_GROWS, 0.0), 1.0)
+            wobble = width * math.sin(2 * math.pi * SQUEAL_RATE * max(since - SCOOP_TIME, 0.0))
+            out.append((t, li, "bend", charted(t) + scoop + wobble))
+            t += BEND_STEP
+        out.append((end, li, "bend", 0.0))
+        return out
+
+    @staticmethod
+    def _squeal_vibrato(li: int, on: float, end: float) -> list[tuple[float, int, str, float]]:
+        """A squeal's vibrato on its note's own channel: Modulation, growing in a little after it sounds."""
+        span = SQUEAL_VIBRATO_GROWS
+        steps = max(int(span / BEND_STEP), 1)
+        start = on + SQUEAL_VIBRATO_AFTER
+        out = [(start + span * k / steps, li, "vibrato", SQUEAL_VIBRATO * k / steps) for k in range(steps + 1)
+               if start + span * k / steps < end]
+        return [*out, (end, li, "vibrato", 0)]
 
     def _control(self, ti: int, ci: int) -> None:
         """A bend or vibrato on the channel its note sounds on."""
@@ -287,8 +351,9 @@ class Player:
         """What sounds a part: another MIDI device, or the keyboard."""
         return self.tracks[ti].sound or self.keys
 
-    def _start(self, ti: int, i: int, at: float | None = None) -> None:
-        """A light on, or its notes sounding (at: from there, those still sounding)."""
+    def _start(self, ti: int, i: int, at: float | None = None, places: tuple[int, ...] = ()) -> None:
+        """A light on, or its notes sounding (at: from there, those started and still sounding; places: those
+        pitches alone, strummed, else all of them)."""
         if ti == KEY:
             self.keys.light((self.display[i].key,))
             return
@@ -298,8 +363,11 @@ class Player:
             return
         channel, _notes, velocity = voices.pick(light)
         ends = self._ends(track, light)
+        delays = light.strum if len(light.strum) == len(ends) else (0.0,) * len(ends)
         sounding = {k: note for k, note in enumerate(voices.notes_for(light))
-                    if k < len(ends) and ends[k] > (light.on if at is None else at)}
+                    if k < len(ends) and (not places or k in places)
+                    and (light.on + delays[k] <= at if at is not None else True)
+                    and ends[k] > max(light.on + delays[k], light.on if at is None else at)}
         if not sounding:
             return
         sound = self._sound(ti)
@@ -309,6 +377,8 @@ class Player:
         for note in set(sounding.values()):
             self._held[(id(sound), channel, note)] = self._held.get((id(sound), channel, note), 0) + 1
         sound.play(channel, tuple(sorted(set(sounding.values()))), velocity)
+        if (ti, i) in self._sounding:  # (strummed: its other pitches sounding already)
+            sounding = {**self._sounding[(ti, i)][1], **sounding}
         self._sounding[(ti, i)] = (channel, sounding)
 
     def _end(self, ti: int, i: int, ending: tuple[int, ...] = ()) -> None:

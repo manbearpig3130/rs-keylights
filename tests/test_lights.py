@@ -1,5 +1,7 @@
-from rs_keylights.lights import GAP, MIN_LIGHT, RING_MAX, TREMOLO_EVERY, KeyRange, Light, rings, schedule, techniques
-from rs_keylights.sng import CHILD, FRET_HAND_MUTE, HAMMER_ON, PALM_MUTE, TREMOLO, Note
+from rs_keylights.lights import (GAP, MIN_LIGHT, PALM_LEAST, PALM_MOST, RING_MAX, TREMOLO_EVERY, KeyRange, Light, rings,
+                                 schedule, strums,
+                                 techniques)
+from rs_keylights.sng import CHILD, FRET_HAND_MUTE, HAMMER_ON, PALM_MUTE, PINCH_HARMONIC, TREMOLO, Note
 
 
 def test_octave_shift_moves_low_parts_up_while_the_top_fits():
@@ -37,7 +39,8 @@ def test_close_repeats_still_end_before_the_next_note():
 
 def test_linked_notes_keep_the_keys_lit():
     lights = schedule([Note(1.0, 0.5, (60,), PALM_MUTE), Note(1.5, 0.5, (60,), CHILD)])
-    assert lights == [Light(1.0, 2.0, (60,), (60,), PALM_MUTE)]  # the first note's pitches and techniques
+    assert lights == [Light(1.0, 2.0, (60,), (60,), PALM_MUTE, rings=(2.0 + RING_MAX - 0.5,))]  # the first note's
+    # pitches and techniques, ringing as the linked note does
 
 
 def test_at_most_four_keys_and_the_shift_but_every_pitch_kept():
@@ -120,7 +123,7 @@ def test_notes_ring_as_a_guitars_strings_do():
     assert rings([chord, picked, again, muted], shapes=[(1.0, 3.0)]) == [
         (2.5, 2.0, 3.0),  # held in its hand shape until it ends, but for strings played again
         (3.0,), (3.0,),
-        (),  # (a palm mute doesn't ring)
+        (2.5 + PALM_MOST,),  # (a palm mute doesn't ring: a chug)
     ]
     assert rings([chord, picked]) == [(1.5, 1.5, 1.5), (1.5 + RING_MAX,)]  # no hand shape: until the next note
     assert rings([Note(1.0, 9.0, (60,)), Note(12.0, 0, (60,))]) == [(10.0,), (12.0 + RING_MAX,)]  # (its sustain)
@@ -178,3 +181,83 @@ def test_pooled_more_notes_than_keys_the_part_ranked_first_lights_its_lowest():
     # the one ranked last cut short
     keys = merge_keys([held, struck], most=4, priorities=[1, 0])
     assert KeyLight(1.0, 2.0, 72) in keys and KeyLight(2.0, 2.5, 50) in keys and KeyLight(1.0, 3.0, 67) in keys
+
+
+def test_open_strings_ring_under_the_notes_after_them():
+    drone = Note(1.0, 0, (40,), strings=(0,), frets=(0,))
+    melody = [Note(1.5, 0, (57,), strings=(3,), frets=(2,)), Note(2.0, 0, (62,), strings=(4,), frets=(3,))]
+    chord = Note(3.0, 0, (45, 52, 57), strings=(1, 2, 3), frets=(0, 2, 2))
+    assert rings([drone, *melody, chord]) == [
+        (3.0,),  # on under the melody, until a chord stops it
+        (2.0,), (3.0,),  # (fretted: until the next note)
+        (7.0, 7.0, 7.0),
+    ]
+    muted = Note(2.5, 0, (45,), PALM_MUTE, strings=(1,), frets=(0,))
+    assert rings([drone, *melody, muted])[0] == (2.5,)  # (the palm down on the strings)
+    assert rings([drone, Note(2.0, 0, (43,), strings=(0,), frets=(3,))])[0] == (2.0,)  # its string played again
+    assert rings([drone, Note(2.0, 0, (47, 52), strings=(1, 2), frets=(2, 2))])[0] == (1.0 + RING_MAX,)  # (2 strings)
+    assert rings([Note(1.0, 0, (40,), strings=(0,)), *melody])[0] == (1.5,)  # its fret not known: as fretted
+    capoed = Note(1.0, 0, (42,), strings=(0,), frets=(2,))  # (open, at the capo)
+    assert rings([capoed, *melody], capo=2)[0] == (1.0 + RING_MAX,)
+    assert rings([capoed, *melody])[0] == (1.5,)
+    assert rings([drone, *melody], capo=-1)[0] == (1.0 + RING_MAX,)  # (no capo, as charted)
+
+
+def test_a_hand_shapes_fretted_notes_stop_as_the_hand_moves():
+    chord = Note(1.0, 0, (40, 47), strings=(0, 1), frets=(0, 2))
+    picked = Note(2.5, 0, (55,), strings=(3,), frets=(5,))
+    assert rings([chord, picked], shapes=[(1.0, 4.0)], anchors=[(0.0, 1), (2.0, 5)])[0] == (4.0, 2.0)
+    assert rings([chord, picked], shapes=[(1.0, 4.0)], anchors=[(0.0, 1), (2.0, 1)])[0] == (4.0, 4.0)  # (it stays)
+    assert rings([chord, picked], shapes=[(1.0, 4.0)], anchors=[(0.0, 1), (2.0, 5)], overlap=0.1)[0] == (4.0, 2.1)
+
+
+def test_chords_strum_down_on_the_beat_and_its_eighths_and_up_between():
+    beats = [0.0, 1.0, 2.0]
+    chord = (40, 47, 52)
+    down = Light(1.0, 1.2, (40,), chord, rings=(1.4, 1.4, 1.4))
+    up = Light(1.25, 1.4, (40,), chord, rings=(1.6, 1.6, 1.6))  # (a sixteenth after the beat)
+    eighth = Light(1.5, 1.7, (40,), chord, rings=(1.8, 1.8, 1.8))
+    single = Light(2.0, 2.2, (60,), (60,))
+    out = strums([down, up, eighth, single], beats)
+    assert [l.up for l in out] == [False, True, False, False]
+    assert [tuple(round(d, 4) for d in l.strum) for l in out] == [(0, 0.007, 0.014), (0.01, 0.005, 0), (0, 0.007, 0.014),
+                                                                  ()]
+    fast = strums([Light(1.0, 1.01, (40,), chord, rings=(1.005,) * 3), Light(1.02, 1.1, (40,), (40,))], beats)[0]
+    assert tuple(round(d, 4) for d in fast.strum) == (0, 0.0025, 0.005)  # (a quarter of the time to the next note)
+    assert all(ring > 1.0 + d for ring, d in zip(fast.rings, fast.strum))  # (each string sounds)
+    assert strums([Light(1.0, 1.2, (40,), chord, up=True)], beats)[0].strum == (0.01, 0.005, 0.0)  # (as charted)
+
+
+def test_a_palm_mute_sounds_for_part_of_the_time_to_the_next_note():
+    def chug(gap, sustain=0.0):
+        return rings([Note(1.0, sustain, (40, 47), PALM_MUTE, strings=(0, 1)), Note(1.0 + gap, 0, (40,), strings=(0,))])[0]
+    assert chug(0.25) == (1.15, 1.15)  # (0.6 of it)
+    assert chug(0.05) == (1.0 + PALM_LEAST,) * 2  # (fast: a little at least)
+    assert chug(1.0) == (1.0 + PALM_MOST,) * 2  # (slow: still short)
+    assert chug(1.0, sustain=0.5) == (1.5, 1.5)  # (held as charted)
+    assert chug(0.3, sustain=0.5) == (1.3, 1.3)  # (until the next note)
+
+
+def test_a_riffs_single_notes_dont_ring_through_its_chords_fingering():
+    # Guardians of Asgaard's lead at 33 s: a power chord's shape, its notes picked between palm mutes
+    picked = Note(1.0, 0, (54,), strings=(2,), frets=(4,))
+    chug = Note(1.25, 0, (44,), PALM_MUTE, strings=(0,), frets=(4,))
+    other = Note(1.5, 0, (49,), strings=(1,), frets=(4,))
+    shape = [(1.0, 3.0)]
+    assert rings([picked, chug, other], shapes=shape, arpeggios=[])[0] == (1.25,)  # (as outside it)
+    assert rings([picked, chug, other], shapes=shape, arpeggios=shape)[0] == (3.0,)  # (an arpeggio: let ring)
+    assert rings([picked, other], shapes=shape, arpeggios=[])[0] == (3.0,)  # (no palm mutes: picked chord, ringing)
+    chord = Note(1.0, 0, (44, 49), strings=(0, 1), frets=(4, 4))
+    assert rings([chord, chug], shapes=shape, arpeggios=[])[0] == (1.25, 3.0)  # (a chord rings, but for its string
+    # played again)
+
+
+def test_a_pinch_harmonic_has_its_squeal_with_it():
+    pinched = Light(1.0, 1.2, (52,), (52,), PINCH_HARMONIC, rings=(1.5,), vibrato=True)
+    lights, extras = techniques([pinched])
+    assert lights == [pinched]  # (the note as it is)
+    assert extras == [Light(1.0, 1.2, (), (52,), PINCH_HARMONIC, rings=(1.5,), vibrato=True, extra=True)]
+    sliding = Light(1.0, 1.2, (52,), (52,), PINCH_HARMONIC, rings=(1.6,), slide=2)
+    _lights, extras = techniques([sliding])
+    assert [(x.mask & PINCH_HARMONIC, round(x.rings[0], 3)) for x in extras] == [(PINCH_HARMONIC, 1.2), (0, 1.4), (0, 1.6)]
+    # (the squeal until the slide's first step: the steps, the note's)

@@ -292,7 +292,7 @@ def test_other_arrangements_play_along_and_can_change_while_the_song_plays():
     bass = ArrangementRef("ID2", "/x.psarc", "songs/bin/macos/x_bass.sng", "X", "Bass", "Song", "Artist")
     bass_notes = Arrangement((Note(10.0, 1.0, (40,)),), (0,) * 4, -1, 60.0)
     client, index, keys, messages, loads = FakeClient(), FakeIndex([REF, bass]), FakeSoundKeys(), [], []
-    choice = SoundChoice({None: tone(178)}, {}, {}, {}, False)
+    choice = SoundChoice({None: tone(178)}, {}, {}, False)
     chosen = {"ID1": 4}
     f = Follower(client, index, keys, status=messages.append,  # type: ignore[arg-type]
                  load=lambda ref: loads.append(ref.persistent_id) or (bass_notes if ref is bass else NOTES),

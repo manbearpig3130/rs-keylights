@@ -67,9 +67,8 @@ def test_missing_game_folder(tmp_path, capsys):
 def test_sound_options_are_checked_first(capsys, tmp_path):
     cases = [
         (["follow", "--mute-tone", "77"], "--mute-tone needs --sound"),
-        (["play", "x.psarc", "--silent", "--low-tone", "80"], "--low-tone plays sound: leave out --silent"),
-        (["play", "x.psarc", "--split", "B1"], "--split needs --low-tone"),
-        (["play", "x.psarc", "--low-tone", "80", "--split", "H2"], "Not a note: 'H2'"),
+        (["play", "x.psarc", "--silent", "--pinch-tone", "80"], "--pinch-tone plays sound: leave out --silent"),
+        (["play", "x.psarc", "--pinch-tone", "kazoo"], "no tone matches 'kazoo'"),
         (["play", "x.psarc", "--mute-tone", "kazoo"], "no tone matches 'kazoo'"),
     ]
     for argv, message in cases:
@@ -117,11 +116,14 @@ def test_tones_for_each_part():
     from argparse import Namespace
 
     from rs_keylights.cli import sound_choice
+    from rs_keylights.tones import tone
 
-    args = Namespace(tone=["lead=178", "79"], mute_tone=["rhythm=77"], low_tone=None, split=None, real_pitch=False,
+    args = Namespace(tone=["lead=178", "79"], mute_tone=["rhythm=77"], pinch_tone=["rhythm=0"], real_pitch=False,
                      channel=4)
     choice = sound_choice(args, True, "")
     lead, rhythm = ref("lead"), ref("rhythm")
     assert choice.voices(lead).main.tone.number == 178 and choice.voices(lead).mute is None
     assert choice.voices(rhythm, (14, 15, 16)).main == choice.voices(rhythm).main.__class__(14, choice.main[None])
     assert choice.voices(rhythm, (14, 15, 16)).mute.channel == 16
+    assert choice.voices(lead, (11, 12, 13)).squeal == choice.voices(lead).main.__class__(12, tone(298))  # (default)
+    assert choice.voices(rhythm).squeal is None  # (0: the part's own tone)

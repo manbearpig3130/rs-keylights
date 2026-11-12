@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import math
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 from typing import Sequence
 
-from .sng import ACCENT, CHILD, HAMMER_ON, PALM_MUTE, TREMOLO, Note
+from .sng import ACCENT, CHILD, HAMMER_ON, HARMONIC, PALM_MUTE, PINCH_HARMONIC, TREMOLO, Note
 
 # Turns an arrangement's notes into key lights for a keyboard with lit keys (the Casio LK-170:
 # 61 keys, C2 to C7, and at most 4 lit at once). Each note or chord stays lit until the next one,
@@ -15,11 +15,19 @@ from .sng import ACCENT, CHILD, HAMMER_ON, PALM_MUTE, TREMOLO, Note
 MIN_LIGHT = 0.08  # seconds a short note stays lit
 GAP = 0.03  # dark time before the same key lights again
 RING_MAX = 4.0  # seconds a note rings at most (more, if the chart holds it longer)
+DAMPING = 3  # strings: a chord of this many (or a palm mute) stops the open strings ringing under it
+PALM_SHARE = 0.6  # of the time to the part's next note a palm mute sounds (a chug)...
+PALM_LEAST, PALM_MOST = 0.05, 0.2  # ...but at least and at most this (seconds)
 # Techniques (techniques): the notes besides a part's own sounding them
 GLIDE_LEAST = 0.12  # seconds a slide takes at least (its steps a semitone each, over the note's sustain)
 SLIDE_OFF = 0.15  # seconds a slide off takes at most, at the note's end
 TREMOLO_EVERY = 0.075  # seconds between a tremolo-picked note's strikes
 DEAD = 0.05  # seconds a dead note (fret-hand muted) sounds
+# Strums (strums): a chord's strings one after another, down (low to high) on the beat and its eighths, up (high to
+# low, softer) on the sixteenths between, as the charts don't say which (their pick direction isn't set)
+STRUM_STRING = 0.007  # seconds from a string to the next, strummed down
+STRUM_UP_STRING = 0.005  # and up
+STRUM_SHARE = 0.25  # of the time to the part's next note, at most, a strum takes (fast strumming: tighter)
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,8 @@ class Light:
     bends: tuple[tuple[float, float], ...] = ()  # (when, and semitones up)
     vibrato: bool = False
     extra: bool = False  # sound alone, from a technique (no keys): a slide's step, a tremolo's strike, a dead note
+    strum: tuple[float, ...] = ()  # seconds after on each pitch sounds, strummed (as the pitches are; none: at once)
+    up: bool = False  # strummed (or picked) up: softer
 
 
 def together(notes: Sequence[Note]) -> list[Note]:
@@ -69,63 +79,95 @@ def together(notes: Sequence[Note]) -> list[Note]:
             last = out[-1]
             child = last.mask & note.mask & CHILD  # a continuation only if every one of them is
             mask = (last.mask | note.mask) & ~CHILD | child
-            played = sorted(set(_strung(last)) | set(_strung(note)))
-            out[-1] = Note(last.time, max(last.sustain, note.sustain), tuple(sorted({p for p, _s in played})), mask,
-                           tuple(s for _p, s in sorted({p: s for p, s in played}.items())), last.slide or note.slide,
-                           last.slide_off or note.slide_off, last.bends or note.bends, last.vibrato or note.vibrato)
+            played = sorted({p: (s, f) for p, s, f in [*_strung(last), *_strung(note)]}.items())
+            known = all(f >= 0 for _p, (_s, f) in played)
+            out[-1] = Note(last.time, max(last.sustain, note.sustain), tuple(p for p, _sf in played), mask,
+                           tuple(s for _p, (s, _f) in played), last.slide or note.slide,
+                           last.slide_off or note.slide_off, last.bends or note.bends, last.vibrato or note.vibrato,
+                           tuple(f for _p, (_s, f) in played) if known else (), last.up or note.up)
         else:
             out.append(note)
     return out
 
 
-def _strung(note: Note) -> list[tuple[int, int]]:
-    """A note's pitches with their strings (-1: not known)."""
-    return list(zip(note.pitches, note.strings or (-1,) * len(note.pitches)))
+def _strung(note: Note) -> list[tuple[int, int, int]]:
+    """A note's pitches with their strings and frets (-1: not known)."""
+    n = len(note.pitches)
+    return list(zip(note.pitches, note.strings or (-1,) * n, note.frets if len(note.frets) == n else (-1,) * n))
 
 
-def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (),
-          overlap: float = 0.0) -> list[tuple[float, ...]]:
+def rings(notes: Sequence[Note], shapes: Sequence[tuple[float, float]] = (), overlap: float = 0.0,
+          anchors: Sequence[tuple[float, int]] = (), capo: int = 0,
+          arpeggios: Sequence[tuple[float, float]] | None = None) -> list[tuple[float, ...]]:
     """When each note's pitches stop sounding, letting them ring as a guitar's strings do: until the string is
     played again (and overlap after, smoothing it: but a pitch played again stops as it is); held in a hand
-    shape (shapes: start, end), until it ends; else until the part's next note (overlap after). RING_MAX at most,
-    the note's own sustain at least (unless it's played again first). Palm mutes don't ring: none (as lit)."""
+    shape (shapes: start, end), until it ends, or the fretting hand moves first (anchors: from when, its fret): any
+    note in an arpeggio (arpeggios, of the shapes; None: all of them), and in a chord's shape a chord, and its single
+    notes unless palm mutes are played in it too (a riff, the shape its fingering: they're as outside it);
+    else a fretted note until the part's next note (overlap after), an open string (or a harmonic) on under the
+    notes after it, until a chord (DAMPING strings) or a palm mute stops it. RING_MAX at most, the note's own
+    sustain at least (unless it's played again first). Palm mutes don't ring: a chug, PALM_SHARE of the time to the
+    next note (PALM_LEAST to PALM_MOST), or its sustain if the chart holds it (until the next note)."""
     starts = [start for start, _end in shapes]
+    let_ring = set(shapes) if arpeggios is None else set(arpeggios)
+    muted_at = [note.time for note in notes if note.mask & PALM_MUTE]
+    riffs = {shape for shape in shapes if shape not in let_ring
+             and bisect_left(muted_at, shape[0] - 1e-3) < bisect_left(muted_at, shape[1])}
+    moves = [at for (at, fret), (_was, before) in zip(anchors[1:], anchors) if fret != before]  # (the hand moving)
     out: list[tuple[float, ...]] = []
     next_string: dict[int, float] = {}
     next_pitch: dict[int, float] = {}
     following = math.inf  # the part's next note
+    damped = math.inf  # the part's next chord or palm mute
     for note in reversed(notes):
         if note.mask & PALM_MUTE:
-            out.append(())
+            gap = following - note.time
+            chug = note.time + min(max(gap * PALM_SHARE, PALM_LEAST), PALM_MOST)
+            held_to = min(note.time + note.sustain, following)
+            out.append((max(chug, held_to),) * len(note.pitches))
         else:
             k = bisect_right(starts, note.time) - 1
             held = shapes[k][1] if k >= 0 and note.time < shapes[k][1] else None
+            if held is not None and len(note.pitches) < 2 and shapes[k] in riffs:
+                held = None  # (a note picked in a riff's fingering)
+            m = bisect_right(moves, note.time + 1e-3)
+            moved = moves[m] + overlap if m < len(moves) else math.inf
             least = note.time + max(note.sustain, MIN_LIGHT)
             ends = []
-            for pitch, string in _strung(note):
+            for pitch, string, fret in _strung(note):
                 pitched = next_pitch.get(pitch, math.inf)
                 again = min(next_string.get(string, math.inf) + overlap if string >= 0 else math.inf, pitched)
-                natural = min(held if held is not None else following + overlap, again)
+                open_string = 0 <= fret <= max(capo, 0) or bool(note.mask & HARMONIC)  # (no capo: -1)
+                if held is not None:
+                    natural = min(held if open_string else min(held, moved), again)
+                elif open_string and string >= 0:
+                    natural = min(damped + overlap, again)
+                else:
+                    natural = min(following + overlap, again)
                 ends.append(max(min(least, again), min(note.time + RING_MAX, natural)))
             out.append(tuple(ends))
-        for pitch, string in _strung(note):
+        for pitch, string, _fret in _strung(note):
             next_pitch[pitch] = note.time
             if string >= 0:
                 next_string[string] = note.time
         following = note.time
+        if note.mask & PALM_MUTE or len(note.pitches) >= DAMPING:
+            damped = note.time
     out.reverse()
     return out
 
 
 def schedule(notes: Sequence[Note], keys: KeyRange = KeyRange(), shift: int | None = None,
-             shapes: Sequence[tuple[float, float]] = (), overlap: float = 0.0) -> list[Light]:
-    """Each note's light (and how long its pitches ring: rings, with the arrangement's hand shapes and the overlap
-    after the next note)."""
+             shapes: Sequence[tuple[float, float]] = (), overlap: float = 0.0,
+             anchors: Sequence[tuple[float, int]] = (), capo: int = 0,
+             arpeggios: Sequence[tuple[float, float]] | None = None) -> list[Light]:
+    """Each note's light (and how long its pitches ring: rings, with the arrangement's hand shapes and positions, its
+    capo and the overlap after the next note; arpeggios: those of the shapes that are, None: all)."""
     if shift is None:
         shift = keys.octave_shift(notes)
     lights: list[Light] = []
     grouped = together(notes)
-    for note, ends in zip(grouped, rings(grouped, shapes, overlap)):
+    for note, ends in zip(grouped, rings(grouped, shapes, overlap, anchors, capo, arpeggios)):
         lit = tuple(sorted({keys.fit(p + shift) for p in note.pitches}))[: keys.max_lit]
         end = note.time + max(note.sustain, MIN_LIGHT)
         if lights and note.mask & CHILD and lights[-1].keys == lit:
@@ -141,7 +183,7 @@ def schedule(notes: Sequence[Note], keys: KeyRange = KeyRange(), shift: int | No
             off = max(min(last.off, until), min(last.on + 0.02, note.time))
             lights[-1] = replace(last, off=off)
         lights.append(Light(note.time, end, lit, note.pitches, note.mask, ends, note.slide, note.slide_off, note.bends,
-                            note.vibrato))
+                            note.vibrato, up=note.up))
     return lights
 
 
@@ -149,7 +191,8 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
     """A part's sound with its techniques: its lights (those sliding or tremolo-picked stopping as their first step
     or strike sounds), and what sounds besides them (extra, no keys): a slide's steps, a semitone at a time over its
     sustain (the last left to the note it slides into, if it's linked to it); a slide off's, quicker, at its end;
-    a tremolo's strikes; and dead notes (muted: palm-muted, for the palm-mute tone). Bends and vibrato are the
+    a tremolo's strikes; a pinch harmonic's squeal (sounding with its note: Voices puts it above); and dead notes
+    (muted: palm-muted, for the palm-mute tone if there is one). Bends and vibrato are the
     player's, as controls."""
     out: list[Light] = []
     extras: list[Light] = []
@@ -174,13 +217,16 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
             times = [light.on + TREMOLO_EVERY * k for k in range(1, count + 1)]
             offsets = [0] * count
         times = [at for at in times if light.on < at < end]
+        if light.mask & PINCH_HARMONIC and not light.extra:
+            extras.append(replace(light, keys=(), rings=tuple(min(ring, times[0]) for ring in ends) if times else ends,
+                                  strum=(), extra=True))
         if not times:
             out.append(light)
             continue
         out.append(replace(light, rings=tuple(min(ring, times[0]) for ring in ends)))
         for k, (at, offset) in enumerate(zip(times, offsets)):
             until = times[k + 1] if k + 1 < len(times) else max(end, at + MIN_LIGHT)
-            mask = light.mask & ~ACCENT | (HAMMER_ON if offset else 0)  # (a slide's steps: legato)
+            mask = light.mask & ~(ACCENT | PINCH_HARMONIC) | (HAMMER_ON if offset else 0)  # (a slide's steps: legato)
             extras.append(Light(at, at, (), tuple(p + offset for p in light.pitches), mask,
                                 (until,) * len(light.pitches), extra=True))
     for note in muted:
@@ -188,6 +234,33 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
                             (note.time + DEAD,) * len(note.pitches), extra=True))
     extras.sort(key=lambda light: light.on)
     return out, extras
+
+
+def strums(lights: Sequence[Light], beats: Sequence[float]) -> list[Light]:
+    """A part's chords strummed (2 strings or more, not a technique's extra sound): their strings one after another,
+    down (low to high) or up (high to low): up as charted, else by where it falls in its beat (beats: when each is),
+    up on a sixteenth between the beat and its eighths. A strum takes STRUM_SHARE of the time to the next note at
+    most; each string rings until its own end, after it sounds."""
+    ons = sorted({light.on for light in lights})
+    out: list[Light] = []
+    for light in lights:
+        n = len(light.pitches)
+        if n < 2 or light.extra:
+            out.append(light)
+            continue
+        k = bisect_right(beats, light.on + 1e-3) - 1
+        up = light.up
+        if not up and 0 <= k < len(beats) - 1 and beats[k + 1] > beats[k]:
+            up = round((light.on - beats[k]) / (beats[k + 1] - beats[k]) * 4) % 2 == 1
+        nxt = ons[bisect_right(ons, light.on)] if bisect_right(ons, light.on) < len(ons) else math.inf
+        step = min(STRUM_UP_STRING if up else STRUM_STRING, (nxt - light.on) * STRUM_SHARE / (n - 1))
+        order = range(n - 1, -1, -1) if up else range(n)
+        delays = [0.0] * n
+        for place, string in enumerate(order):
+            delays[string] = place * step
+        rings = tuple(max(ring, light.on + d + MIN_ON) for ring, d in zip(light.rings, delays)) if light.rings else ()
+        out.append(replace(light, strum=tuple(delays), up=up, rings=rings))
+    return out
 
 
 TOGETHER = 0.05  # song seconds: strikes of the same key by different parts this close are one strike

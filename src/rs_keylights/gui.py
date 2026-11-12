@@ -45,7 +45,7 @@ from .sng import (BASS, BEND, GUITAR, HAMMER_ON, HARMONIC, PALM_MUTE, PINCH_HARM
 from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tones, tone_kind
 from .keyshow import KeyShow
 from .songkey import Key, find_key, scale_show, shapes, tuning_name
-from .sound import KEYBOARD_CHANNELS, SoundChoice, Voice, Voices, parse_note
+from .sound import KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Voice, Voices
 from .tones import TONES, Tone, tone
 from .watch import Watch
 
@@ -59,9 +59,9 @@ from .watch import Watch
 DEFAULT_GUI_PORT = 8040
 PART_ORDER = ("lead", "rhythm", "combo", "bass")
 KINDS = ("lead", "rhythm", "bass")  # each has default tones, for parts without their own
-TONE_FIELDS = ("tone", "mute_tone", "low_tone")  # a set of tones: these tone numbers, and split (a note)
-PART_FIELDS = (*TONE_FIELDS, "split", "follow_tones")  # and whether its tone follows the song's (False: it stays)
-SAME_TONE = 0  # palm mutes or low notes with the tone the rest has (over a default for them)
+TONE_FIELDS = ("tone", "mute_tone", "pinch_tone")  # a set of tones: these tone numbers
+PART_FIELDS = (*TONE_FIELDS, "follow_tones")  # and whether its tone follows the song's (False: it stays)
+SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over a default for them)
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
@@ -405,10 +405,6 @@ def _changed_tones(tones: dict[str, Any], change: Any) -> dict[str, Any]:
         found = _tone(merged.get(field))
         if found is not None:
             out[field] = found.number
-    split = str(merged.get("split") or "").strip()
-    if split:
-        _split(split)
-        out["split"] = split
     if merged.get("follow_tones") is False:  # (kept only off: else it follows them as Tone changes has it)
         out["follow_tones"] = False
     return out
@@ -1078,7 +1074,7 @@ class Gui:
             if voices.output is not None:
                 voices.output.set_volume(voices.main.channel, volume)
             else:
-                for channel in {v.channel for v in (voices.main, voices.low, voices.mute) if v is not None}:
+                for channel in {v.channel for v in voices.all()}:
                     session.keyboard.set_volume(channel, volume)
 
     def _slot(self, ref: ArrangementRef) -> int:
@@ -1475,9 +1471,8 @@ class Gui:
         by_part = {ref.part: (ref, a) for ref, a in loaded}
         silent = bool(self.play_options["silent"])
         main: dict[str | None, Tone | None] = {}
-        low: dict[str | None, Tone | None] = {}
+        pinch: dict[str | None, Tone | None] = {}
         mute: dict[str | None, Tone | None] = {}
-        split: dict[str | None, int | None] = {}
         volume: dict[str, int] = {}
         fixed: set[str] = set()  # parts whose tone stays as chosen when the song's switches
         parts = []
@@ -1492,13 +1487,14 @@ class Gui:
             def pick(field: str) -> Any:  # (SAME_TONE: over a default)
                 return own.get(field, defaults.get(field))
 
-            main[name], low[name], mute[name] = _tone(pick("tone")), _tone(pick("low_tone")), _tone(pick("mute_tone"))
-            split[name], volume[name] = _split(pick("split")), self._volume(slot)
+            main[name], mute[name] = _tone(pick("tone")), _tone(pick("mute_tone"))
+            pinch[name] = _pinch(pick("pinch_tone"))
+            volume[name] = self._volume(slot)
             if pick("follow_tones") is False:
                 fixed.add(name)
         if not silent and parts:
             self._check_sound_channel()
-        choice = None if silent else SoundChoice(main, low, mute, split, bool(self.play_options["real_pitch"]),
+        choice = None if silent else SoundChoice(main, pinch, mute, bool(self.play_options["real_pitch"]),
                                                  ring=bool(self.settings["ring"]), tone_map=self._tones_for_kinds(),
                                                  techniques=bool(self.settings["techniques"]),
                                                  overlap=self.settings["overlap_ms"] / 1000)
@@ -2589,9 +2585,9 @@ class Gui:
             def pick(field: str) -> Any:
                 return own.get(field, defaults.get(field))
 
-            voices = SoundChoice({None: _tone(pick("tone"))}, {None: _tone(pick("low_tone"))},
-                                 {None: _tone(pick("mute_tone"))}, {None: _split(pick("split"))},
-                                 settings["real_pitch"], ring=bool(self.settings["ring"]),
+            voices = SoundChoice({None: _tone(pick("tone"))}, {None: _pinch(pick("pinch_tone"))},
+                                 {None: _tone(pick("mute_tone"))}, settings["real_pitch"],
+                                 ring=bool(self.settings["ring"]),
                                  tone_map=self._tones_for_kinds(), techniques=bool(self.settings["techniques"]),
                                  overlap=self.settings["overlap_ms"] / 1000).voices(ref, channels)
             if pick("follow_tones") is False:
@@ -2835,7 +2831,7 @@ class Gui:
         synth = self._synth(chosen["port"]) if chosen else None
         if chosen is None or synth is None:
             return voices
-        return replace(voices, main=Voice(chosen["channel"], voices.main.tone), low=None, mute=None, output=synth,
+        return replace(voices, main=Voice(chosen["channel"], voices.main.tone), squeal=None, mute=None, output=synth,
                        mono=chosen["mono"], program=chosen.get("program"), transpose=12 * chosen.get("octave", 0))
 
     def set_program(self, part: str, program: int) -> None:
@@ -3069,13 +3065,11 @@ def _tone(value: Any) -> Tone | None:
         raise GuiError(f"No tone {value!r}") from None
 
 
-def _split(value: Any) -> int | None:
+def _pinch(value: Any) -> Tone | None:
+    """Pinch harmonics' tone: as chosen, GM GT HARMONICS if none is (SAME_TONE: none of their own)."""
     if value in (None, ""):
-        return None
-    try:
-        return parse_note(str(value))
-    except ValueError as exc:
-        raise GuiError(str(exc)) from None
+        return tone(PINCH_TONE)
+    return _tone(value)
 
 
 def _audio_inputs() -> list[str]:

@@ -151,7 +151,6 @@
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
   .part-tones .tonebox .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .part-tones input.split { width: 100%; }
   .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; }
   .timeline { display: flex; gap: 10px; align-items: center; margin: 12px 0 4px; }
   .timeline input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -169,7 +168,6 @@
   .toneset-title .controls { margin-left: auto; display: flex; gap: 12px; align-items: center; font-weight: normal; }
   .toneset.off > :not(.toneset-title) { opacity: .5; }
   .toneset > label { color: var(--muted); font-size: 12px; margin-top: 5px; }  /* above what it labels: room for the tone */
-  .toneset input.split { width: 70px; }
   .stepper { display: flex; gap: 4px; min-width: 0; }
   .stepper button { padding: 4px 10px; }
   /* A tone's dropdown, closed: its number over its name, which wraps rather than being cut off. The dropdown
@@ -565,7 +563,7 @@
       <label><input type="checkbox" id="toneChanges"> Follow the songs' tone changes</label>
       <div class="muted small">When a song switches tone (clean, distortion, acoustic&hellip;, from the tone's name or its
         pedals), the part's tone switches to the one for that kind here; back to the song's first tone, to the part's
-        own. Palm-mute and low-note tones stay as they are.</div>
+        own. Palm-mute and pinch-harmonic tones stay as they are.</div>
       <div id="toneKinds" class="grid2"></div>
     </div>
 
@@ -711,7 +709,7 @@ function buildToneOptions(tones) {
   return html + (group !== null ? "</optgroup>" : "");
 }
 
-// A tone's dropdown: first (the default), then with same, "Same tone" (0: palm mutes or low notes with the tone
+// A tone's dropdown: first (the default), then with same, "Same tone" (0: palm mutes or pinch harmonics with the tone
 // the rest has, over a default), then the tones
 function toneSelect(first, value, onChange, same = false) {
   const select = document.createElement("select");
@@ -746,16 +744,6 @@ function toneBox(select) {
   select.addEventListener("input", show);
   show();
   return box;
-}
-
-function splitInput(value, onChange) {
-  const input = document.createElement("input");
-  input.className = "split";
-  input.placeholder = "E2";
-  input.value = value || "";
-  input.title = "Notes below this use the low tone (a name such as B1 or F#2)";
-  input.addEventListener("change", onChange);
-  return input;
 }
 
 // A song's key: its scale, notes it uses outside it, how a guitarist plays it, and a button to light it
@@ -2687,7 +2675,7 @@ async function moveOldSong() {
     for (const [part, cfg] of Object.entries(old)) {
       if (!cfg || typeof cfg !== "object") continue;
       parts[part] = {play: !!cfg.play, lights: Number(cfg.lights) || 0, tone: Number(cfg.tone) || null,
-                     mute_tone: Number(cfg.mute) || null, low_tone: Number(cfg.low) || null, split: cfg.split || null};
+                     mute_tone: Number(cfg.mute) || null};
     }
     try {
       selected = await api("/api/song/settings", {song: selected.id, parts: parts, start: Number(old.start) || 0});
@@ -2928,7 +2916,7 @@ function drumsBlock(s) {
 }
 
 // A part: its name (and whether it's the one played in the game), the keys it lights, its volume and whether
-// it's muted (not played: no sound or lights), and under them its tones and split note (o.change(field, value))
+// it's muted (not played: no sound or lights), and under them its tones (o.change(field, value))
 function partBlock(o) {
   const block = document.createElement("div");
   block.className = "part-block" + (o.play ? "" : " off");
@@ -2967,7 +2955,7 @@ function partBlock(o) {
   fold.type = "button";
   fold.className = "part-fold";
   fold.textContent = "Tones";
-  fold.title = "Its tones: palm mutes, low notes, where the low notes start (and the song's tone changes)";
+  fold.title = "Its tones: palm mutes and pinch harmonics' squeals (and the song's tone changes)";
   const head = document.createElement("div");
   head.className = "part-head";
   head.append(name, lit, volume, fold);
@@ -2986,12 +2974,10 @@ function partBlock(o) {
                               () => o.change(key, select.value === "" ? null : Number(select.value)), same);
     return toneBox(select);
   };
-  const split = splitInput(o.tones.split, () => o.change("split", split.value.trim() || null));
-  split.placeholder = defaults.split;
   const tones = document.createElement("div");
   tones.className = "part-tones";
-  tones.append(field("Tone", tone("tone")), field("Palm mutes", tone("mute_tone")), field("Low notes", tone("low_tone")),
-               field("Below", split));
+  tones.append(field("Tone", tone("tone")), field("Palm mutes", tone("mute_tone")),
+               field("Pinch harmonics", tone("pinch_tone")));
   const more = document.createElement("div");
   more.append(tones);
   if (o.songTones && o.songTones.length) {
@@ -3301,6 +3287,7 @@ async function poll(now) {
 // each with tones of its own or else the defaults.
 
 const BUILT_IN = {lead: 79, rhythm: 79, bass: 85};
+const PINCH_TONE = 298;  // GM GT HARMONICS: pinch harmonics' squeals, unless chosen otherwise
 const KIND_NAMES = {lead: "Lead parts", rhythm: "Rhythm parts", bass: "Bass parts"};
 let shownDefaults = "";
 let toneNames = {};
@@ -3396,32 +3383,31 @@ function toneSet(o) {
   if (o.controls) title.appendChild(o.controls);
   box.appendChild(title);
   const own = o.tones || {};
-  for (const [text, field] of [["Tone", "tone"], ["Palm mutes", "mute_tone"], ["Low notes", "low_tone"]]) {
-    const select = toneSelect(o.defaults[field], own[field], () => o.change(field, Number(select.value) || null));
+  for (const [text, field] of [["Tone", "tone"], ["Palm mutes", "mute_tone"], ["Pinch harmonics", "pinch_tone"]]) {
+    const same = field === "pinch_tone";  // (its own default: "Same tone" is a choice over it)
+    const select = toneSelect(o.defaults[field], own[field],
+                              () => o.change(field, select.value === "" ? null : Number(select.value) || (same ? 0 : null)),
+                              same);
     const label = document.createElement("label");
     label.textContent = text;
     box.append(label, stepper(select, o.from[field] || own.tone || o.from.tone));
   }
-  const label = document.createElement("label");
-  label.textContent = "Below";
-  const split = splitInput(own.split, () => o.change("split", split.value.trim() || null));
-  split.placeholder = o.defaults.split;
-  box.append(label, split);
   return box;
 }
 
-// What a part without tones of its own gets: {tone, mute_tone, low_tone} as text, the numbers, and split
+// What a part without tones of its own gets: {tone, mute_tone, pinch_tone} as text, and the numbers (pinch
+// harmonics: GM GT HARMONICS unless the kind's are the same tone, 0)
 function defaultsFor(kind) {
   const k = follow[kind];
   const main = k.tone || BUILT_IN[kind];
+  const pinch = k.pinch_tone === 0 ? null : k.pinch_tone || PINCH_TONE;
   return {
     text: {
       tone: `${toneLabel(main)} · default`,
       mute_tone: k.mute_tone ? `${toneLabel(k.mute_tone)} · default` : "Same tone",
-      low_tone: k.low_tone ? `${toneLabel(k.low_tone)} · default` : "Same tone",
-      split: k.split || "E2",
+      pinch_tone: pinch ? `${toneLabel(pinch)} · default` : "Same tone",
     },
-    from: {tone: main, mute_tone: k.mute_tone, low_tone: k.low_tone},
+    from: {tone: main, mute_tone: k.mute_tone, pinch_tone: pinch},
   };
 }
 
@@ -3429,8 +3415,9 @@ function kindTones(kind) {
   return toneSet({
     title: KIND_NAMES[kind],
     tones: follow[kind],
-    defaults: {tone: `${toneLabel(BUILT_IN[kind])} · default`, mute_tone: "Same tone", low_tone: "Same tone", split: "E2"},
-    from: {tone: BUILT_IN[kind]},
+    defaults: {tone: `${toneLabel(BUILT_IN[kind])} · default`, mute_tone: "Same tone",
+               pinch_tone: `${toneLabel(PINCH_TONE)} · default`},
+    from: {tone: BUILT_IN[kind], pinch_tone: PINCH_TONE},
     change: (field, value) => changeFollow({[kind]: {[field]: value}}),
   });
 }
@@ -3450,8 +3437,7 @@ async function moveOldFollow() {
   const old = store.get("rsk.follow", null);
   if (!old) return;
   if (!follow.saved) {
-    const tones = (p) => ({tone: Number(p.tone) || null, mute_tone: Number(p.mute_tone) || null,
-                           low_tone: Number(p.low_tone) || null, split: p.split || null});
+    const tones = (p) => ({tone: Number(p.tone) || null, mute_tone: Number(p.mute_tone) || null});
     const parts = old.parts || {};
     await loadFollow(await api("/api/follow/settings", {
       sound: !!old.sound, real_pitch: !!old.realPitch, offset_ms: Number(old.offset) || 0,

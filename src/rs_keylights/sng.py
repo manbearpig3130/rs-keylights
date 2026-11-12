@@ -43,6 +43,7 @@ IGNORE = 0x40000
 UNPITCHED_SLIDE = 0x400000
 ACCENT = 0x4000000
 CHILD = 0x10000000  # linked to the note before it (a sustain that continues)
+ARPEGGIO_TEMPLATE = 0x01  # a chord template's mask: an arpeggio's
 TECHNIQUES = (TREMOLO | HARMONIC | PALM_MUTE | SLAP | POP | HAMMER_ON | PULL_OFF | SLIDE | BEND | TAP | PINCH_HARMONIC
               | VIBRATO | UNPITCHED_SLIDE | ACCENT)  # (a chord's strings' own, added to its)
 HARMONIC_PITCH = {3: 31, 4: 28, 5: 24, 7: 19, 9: 28, 12: 12, 16: 28, 19: 19, 24: 24}  # a natural harmonic at a fret:
@@ -67,6 +68,7 @@ class Note:
     bends: tuple[tuple[float, float], ...] = ()  # its bend: when, and semitones up (from 0 at its start)
     vibrato: bool = False
     frets: tuple[int, ...] = ()  # each pitch's fret, as the pitches are (0: open; with a capo, the capo's)
+    up: bool = False  # picked (or strummed) up, as charted: else down, or not said
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,9 @@ class Arrangement:
     tones: tuple[SongTone | None, ...] = ()  # its tones A to D (None: none)
     muted: tuple[Note, ...] = ()  # its fret-hand mutes (dead notes: no keys, a click)
     bars: tuple[float, ...] = ()  # when each bar starts (its first beat)
+    anchors: tuple[tuple[float, int], ...] = ()  # where the fretting hand is: from when, its first finger's fret
+    arpeggios: tuple[tuple[float, float], ...] = ()  # those of the shapes that are arpeggios (let ring: else a
+    # chord's fingering)
 
 
 def note_name(pitch: int) -> str:
@@ -224,26 +229,29 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
         sections.append(Section(name.split(b"\0")[0].decode("ascii", "replace"), start, end))
 
     levels: dict[int, list[tuple[Any, ...]]] = {}
-    shapes: dict[int, list[tuple[int, float, float]]] = {}  # each level's hand shapes: chord, start, end
+    shapes: dict[int, list[tuple[int, float, float, bool]]] = {}  # each level's hand shapes: chord, start, end, an
+    # arpeggio
+    anchors: dict[int, list[tuple[float, int]]] = {}  # each level's hand positions: when, the fret
     for _ in range(r.count()):
         difficulty = r.take("i")[0]
-        r.skip(28)  # anchors
+        hands = [r.take("4fb3x4x4x")[0::4] for _ in range(r.count())]  # anchors: when, the fret
         r.skip(12)  # anchor extensions
-        shapes[difficulty] = [r.take("iff8x") for _ in range(r.count())]  # fingerprints: hand shapes
-        shapes[difficulty] += [r.take("iff8x") for _ in range(r.count())]  # and arpeggios
+        shapes[difficulty] = [(*r.take("iff8x"), False) for _ in range(r.count())]  # fingerprints: hand shapes
+        shapes[difficulty] += [(*r.take("iff8x"), True) for _ in range(r.count())]  # and arpeggios
         records = []
         for _ in range(r.count()):
             mask, _flags, _hash, time, string, fret = r.take("IIIfbb")
             _anchor_fret, _anchor_width, chord, chord_note, _phrase, iteration = r.take("bbiiii")
-            *_linked, slide_to, slide_off_to, _hand, _tap, _pick, _slap, _pop, vibrato = r.take("2h3h7bh")
+            *_linked, slide_to, slide_off_to, _hand, _tap, pick, _slap, _pop, vibrato = r.take("2h3h7bh")
             sustain, _max_bend = r.take("ff")
             bends = [r.take("ff4x") for _ in range(r.count())]
             records.append((mask, time, string, fret, chord, iteration, sustain, chord_note, slide_to, slide_off_to,
-                            vibrato, bends))
+                            vibrato, bends, pick == 1))
         r.skip(4)  # average notes per iteration
         r.skip(4)  # notes per iteration
         r.skip(4)
         levels[difficulty] = records
+        anchors[difficulty] = hands
 
     meta = r.take("4d2fb32shf")
     capo, length = meta[6], meta[9]
@@ -274,7 +282,8 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
 
     def played_as(record: tuple[Any, ...]) -> Note | None:
         """A note record as played: a chord's strings' techniques (chord notes) with its own."""
-        mask, time, string, fret, chord, _iteration, sustain, chord_note, slide_to, slide_off_to, vibrato, bends = record
+        (mask, time, string, fret, chord, _iteration, sustain, chord_note, slide_to, slide_off_to, vibrato, bends,
+         up) = record
         if mask & CHORD and 0 <= chord < len(chord_frets):
             fretted = chord_frets_of(chord)
             own = chord_notes[chord_note] if 0 <= chord_note < len(chord_notes) else None
@@ -297,13 +306,15 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
         return Note(time, sustain, tuple(p for p, _s, _f in played), mask, tuple(s for _p, s, _f in played),
                     slides[0] if slides else 0, offs[0] if offs else 0,
                     tuple((at, step) for at, step in bent if at >= time), vibrating,  # (steps: semitones)
-                    tuple(f for _p, _s, f in played))
+                    tuple(f for _p, _s, f in played), up)
 
     hardest = max(levels)
     notes: list[Note] = []
     muted: list[Note] = []
     chords: list[Chord] = []
     held: list[tuple[float, float]] = []
+    hand: list[tuple[float, int]] = []
+    arpeggios: list[tuple[float, float]] = []
     for index, (phrase, start) in enumerate(iterations):
         level = min(phrase_levels[phrase], hardest) if 0 <= phrase < len(phrase_levels) else hardest
         for record in levels.get(level, ()):
@@ -313,9 +324,12 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
             if note is not None:
                 (muted if note.mask & FRET_HAND_MUTE else notes).append(note)
         until = iterations[index + 1][1] if index + 1 < len(iterations) else math.inf  # (the phrase's hand shapes)
-        for chord, at, end in shapes.get(level, ()):
+        hand += [(at, fret) for at, fret in anchors.get(level, ()) if start <= at < until]
+        for chord, at, end, arpeggio in shapes.get(level, ()):
             if start <= at < until and 0 <= chord < len(templates):
                 held.append((at, end))
+                if arpeggio or templates[chord][0] & ARPEGGIO_TEMPLATE:
+                    arpeggios.append((at, end))
                 name = chord_names[chord] or chord_name(pitched(chord_frets_of(chord)))
                 if name:
                     shape = tuple(capo if f == 0 and capo > 0 else f for f in chord_frets[chord][:len(open_strings)])
@@ -324,7 +338,8 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
     muted.sort(key=lambda n: n.time)
     chords.sort(key=lambda c: c.start)
     return Arrangement(tuple(notes), tuning, capo, length, beats, tuple(sections), tuple(chords), lyrics,
-                       tuple(sorted(held)), tone_changes, muted=tuple(muted), bars=bars)
+                       tuple(sorted(held)), tone_changes, muted=tuple(muted), bars=bars, anchors=tuple(sorted(hand)),
+                       arpeggios=tuple(sorted(arpeggios)))
 
 
 def _chart_name(raw: bytes) -> str:

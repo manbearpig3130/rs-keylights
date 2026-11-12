@@ -9,9 +9,9 @@ from typing import Any, Callable, Mapping, Sequence
 from .drums import CLOSED_HAT, CRASH, DRUM_CHANNEL, KICK, OPEN_HAT, RIDE, SNARE, TOMS, Hit
 from .keyboard import NORMAL_VOLUME, Keyboard
 from .library import ArrangementRef
-from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, techniques
+from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, strums, techniques
 from .player import Player, Track
-from .sng import Arrangement
+from .sng import PINCH_HARMONIC, Arrangement
 from .sound import KEYBOARD_CHANNELS, Voices
 
 # The parts of a song played together, as play, the page and following make them: each part's lights
@@ -41,15 +41,15 @@ class PlannedPart:
 
 
 def channels_needed(voices: Voices) -> int:
-    """The keyboard's channels a part's voices take: its main voice, and its palm mutes and low notes if they have
-    tones of their own; on another MIDI device, none."""
-    return 0 if voices.output is not None else 1 + (voices.low is not None) + (voices.mute is not None)
+    """The keyboard's channels a part's voices take: its main voice, and its palm mutes and pinch harmonics if they
+    have tones of their own; on another MIDI device, none."""
+    return 0 if voices.output is not None else 1 + (voices.squeal is not None) + (voices.mute is not None)
 
 
 MOST_LIT = 4  # keys the keyboard lights at once
 
 CHANNELS_USED_UP = (f"The keyboard's {len(KEYBOARD_CHANNELS)} channels are used up: play fewer parts on it, give "
-                    "fewer palm-mute and low-note tones of their own, or move one to another MIDI device")
+                    "fewer palm-mute and pinch-harmonic tones of their own, or move one to another MIDI device")
 
 
 class PlanCache:
@@ -70,7 +70,8 @@ class PlanCache:
         got = self._lights.get(key)
         if got is not None and got[0] is arrangement:
             return got[1]
-        lights = schedule(arrangement.notes, keys, shift, arrangement.shapes, overlap)
+        lights = schedule(arrangement.notes, keys, shift, arrangement.shapes, overlap, arrangement.anchors,
+                          arrangement.capo, arrangement.arpeggios)
         self._keep(self._lights)[key] = (arrangement, lights)
         return lights
 
@@ -121,19 +122,28 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
         voices, channels = None, ()
         if voices_for:
             wanted = voices_for(part.ref, (0, 0, 0))  # (its voices: which it has)
+            squeals = wanted.squeal is not None and wanted.output is None and \
+                any(n.mask & PINCH_HARMONIC for n in part.arrangement.notes)
+            if squeals and channels_needed(wanted) > len(free):
+                squeals = False  # (on the note's own tone, rather than not at all)
+            if not squeals:
+                wanted = replace(wanted, squeal=None)
             need = channels_needed(wanted)
             if need > len(free) and strict:
                 raise ValueError(CHANNELS_USED_UP)
             if need <= len(free):
                 channels, free = tuple(free[:need]), free[need:]
                 main = channels[0] if channels else 0
-                low = channels[1] if wanted.low is not None and channels else main
+                pinch = channels[1] if squeals and channels else main
                 mute = channels[-1] if wanted.mute is not None and channels else main
-                voices = voices_for(part.ref, (main, low, mute)).for_arrangement(own)
+                voices = voices_for(part.ref, (main, pinch, mute)).for_arrangement(own)
+                if not squeals:
+                    voices = replace(voices, squeal=None)
         most = MOST_LIT if pooled and part.lights else part.lights or MOST_LIT
         overlap = voices.overlap if voices is not None else 0.0
         lights = cache.lights(part.arrangement, KeyRange(max_lit=most), shift, overlap) if cache is not None else \
-            schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes, overlap)
+            schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes, overlap,
+                     part.arrangement.anchors, part.arrangement.capo, part.arrangement.arpeggios)
         planned.append(PlannedPart(part, shift, lights, voices, channels, pooled and bool(part.lights),
                                    ranked.index(i)))
     return planned
@@ -208,12 +218,12 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
 
 
 def _track(p: PlannedPart) -> Track:
-    """A planned part's track: its lights, and with techniques what sounds besides them (dead notes, with a palm-mute
-    tone to sound them); its tone changes."""
+    """A planned part's track: its lights, and with techniques what sounds besides them (dead notes too: on the
+    palm-mute tone, else quieter on the part's own); its tone changes."""
     lights: list[Light] = list(p.lights)
     extras: list[Light] = []
     if p.voices is not None and p.voices.techniques:
-        lights, extras = techniques(p.lights, p.part.arrangement.muted if p.voices.mute else ())
+        lights, extras = techniques(strums(p.lights, p.part.arrangement.beats), p.part.arrangement.muted)
     if p.voices is not None and p.voices.mono:
         everything = [*lights, *extras]
         lights, extras = _one_at_a_time(lights, everything), _one_at_a_time(extras, everything)

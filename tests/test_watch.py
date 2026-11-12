@@ -432,7 +432,7 @@ def test_encoders_step_through_tones_and_send_where_they_stop(monkeypatch):
     watch.step()
     assert watch._picture_of == "parts" and pictures(launchkey)[-1][52 * 19 + 120 // 7] & 0x20  # (the speaker's top)
     gui.sound = True
-    launchkey.queued = [Button(51), Button(51), Turn(1, 1)]  # twice more: low notes, then tones again
+    launchkey.queued = [Button(51), Button(51), Turn(1, 1)]  # twice more: pinch harmonics, then tones again
     clock.now = 0.95
     watch.step()
     assert watch.field == 0 and gui.changes[-1][0] == "R" and "tone" in gui.changes[-1][1]
