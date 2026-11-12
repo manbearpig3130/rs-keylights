@@ -194,12 +194,20 @@ the commands do:
   the time to the next note (50 to 200 ms), or as long as the chart holds it. The tone's own
   decay does the rest. **Keyboard** › Sound turns it off (each note as long as its key is lit), playing and
   following at once.
+- **Song's audio** (a card of its own, under the Song card as it starts): 🎵 **Play it** (the same switch as the
+  header's), its volume and the audio output it plays on, and its parts: **Split into parts** splits its audio with Song
+  Stems' Demucs model into drums, bass, guitar, vocals, keys and the rest (other: ambience, synths, effects…),
+  once (about 20 s a part for 4 minutes of song, in the background), kept in `~/Library/Caches/rs-keylights/stems/`
+  as AAC (the least used songs' going over 2 GB). Then 🎵 plays each at a volume of its own (a slider and a mute
+  each, the same for every song: mute the band and keep the ambience and vocals, say), heard as you move them.
+  Needs `tools/drums-setup.sh` run since it learned to take out the vocals and keys.
 - **The header**: the song's time slider (where it is, moved while it plays; else where it starts) and its
   speed (25% to 200%), ▶ (❚❚ while it plays; ▶ again resumes), ■, Mute 🔊 (the sound on the keyboard,
   playing or following: muted 🔇, just the lights), 🎵 the song's own audio (decoded from its archive in a
   fraction of a second, played from the Mac's output with a song you play: paused, moved and looped with it, and
   slowed or sped up at its own pitch, a time-stretch; off each time rs-keylights starts, and not while following;
-  how loud and on which audio output: **Song's audio** in the Keyboard card),
+  how loud and on which audio output, and each of its parts at a volume of its own once it's split: the
+  **Song's audio** card, below),
   **Follow Rocksmith** (red while following), ⚙ to fold the
   settings column away (the middle gets its room) or bring it back, and full screen ⛶. They keep their
   widths, so nothing moves as they change.

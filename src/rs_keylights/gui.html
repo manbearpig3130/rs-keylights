@@ -149,6 +149,13 @@
   .loopline button { padding: 1px 8px; }
   #loopOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .part-tones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 64px; gap: 8px; margin-top: 8px; }
+  .audio-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr) 3.5em 2.5em; gap: 6px 10px;
+    align-items: center; margin-top: 8px; }
+  .audio-grid input[type=range] { width: 100%; }
+  .audio-grid .audio-wide { grid-column: 2 / span 3; min-width: 0; }
+  .audio-grid label { font-size: 13px; color: var(--muted); }
+  .audio-parts-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; }
+  #audioOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
   .part-tones .tonebox .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -419,6 +426,28 @@
     <div id="circuitKit" class="circuit-kit" hidden></div>
   </section>
 
+  <section id="audioCard" class="card" hidden>
+    <div class="fret-head">
+      <h3>Song's audio</h3>
+      <button type="button" id="audioOn" title="The song's own audio, from the Mac, with the song you play">🎵 Play it</button>
+    </div>
+    <div class="audio-grid">
+      <label for="audioVolume">Volume</label>
+      <input type="range" id="audioVolume" min="0" max="100">
+      <output id="audioVolumeShown"></output>
+      <span></span>
+      <label for="audioDevice">Plays on</label>
+      <select id="audioDevice" class="audio-wide"></select>
+    </div>
+    <div class="audio-parts-head">
+      <span id="audioPartsNote" class="small muted"></span>
+      <button type="button" id="audioSplit"></button>
+    </div>
+    <div id="audioProgress" class="making muted small" hidden><div class="bar" role="progressbar" aria-valuemin="0"
+      aria-valuemax="100"><span></span></div><output></output></div>
+    <div id="audioStems" class="audio-grid"></div>
+  </section>
+
   <section id="lyricsCard" class="card" hidden>
     <div class="fret-head">
       <h3>Lyrics</h3>
@@ -649,10 +678,7 @@
           <input type="checkbox" id="mostLights"> Most lights: the parts share the 4 lit keys</label><br>
           <label title="Sound the notes at their own pitch, not the lit keys' (moved into the keyboard's range), playing a song or following the game">
           <input type="checkbox" id="realPitch"> Real pitch</label><br>
-          <label title="The song's own audio (🎵 at the top), played from the Mac with a song you play: how loud">
-          Song's audio <input type="range" id="audioVolume" min="0" max="100" style="width:110px; vertical-align:middle">
-          <output id="audioVolumeShown"></output></label>
-          <label title="The audio output the song's own audio plays on">on <select id="audioDevice"></select></label><br>
+
           <label title="Bends (pitch bend), slides (a semitone at a time), vibrato, tremolo picking, hammer-ons and pull-offs (softer), slaps and pops (harder), harmonics' own pitches, and dead notes (a click, with a palm-mute tone). Off: accents alone">
           <input type="checkbox" id="techniques"> Play techniques: bends, slides, vibrato&hellip;</label></span>
         <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
@@ -2230,6 +2256,7 @@ const CARD_KINDS = {
   tab: {name: "Tab", make: makeTabCard},
   keys: {name: "Keys", make: makeRollCard},
   drums: {name: "Drums", fixed: "drumsCard"},
+  audio: {name: "Song's audio", fixed: "audioCard"},
   theory: {name: "Theory", fixed: "theoryCard"},
   lyrics: {name: "Lyrics", fixed: "lyricsCard"},
   plays: {name: "Hits and misses", fixed: "playsCard"},
@@ -2240,7 +2267,7 @@ const FIRST_KINDS = ["song", "fretboard", "tab", "keys", "drums", "theory"];  //
 const LAYOUT_KEY = "rsk.layout";
 const SIDE_CARDS = [...document.querySelectorAll("#side > .card")].map((c) => c.id);  // (as the page has them)
 function defaultLayout() {
-  return {middle: ["song", "fretboard", "tab", "keys", "drums", "lyrics", "plays", "theory", "pedaltones"].map((kind) => ({id: kind, kind, part: ""})),
+  return {middle: ["song", "audio", "fretboard", "tab", "keys", "drums", "lyrics", "plays", "theory", "pedaltones"].map((kind) => ({id: kind, kind, part: ""})),
           side: [...SIDE_CARDS], away: [], known: Object.keys(CARD_KINDS)};
 }
 function loadLayout() {
@@ -2811,6 +2838,7 @@ function renderSong() {
   renderTheoryCard(s);
   renderPedalTonesCard(s);
   renderPlaysCard(s);
+  renderAudioCard(s);
   if ($("songArt").dataset.song !== s.id) {
     $("songArt").dataset.song = s.id;
     $("songArt").classList.add("none");
@@ -2885,6 +2913,82 @@ async function exportSong(what) {
     button.disabled = what === "audio" && !s.audio_export;
   }
 }
+
+// The Song's audio card: the song's own audio (🎵) on or off, how loud and on which output (playOptions: showOptions
+// shows them), and its parts (stems): split from it (Split into parts: a minute or two, in the background), then each
+// at a volume of its own, a slider and a mute each (every song's: mute the band, keep the vocals...). POST /api/stems
+const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys",
+                    other: "Other (ambience, effects…)"};
+let stemsPoll = null, audioShown = "";
+function renderAudioCard(s) {
+  const card = $("audioCard");
+  card.hidden = !s;
+  if (card.hidden || !s.stems) return;
+  const d = s.stems, volumes = (playOptions && playOptions.stem_volumes) || {};
+  const shown = JSON.stringify([s.id, d, volumes]);
+  if (shown === audioShown) return;
+  audioShown = shown;
+  $("audioPartsNote").textContent = d.making ? "Splitting it into parts…" :
+    d.made ? "Each part's volume (every song's), heard as you move it:" :
+    d.can ? "Split it to set the drums', bass', guitar's, vocals', keys' and the rest's volumes." :
+    "To split songs into parts, run tools/drums-setup.sh again (it now takes out the vocals and keys too).";
+  if (d.error) $("audioPartsNote").textContent = `Couldn't split it: ${d.error}`;
+  const split = $("audioSplit");
+  split.textContent = d.made ? "Split again" : "Split into parts";
+  split.disabled = d.making || !d.can;
+  split.title = d.can ? "Split the song's audio into drums, bass, guitar, vocals, keys and the rest (a minute or two)" :
+    "The separator needs rebuilding: run tools/drums-setup.sh in rs-keylights' folder";
+  split.dataset.song = s.id;
+  const done = Math.round((d.progress || 0) * 100);
+  $("audioProgress").hidden = !d.making;
+  $("audioProgress").querySelector("span").style.width = `${done}%`;
+  $("audioProgress").querySelector("output").textContent = `${done}%`;
+  const grid = $("audioStems");
+  grid.replaceChildren();
+  grid.hidden = !d.made;
+  for (const stem of d.made ? d.names : []) {
+    const label = document.createElement("label");
+    label.textContent = STEM_NAMES[stem] || stem;
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.value = String(volumes[stem] ?? 100);
+    slider.setAttribute("aria-label", `${STEM_NAMES[stem] || stem} volume`);
+    const out = document.createElement("output");
+    out.textContent = `${slider.value}%`;
+    slider.addEventListener("input", () => { out.textContent = `${slider.value}%`; });
+    slider.addEventListener("change", () => changeOptions({stem_volumes: {[stem]: Number(slider.value)}}));
+    const mute = document.createElement("button");
+    mute.type = "button";
+    const off = Number(slider.value) === 0;
+    mute.className = "part-mute" + (off ? " on" : "");
+    mute.textContent = off ? "🔇" : "🔊";
+    mute.title = off ? `Muted: the ${STEM_NAMES[stem]} back` : `Mute the ${STEM_NAMES[stem]}`;
+    mute.addEventListener("click", () => changeOptions({stem_volumes: {[stem]: off ? 100 : 0}}));
+    grid.append(label, slider, out, mute);
+  }
+  clearTimeout(stemsPoll);  // (being split: how far, until it's done)
+  if (d.making) {
+    stemsPoll = setTimeout(async () => {
+      if (!selected || selected.id !== s.id) return;
+      const again = await api(`/api/song?id=${encodeURIComponent(s.id)}`).catch(() => null);
+      if (again && selected && selected.id === s.id) {
+        selected = again;
+        renderSong();
+      }
+    }, 1000);
+  }
+}
+$("audioSplit").addEventListener("click", () => act(async () => {
+  const sid = $("audioSplit").dataset.song;
+  const info = await api("/api/stems", {song: sid, make: true});
+  if (selected && selected.id === sid) {
+    selected = {...selected, stems: info};
+    renderSong();
+  }
+}));
+$("audioOn").addEventListener("click", () => changeOptions({audio: !(playOptions && playOptions.audio)}));
 
 // The song's drum part: made from its audio (Make drum part: a minute or so, in the background), then played
 // along with its arrangements, playing or following, on the keyboard's drum channel or the device chosen for drums
@@ -3103,6 +3207,9 @@ function showOptions() {
   if (playOptions) {  // the song's own audio: on or off, how loud, and why it can't play (if it can't)
     const on = !!playOptions.audio;
     $("audioBtn").classList.toggle("on", on);
+    $("audioOn").classList.toggle("on", on);
+    $("audioOn").textContent = on ? "🎵 Playing it" : "🎵 Play it";
+    $("audioOn").disabled = !playOptions.audio_there;
     $("audioBtn").disabled = !playOptions.audio_there;
     $("audioBtn").title = !playOptions.audio_there ? "The song's own audio needs the drum tools (tools/drums-setup.sh)" :
       playOptions.audio_error ? `The song's audio couldn't play: ${playOptions.audio_error}` :
@@ -3136,9 +3243,11 @@ function checkLights() {
 let playOptions = null;
 
 async function loadPlayOptions(info) {
+  const was = playOptions && JSON.stringify(playOptions.stem_volumes);
   playOptions = info || await api("/api/play/options");
   showSpeed(playOptions.speed);
   showOptions();
+  if (selected && was !== JSON.stringify(playOptions.stem_volumes)) renderAudioCard(selected);  // (its parts)
 }
 
 function changeOptions(change) {

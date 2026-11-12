@@ -36,7 +36,7 @@ def no_real_pedal_tones(monkeypatch, tmp_path):
     monkeypatch.delenv("DNAFX_CONFIG", raising=False)
 
 
-from rs_keylights import drums, library, pedalwriter, plays  # noqa: E402
+from rs_keylights import drums, library, pedalwriter, plays, stems  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +62,7 @@ def no_real_plays(monkeypatch, tmp_path):
 def no_real_drums(monkeypatch, tmp_path):
     """No test reads or writes this Mac's drum parts or finds its drum tools: a cache and a tools folder of its own."""
     monkeypatch.setattr(drums, "cache_dir", lambda: tmp_path / "drums-cache")
+    monkeypatch.setattr(stems, "cache_dir", lambda: tmp_path / "stems-cache")  # (and its songs' parts)
     monkeypatch.setenv("RS_KEYLIGHTS_DRUMS_TOOLS", str(tmp_path / "drums-tools"))
 
 

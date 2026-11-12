@@ -1436,3 +1436,48 @@ def test_the_songs_own_audio_plays_with_it_where_it_is(server, monkeypatch):
     assert call(server, "/api/play/options", {"audio_device": 3})[0] == 400
     again = Gui(gui.index, settings_file=gui.settings_file, list_ports=list, other_follow=lambda: False)
     assert not again.play_options["audio"] and again.play_options["audio_device"] == "Speakers"  # (off as it starts)
+
+
+def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, monkeypatch):
+    import numpy as np
+    from rs_keylights import gui as gui_module, stems
+    gui, sid = server.gui, first_song(server)
+    song = call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]
+    assert song["stems"] == {"made": False, "making": False, "progress": None, "error": None, "can": False,
+                             "names": list(stems.STEMS)}
+    made = []
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress: made.append(ref) or progress(1.0))
+    monkeypatch.setattr(stems, "made", lambda ref, cache=None: bool(made))
+    mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
+    monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None: {s: samples // 6 for s in stems.STEMS}
+                        if made else None)
+    monkeypatch.setattr(gui_module, "song_samples", lambda ref, game: (mix, 44100))
+
+    class Stream:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    gui._audio_stream = Stream
+    call(server, "/api/play/options", {"audio": True})
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    assert wait_for(lambda: gui._song_audio, bool) and "song" in gui._song_audio.weights  # (whole: not split yet)
+    info = call(server, "/api/stems", {"song": sid, "make": True})[1]
+    assert wait_for(lambda: made and gui._song_audio and "drums" in gui._song_audio.weights, bool)  # (split: at once)
+    assert call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["stems"]["made"]
+    audio = gui._song_audio
+    _, options = call(server, "/api/play/options", {"stem_volumes": {"drums": 0, "vocals": 40}})
+    assert options["stem_volumes"]["drums"] == 0 and options["stem_volumes"]["bass"] == 100
+    assert audio.weights["drums"] == 0.0 and audio.weights["vocals"] == 0.4 and audio.weights["other"] == 1.0
+    assert call(server, "/api/play/options", {"stem_volumes": {"kazoo": 10}})[0] == 400
+    assert call(server, "/api/play/options", {"stem_volumes": {"bass": 120}})[0] == 400
+    call(server, "/api/stop", {})
+    assert info["making"] or made

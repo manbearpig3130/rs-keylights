@@ -24,24 +24,30 @@ BLOCK = 512  # samples the sound device's asked for at once (12 ms: steady, the 
 
 
 class Stretcher:
-    """Audio (samples x channels, float) read at a speed with its pitch kept: each frame of FRAME samples taken
-    about HOP x speed on from the last, where it best continues it (SEEK either way), windowed and overlapped by
-    half. At speed 1 it's the audio as it is."""
+    """Audio read at a speed with its pitch kept: each frame of FRAME samples taken about HOP x speed on from the
+    last, where it best continues it (SEEK either way), windowed and overlapped by half. At speed 1 it's the
+    audio as it is. The audio: parts (each samples x channels, int16 or -1 to 1, as long), mixed as each frame is
+    made at weights' volumes (0 to 1, by part: changed as it plays), the first part (the whole song, or another
+    the search is done on: search) with them."""
 
-    def __init__(self, samples: Any):
+    def __init__(self, samples: Any, weights: dict[str, float] | None = None, search: Any = None):
         import numpy as np
-        self._x = np.asarray(samples, dtype=np.float32)
-        if self._x.ndim == 1:
-            self._x = self._x[:, None]
-        pad = SEEK + FRAME
-        self._pad = pad
-        self._mono = np.pad(self._x.mean(axis=1), (pad, pad + FRAME))
+        parts = samples if isinstance(samples, dict) else {"song": samples}
+        self._parts = {name: _frames(part) for name, part in parts.items()}
+        first = next(iter(self._parts.values()))
+        self._length, self._channels = first.shape
+        self.weights = weights if weights is not None else {name: 1.0 for name in self._parts}
+        self._search = _frames(search) if search is not None else first
         self._window = (0.5 - 0.5 * np.cos(2 * np.pi * np.arange(FRAME) / FRAME)).astype(np.float32)[:, None]
         self.seek(0.0)
 
     @property
     def length(self) -> int:
-        return len(self._x)
+        return self._length
+
+    @property
+    def channels(self) -> int:
+        return self._channels
 
     @property
     def position(self) -> float:
@@ -54,7 +60,7 @@ class Stretcher:
     def seek(self, sample: float) -> None:
         import numpy as np
         self._nominal = float(sample) - HOP  # (a frame before: the first heard then has the one before it under it)
-        self._sum = np.zeros((FRAME, self._x.shape[1]), dtype=np.float32)
+        self._sum = np.zeros((FRAME, self._channels), dtype=np.float32)
         self._follows: int | None = None  # where the last frame goes on, in the audio (none: nothing to fit)
         self._chunks: deque[tuple[Any, float, float]] = deque()  # (made, not read yet: samples, where, speed)
         self._used = 0  # (of the first)
@@ -62,22 +68,36 @@ class Stretcher:
         self._chunks.clear()
 
     def _segment(self, start: int) -> Any:
+        """The parts from start, FRAME samples, mixed at their weights (silence past either end)."""
         import numpy as np
-        x = self._x
-        lo, hi = max(start, 0), min(start + FRAME, len(x))
-        out = np.zeros((FRAME, x.shape[1]), dtype=np.float32)
+        lo, hi = max(start, 0), min(start + FRAME, self._length)
+        out = np.zeros((FRAME, self._channels), dtype=np.float32)
         if hi > lo:
-            out[lo - start:hi - start] = x[lo:hi]
+            for name, part in self._parts.items():
+                weight = self.weights.get(name, 1.0)
+                if weight:
+                    out[lo - start:hi - start] += _float(part[lo:hi]) * weight
+        return out
+
+    def _mono(self, start: int, count: int) -> Any:
+        """The searched part, mono, every DECIMATE'th sample from start (silence past either end)."""
+        import numpy as np
+        out = np.zeros(-(-count // DECIMATE), dtype=np.float32)
+        first = max(0, -(-(-start) // DECIMATE))  # (the first of them at or after 0)
+        lo = start + first * DECIMATE
+        hi = min(start + count, self._length)
+        if hi > lo:
+            got = _float(self._search[lo:hi:DECIMATE]).mean(axis=1)
+            out[first:first + len(got)] = got
         return out
 
     def _best(self, start: int) -> int:
         """Where near start a frame best continues the last (its cross-correlation with what followed it, mono)."""
         import numpy as np
         assert self._follows is not None
-        p = self._pad
-        template = self._mono[p + self._follows:p + self._follows + FRAME:DECIMATE]
-        region = self._mono[p + start - SEEK:p + start + SEEK + FRAME:DECIMATE]
-        if len(region) < len(template) or not template.any():
+        template = self._mono(self._follows, FRAME)
+        region = self._mono(start - SEEK, 2 * SEEK + FRAME)
+        if not template.any():
             return start
         fit = np.correlate(region, template, "valid")
         return start - SEEK + int(np.argmax(fit)) * DECIMATE
@@ -85,7 +105,7 @@ class Stretcher:
     def _frame(self, speed: float) -> None:
         import numpy as np
         start = int(round(self._nominal))
-        if self._follows is not None and -SEEK <= start <= len(self._x) + SEEK:
+        if self._follows is not None and -SEEK <= start <= self._length + SEEK:
             start = self._best(start)
         self._sum += self._segment(start) * self._window
         self._chunks.append((self._sum[:HOP].copy(), self._nominal, speed))
@@ -96,7 +116,7 @@ class Stretcher:
     def read(self, count: int, speed: float) -> Any:
         """The next count samples (count x channels), at a speed (1: as it is); past its end, silence."""
         import numpy as np
-        out = np.zeros((count, self._x.shape[1]), dtype=np.float32)
+        out = np.zeros((count, self._channels), dtype=np.float32)
         done = 0
         while done < count:
             if not self._chunks:
@@ -118,18 +138,24 @@ class SongAudio:
     unheard); not playing, silence. volume: 0 to 1."""
 
     def __init__(self, samples: Any, rate: int, where: Callable[[], tuple[float | None, float]], volume: float = 1.0,
-                 stream_factory: Callable[..., Any] | None = None):
+                 stream_factory: Callable[..., Any] | None = None, weights: dict[str, float] | None = None,
+                 search: Any = None):
         self.rate = rate
         self.volume = volume
         self._where = where
-        self._stretcher = Stretcher(samples)
+        self._stretcher = Stretcher(samples, weights, search)
         self._factory = stream_factory
         self._stream: Any = None
         self._lock = threading.Lock()
 
     @property
     def channels(self) -> int:
-        return int(self._stretcher._x.shape[1])
+        return self._stretcher.channels
+
+    @property
+    def weights(self) -> dict[str, float]:
+        """Each part's volume (0 to 1): changed, heard at once."""
+        return self._stretcher.weights
 
     def fill(self, frames: int, latency: float = 0.0) -> Any:
         """The next frames of sound (frames x channels), heard latency seconds from now."""
@@ -170,8 +196,22 @@ class SongAudio:
             stream.close()
 
 
+def _frames(samples: Any) -> Any:
+    """Samples as samples x channels (int16 kept so: half the memory)."""
+    import numpy as np
+    x = np.asarray(samples)
+    if x.dtype != np.int16:
+        x = x.astype(np.float32)
+    return x[:, None] if x.ndim == 1 else x
+
+
+def _float(samples: Any) -> Any:
+    import numpy as np
+    return samples.astype(np.float32) / 32768.0 if samples.dtype == np.int16 else samples
+
+
 def song_samples(ref: ArrangementRef, game_dir: Path) -> tuple[Any, int]:
-    """A song's audio from its archive (decoded: drums.decode), as samples x channels (-1 to 1) and its rate."""
+    """A song's audio from its archive (decoded: drums.decode), as samples x channels (int16) and its rate."""
     import numpy as np
 
     from . import drums
@@ -181,4 +221,4 @@ def song_samples(ref: ArrangementRef, game_dir: Path) -> tuple[Any, int]:
         with wave.open(str(out)) as w:
             rate, channels = w.getframerate(), w.getnchannels()
             raw = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
-    return raw.reshape(-1, channels).astype(np.float32) / 32768.0, rate
+    return raw.reshape(-1, channels).copy(), rate

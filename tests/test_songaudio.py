@@ -95,3 +95,16 @@ def test_it_plays_on_a_stream_of_the_audios_rate_and_channels():
     assert stream.closed and "device" not in stream.kwargs  # (the Mac's own output)
     audio.start("Speakers")
     assert streams[-1].kwargs["device"] == "Speakers"
+
+
+def test_parts_are_mixed_at_their_weights_as_it_plays():
+    x = tones(1.0)
+    low, high = x * 0.5, x * 0.25
+    weights = {"low": 1.0, "high": 0.0}
+    stretcher = Stretcher({"low": low, "high": high}, weights)
+    assert np.allclose(stretcher.read(4410, 1.0), low[:4410], atol=1e-5)
+    weights["high"] = 1.0  # (heard from the next frame on)
+    later = stretcher.read(8820, 1.0)
+    assert np.allclose(later[-2205:], (low + high)[4410 + 8820 - 2205:4410 + 8820], atol=1e-5)
+    as_ints = Stretcher({"song": (x * 32767).astype(np.int16)})  # (int16: kept so, read as -1 to 1)
+    assert np.allclose(as_ints.read(1000, 1.0), x[:1000], atol=1e-3)
