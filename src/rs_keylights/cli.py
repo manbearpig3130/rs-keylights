@@ -10,7 +10,7 @@ import wave
 from pathlib import Path
 from typing import Sequence
 
-from . import dnafxtone, drums, midiexport, pcsongs, songlistfix
+from . import dnafxtone, drums, midiexport, pcsongs, sampler, songlistfix
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
 from .gui import DEFAULT_GUI_PORT, part_order, song_export
 from .pedal import remember_names
@@ -26,7 +26,7 @@ from .tonemessages import SOURCE, ToneSender, read_rig, virtual_source
 from .parts import Part, plan, player_for
 from .sng import SngError, note_name
 from .sound import BASS_TONE, GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice
-from .tones import TONES, Tone, find_tones, tone
+from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, Tone, find_tones, tone
 
 GAME_DIR_ENV = "RS_KEYLIGHTS_GAME_DIR"
 REARMED_GAME_DIR = Path.home() / "Library" / "Application Support" / "RS Re-ARMed" / "game-dir"
@@ -93,6 +93,27 @@ def build_parser() -> argparse.ArgumentParser:
                               help="make every song's part again that was made before (as an update needs: a minute "
                                    "or so each)")
     drums_parser.set_defaults(handler=run_drums)
+
+    sample = commands.add_parser("sample-drums", help="record the keyboard's drums, one WAV file each (its output "
+                                                      "plugged into an audio input): for a sampler, such as a "
+                                                      "Novation Circuit")
+    sample.add_argument("-o", "--output", type=Path, metavar="FOLDER",
+                        help="where the samples go (default: ~/Music/Casio drums; a kit chosen: a folder in it)")
+    sample.add_argument("--input", metavar="NAME", help="the audio input the keyboard is plugged into, or part of its "
+                                                        "name (default: the Mac's own; --list shows them)")
+    sample.add_argument("--channels", metavar="N[,N]", help="which of its inputs, from 1 (default: found by striking "
+                                                            "the snare; two: a stereo pair)")
+    sample.add_argument("--notes", metavar="N,N...", help="the drums to record, by General MIDI note (default: "
+                                                          "35 to 59: the kit, its cymbals and percussion)")
+    sample.add_argument("--velocity", type=int, default=120, metavar="1-127", help="how hard each is struck (default: 120)")
+    sample.add_argument("--kit", metavar="NAME", help="one of the keyboard's drum kits, chosen first: part of its name "
+                                                      "(standard, room, power, synth, brush, orchestra) or its "
+                                                      "program number; into a folder of its name")
+    sample.add_argument("--all-kits", action="store_true", help="every one of its kits, each into a folder of its "
+                                                                "name (a minute or so each)")
+    sample.add_argument("--reverb", action="store_true", help="keep the keyboard's reverb on them (default: dry)")
+    sample.add_argument("--list", action="store_true", help="list the audio inputs there are, and stop")
+    sample.set_defaults(handler=run_sample_drums)
 
     midi = commands.add_parser("midi", help="save a song as a MIDI file for a DAW: its parts, tempo map, sections, "
                                             "chords, lyrics and drum part (if made)")
@@ -577,6 +598,98 @@ def run_play(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        keyboard.close()
+    return 0
+
+
+def _drum_kits(args: argparse.Namespace) -> list[tuple[str | None, int | None]]:
+    """The keyboard's drum kits asked for: each one's name (its folder) and program; (None, None): the one it's on."""
+    known: dict[str, int] = {name.title(): program for name, program in DRUM_SETS}
+    if args.all_kits:
+        return [(name, program) for name, program in known.items()]
+    if args.kit is None:
+        return [(None, None)]
+    if args.kit.isdigit():
+        program = int(args.kit)
+        if not 0 <= program <= 127:
+            raise ValueError("a kit's program is 0 to 127")
+        return [(next((name for name, p in known.items() if p == program), f"kit {program}"), program)]
+    found: list[tuple[str | None, int | None]] = [(name, program) for name, program in known.items()
+                                                  if args.kit.casefold() in name.casefold()]
+    if len(found) != 1:
+        raise ValueError(f"--kit: one of {', '.join(known)} (or its program number)")
+    return found
+
+
+def run_sample_drums(args: argparse.Namespace) -> int:
+    """The keyboard's drums recorded, a WAV file each, a kit or each of its kits (1: it couldn't)."""
+    try:
+        if args.list:
+            for name, count in sampler.inputs():
+                print(f"{name} ({count} input{'' if count == 1 else 's'})")
+            return 0
+        notes = [int(n) for n in args.notes.split(",")] if args.notes else sorted(sampler.GM_DRUMS)
+        channels = tuple(int(c) - 1 for c in args.channels.split(",")) if args.channels else None
+        if not 1 <= args.velocity <= 127 or any(not 0 <= n <= 127 for n in notes) or \
+                (channels is not None and (not 1 <= len(channels) <= 2 or min(channels) < 0)):
+            raise ValueError("a velocity of 1 to 127, notes of 0 to 127, one or two inputs from 1")
+        kits = _drum_kits(args)
+    except (ValueError, ImportError) as exc:
+        print(f"rs-keylights: {exc}", file=sys.stderr)
+        return 1
+    base = args.output.expanduser() if args.output else Path.home() / "Music" / "Casio drums"
+    keyboard = Keyboard(args.midi_port, args.channel)
+    recorder = sampler.Recorder(args.input)
+    drum = sampler.DRUM_CHANNEL - 1
+    switched = False
+
+    def choose(program: int) -> None:  # (a drum kit: its bank, then its program, on the drum channel)
+        keyboard.send([0xB0 | drum, 0, DRUM_SET_BANK])
+        keyboard.send([0xC0 | drum, program])
+        time.sleep(0.3)
+
+    try:
+        keyboard.open()
+        recorder.start()
+        if channels is not None and max(channels) >= recorder.channels:
+            raise sampler.SamplerError(f"The input has {recorder.channels} channel(s)")
+        if not args.reverb:
+            keyboard.send([0xB0 | drum, sampler.REVERB, 0])
+        time.sleep(0.2)
+        if channels is None:
+            channels, _quiet = sampler.find_channels(keyboard, recorder)
+            print(f"Hearing the keyboard on input{'s' if len(channels) > 1 else ''} "
+                  f"{' + '.join(str(c + 1) for c in channels)}", flush=True)
+        first: tuple[str | None, object] | None = None
+        for name, program in kits:
+            if program is not None:
+                choose(program)
+                switched = True
+            folder = base / name if name else base
+            print(f"{name or 'The kit it is on'}: recording {len(notes)} drums (keep it quiet)...", flush=True)
+            samples = sampler.sample_kit(keyboard, recorder, notes, args.velocity, channels,
+                                         say=lambda text: print(text, flush=True))
+            written = sampler.save_kit(samples, recorder.rate, folder)
+            total = sum(len(s) for s in samples.values()) / recorder.rate
+            stereo = "; in stereo too, in its stereo folder" if any(s.shape[1] > 1 for s in samples.values()) else ""
+            print(f"  {len(written)} samples in {folder} ({total:.1f} s in all{stereo})", flush=True)
+            snare = samples.get(sampler.TEST_NOTE)
+            if first is None:
+                first = (name, snare)
+            elif snare is not None and first[1] is not None and sampler.same_sound(first[1], snare):
+                print(f"  Its snare is the {first[0]}'s: the keyboard may not have switched to it", flush=True)
+    except (KeyboardError, sampler.SamplerError, OSError, ImportError) as exc:
+        print(f"rs-keylights: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            if switched:  # (back on its first kit, as songs' drum parts have it)
+                choose(DRUM_SETS[0][1])
+            if not args.reverb:
+                keyboard.send([0xB0 | drum, sampler.REVERB, sampler.REVERB_USUAL])
+        except KeyboardError:
+            pass
+        recorder.close()
         keyboard.close()
     return 0
 

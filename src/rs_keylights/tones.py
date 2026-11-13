@@ -304,6 +304,8 @@ APPLAUSE|GUNSHOT
 
 _DRUM_SETS = (("STANDARD SET", 0), ("ROOM SET", 8), ("POWER SET", 16), ("SYNTH SET", 25), ("BRUSH SET", 40),
               ("ORCHESTRA SET", 48))
+DRUM_SETS = _DRUM_SETS  # the keyboard's drum kits: each one's name and its program (on the drum channel too)
+DRUM_SET_BANK = 120
 
 _SAMPLED_TONES = (
     "ORIGINAL L|LOOP 1 L|LOOP 2 L|LOOP 3 L|PITCH 1 L|PITCH 2 L|PITCH 3 L|TREMOLO L|FUNNY 1 L|FUNNY 2 L|FUNNY 3 L|"

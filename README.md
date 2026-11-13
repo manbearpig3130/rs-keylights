@@ -476,6 +476,20 @@ snares are off the chart's 16ths (half a 16th, 80 ms, at most). Then one within 
 made before this is moved the first time it's used. It plays on the song's clock, so it keeps time with the game (Riff Repeater and speed changes too). Hi-hats are all closed: open ones can't be told from the cymbals' wash. Parts are kept in
 `~/Library/Caches/rs-keylights/drums/`.
 
+**The keyboard's drums as samples** (for a sampler: a Novation Circuit's packs, through Novation Components):
+`rs-keylights sample-drums` strikes each drum of the keyboard's kit in turn (General MIDI's notes 35 to 59, on its drum
+channel) and records it from the audio input the keyboard's output is plugged into, until it dies away. It finds the
+inputs it's heard on by striking the snare first (`--channels 3,4` says which; `--input NAME` another device than the
+Mac's own, `--list` shows them), trims each to where it starts and ends, and makes the kit as loud as its loudest
+allows (the same gain for all: its balance kept). They go to `~/Music/Casio drums/` (`-o` elsewhere) as
+`36 Kick 1.wav`…: mono, 48 kHz, 16-bit, and in stereo as they were heard in its `stereo` folder. Dry, unless
+`--reverb` keeps the keyboard's; `--velocity` how hard they're struck (120), `--notes 36,38,42` just some. The kit
+recorded is the one the drum channel is on (Standard, as the keyboard starts); `--kit room` chooses another first
+(standard, room, power, synth, brush or orchestra, or its program number), into a folder of its name, and
+`--all-kits` records each of them in turn (a minute or so each), saying so if one sounds the same as the first (the
+keyboard not having switched); it's back on Standard after, as songs' drum parts have it. One sample a drum is all a drum needs: a sampler plays it softer or
+louder, not differently.
+
 The tools: `tools/drums-setup.sh` (once) builds Song Stems' helper with the drums as a part it takes out, from
 rearmed-mods' source (`~/git/rearmed-mods`, or the folder given), and makes a Python with ADTOF's port, both in
 `~/Library/Application Support/rs-keylights/drums/`. It needs the Xcode command line tools, uv, and rearmed-mods' Song

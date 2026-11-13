@@ -239,6 +239,11 @@ class Keyboard:
                 self._send([0x80 | (channel - 1), note, 0])
                 played.discard(note)
 
+    def send(self, message: list[int]) -> None:
+        """A MIDI message as it is (the sampler's: a drum kit chosen, its reverb; not kept track of, nor put back)."""
+        with self._lock:
+            self._send(message)
+
     def bend(self, channel: int, semitones: float) -> None:
         """A song's channel's pitch bend (a note bent: semitones up, or down; its range at most; 0: none)."""
         value = min(max(8192 + round(semitones / self._ranges.get(channel, BEND_RANGE) * 8192), 0), 16383)
