@@ -4,7 +4,7 @@ import pytest
 from rs_keylights import drums
 from rs_keylights.drums import ALIGN_LEAST, CRASH, KICK, RIDE, SNARE, TOMS, Hit, align, pick, refine, snap
 from rs_keylights.library import ArrangementRef
-from rs_keylights.parts import DrumVoices, drum_track
+from rs_keylights.parts import DrumVoices, drum_track, drum_tracks, place
 from rs_keylights.player import Player
 
 from test_player import FakeKeys
@@ -140,6 +140,34 @@ def test_on_a_device_that_chooses_a_drums_sound_its_hits_send_it_first_only_when
                     ("control", 10, 50, 12), ("play", 10, (65,), 90), ("play", 10, (65,), 100)]
 
 
+
+def test_shared_drums_go_where_their_sound_is_else_where_its_died_away_two_at_once_both_played():
+    hat, crash, ride = 42, CRASH, 51
+    placed = place([Hit(1.0, crash, 100), Hit(1.0, hat, 80), Hit(1.25, hat, 80), Hit(1.5, TOMS[2], 90),
+                    Hit(1.75, TOMS[0], 90), Hit(2.0, ride, 90), Hit(2.0, hat, 70), Hit(2.0, TOMS[1], 60)], (64, 65))
+    assert [(h.time, h.note) for h in placed[64]] == [(1.0, crash), (2.0, hat)]
+    assert [(h.time, h.note) for h in placed[65]] == [(1.0, hat), (1.25, hat), (1.5, TOMS[2]), (1.75, TOMS[0]),
+                                                      (2.0, ride)]
+    # (the crash rings on while the hi-hats and toms take turns on the other; three at once: the ride and hi-hat,
+    # the tom dropped)
+
+
+def test_a_part_with_shared_drums_has_a_track_for_each_drum_they_share_choosing_its_sound_as_its_needed():
+    keys = FakeKeys()
+    keys.control = lambda channel, number, value: keys.events.append(("control", channel, number, value))
+    voices = DrumVoices(notes={KICK: 60}, patches={KICK: (8, 1)}, shared={CRASH: 14, TOMS[2]: 15},
+                        pool={64: 44, 65: 50})
+    tracks = drum_tracks([Hit(1.0, KICK, 110), Hit(1.0, CRASH, 100), Hit(1.0, TOMS[2], 90)], voices)
+    assert len(tracks) == 3
+    player = Player(tracks, keys)
+    for at in (0.5, 1.2):
+        player.advance(at)
+    sent = sorted(e for e in keys.events if e[0] in ("control", "play"))
+    assert sent == [("control", 10, 8, 1), ("control", 10, 44, 14), ("control", 10, 50, 15),
+                    ("play", 10, (60,), 110), ("play", 10, (64,), 100), ("play", 10, (65,), 90)]
+    assert len(drum_tracks([Hit(1.0, KICK, 110)], DrumVoices())) == 1  # (none shared: one)
+
+
 def test_a_songs_audio_is_the_one_its_sound_bank_names_wherever_the_bank_is(tmp_path):
     import json
     import struct
@@ -163,3 +191,15 @@ def test_a_songs_audio_is_the_one_its_sound_bank_names_wherever_the_bank_is(tmp_
     assert drums.song_audio(ref(game / "dlc" / "own_m.psarc", "Own"), game) == b"song" * 50
     with pytest.raises(drums.DrumsError, match="No audio found"):  # (songs.psarc's song without its bank: not a guess)
         drums.song_audio(ref(game / "songs.psarc", "Missing"), game)
+
+
+def test_a_drum_part_on_the_keyboard_has_its_kit_chosen_there_as_it_starts():
+    from rs_keylights.parts import player_for
+    from rs_keylights.tones import DRUM_SET_BANK
+    keys = FakeKeys()
+    keys.set_volume = lambda channel, volume: keys.events.append(("volume", channel, volume))
+    player_for([], keys, extra=drum_tracks([Hit(1.0, KICK, 110)], DrumVoices(kit=16, volume=90)))
+    assert ("voice", 10, 16, DRUM_SET_BANK) in keys.events  # (the Power set, on the drum channel)
+    keys.events.clear()
+    player_for([], keys, extra=drum_tracks([Hit(1.0, KICK, 110)], DrumVoices(volume=90)))  # (none: as it is)
+    assert not any(e[0] == "voice" for e in keys.events)

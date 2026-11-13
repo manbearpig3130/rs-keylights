@@ -1682,7 +1682,7 @@ def test_following_knob_2_and_the_pad_below_set_riff_repeaters_speed_and_acceler
 def test_a_songs_drum_part_is_one_more_arrangement_its_pad_mutes_it_and_the_mixer_sets_its_volume():
     watch, gui, launchkey, clock = watching("play")
     gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
-                                     "lights": 0, "tones": {}, "volume": 90})
+                                     "lights": 0, "tones": {}, "volume": 90, "drum_set": 0})
     gui.info["song"] = gui.song
     watch.step()
     assert pads(launchkey)[(0, 3)] == (3, False) and pads(launchkey)[(1, 3)] == (0, 0, 0)  # (white; no lit keys)
@@ -1694,10 +1694,17 @@ def test_a_songs_drum_part_is_one_more_arrangement_its_pad_mutes_it_and_the_mixe
     clock.now = 1.0
     watch.step()
     assert len(gui.changes) == 1 and note(watch) == ("Beat lights: on", None)
-    launchkey.queued = [Turn(3, 1)]  # its knob, outside the mixer: no tones
+    launchkey.queued = [Turn(3, 1)]  # its knob, outside the mixer: the keyboard's drum kits, in turn
     clock.now = 1.5
     watch.step()
-    assert len(gui.changes) == 1 and note(watch) == (None, ("Drums: no tones", "Volume: in the mixer"))
+    assert gui.changes[-1] == ("drums", {"kit": 8}) and watch._picture_of == "parts"  # (Standard, then Room)
+    gui.song["arrangements"][-1]["drum_set"] = 8  # (as the page has it now)
+    launchkey.queued = [Turn(3, -2)]  # (back past the first: the last)
+    clock.now = 1.6
+    watch.step()
+    assert gui.changes[-1] == ("drums", {"kit": 48})
+    gui.changes.pop()
+    gui.changes.pop()
     launchkey.queued = [Button(105), Turn(3, -10)]  # the mixer: its knob, its own volume (not a place's)
     clock.now = 2.0
     watch.step()

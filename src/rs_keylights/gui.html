@@ -424,6 +424,7 @@
     <div id="drumkit" class="drumkit"></div>
     <div id="drumsInfo" class="roll-legend"></div>
     <div id="circuitKit" class="circuit-kit" hidden></div>
+    <div id="casioSet" class="circuit-kit" hidden></div>
   </section>
 
   <section id="audioCard" class="card" hidden>
@@ -1515,6 +1516,7 @@ function renderDrumsCard(s) {
     const where = d.missing ? `its device (${d.missing}) isn't connected: the ${KB()}'s drum channel` :
       d.device ? `${d.device}, channel ${d.channel}` : `the ${KB()}'s drum channel (${d.channel})`;
     showCircuitKit(d);
+    showCasioSet(d);
     $("drumsTitle").textContent = d.made ? "Drums" : "Drums · no drum part yet";
     $("drumsInfo").innerHTML = (d.made ? `<span>${d.hits.length} hits: ${esc(counts.join(" · "))}</span>` :
       `<span>Make one in the song's Drums block (under its parts); click a drum to hear it meanwhile</span>`) +
@@ -1524,7 +1526,11 @@ function renderDrumsCard(s) {
 
 // The drums on a Novation Circuit: each drum of the part on one of its 4 drums, with a sample of its own there (1 to
 // 64: sent before its hits as it's needed; empty: the sample that drum has), so the Circuit plays more than 4. Click
-// the drum above to hear it with it.
+// the drum above to hear it with it. Shared: on whichever of the Circuit's drums no other's on suits it then (so two
+// at once both play, and a crash rings on). A Casio kit: the keyboard's drums sampled (rs-keylights sample-drums) in
+// Components in order of their numbers from slot 1 (35 Kick 2 to 59 Ride 2), a kit to a page of 32: the kick on
+// Drum 1, the snare on 2, the rest shared on 3 and 4.
+const CASIO_KITS = [[1, "Standard"], [2, "Power"]];
 const CIRCUIT_ROWS = [[36, "Kick"], [38, "Snare"], [42, "Hi-hat"], [46, "Open hi-hat"], [51, "Ride"], [49, "Crash"],
   [50, "High tom"], [47, "Mid tom"], [43, "Low tom"]];
 function showCircuitKit(d) {
@@ -1535,18 +1541,20 @@ function showCircuitKit(d) {
     const [drum, sample] = d.kit[String(note)] || [1, null];
     const row = document.createElement("label");
     row.title = "Which of the Circuit's 4 drums plays it, and its sample there (1 to 64; empty: the sample that drum " +
-      "has). Two drums on one Circuit drum at once: the kick, snare, crash, ride, hi-hats, then toms first";
+      "has). Shared: on whichever of the drums no other's on is free then (it needs a sample). Two drums on one " +
+      "Circuit drum at once: the kick, snare, crash, ride, hi-hats, then toms first";
     const label = document.createElement("span");
     label.className = "name";
     label.textContent = name;
     const which = document.createElement("select");
-    which.innerHTML = [1, 2, 3, 4].map((n) => `<option value="${n}">Drum ${n}</option>`).join("");
+    which.innerHTML = [1, 2, 3, 4].map((n) => `<option value="${n}">Drum ${n}</option>`).join("") +
+      '<option value="0">Shared</option>';
     which.value = String(drum);
     const number = document.createElement("input");
     number.type = "number";
     number.min = "1";
     number.max = "64";
-    number.placeholder = "its own";
+    number.placeholder = drum === 0 ? "needed" : "its own";
     number.value = sample == null ? "" : String(sample);
     const send = () => act(async () => {
       const kit = {...d.kit, [note]: [Number(which.value), number.value ? Number(number.value) : null]};
@@ -1558,7 +1566,51 @@ function showCircuitKit(d) {
     number.addEventListener("change", send);
     row.append(label, which, number);
     return row;
+  }), casioKit(d));
+}
+
+// The keyboard's own drum kit, when the drums play on it (every song's): Standard, Power...
+function showCasioSet(d) {
+  const box = $("casioSet");
+  box.hidden = !!d.device;
+  if (box.hidden) return;
+  const row = document.createElement("label");
+  row.title = `The ${KB()}'s drum kit the drum parts play on (every song's)`;
+  const label = document.createElement("span");
+  label.className = "name";
+  label.textContent = "Drum kit";
+  const pick = document.createElement("select");
+  pick.innerHTML = d.drum_sets.map(([program, name]) => `<option value="${program}">${esc(name)}</option>`).join("");
+  pick.value = String(d.drum_set);
+  pick.addEventListener("change", () => act(async () => {
+    await api("/api/drums", {song: selected.id, kit: Number(pick.value)});
+    drumsWanted = "";
+    if (selected) renderDrumsCard(selected);
   }));
+  row.append(label, pick);
+  box.replaceChildren(row);
+}
+
+function casioKit(d) {
+  const row = document.createElement("label");
+  row.title = "Your Casio's drums as sampled (rs-keylights sample-drums), loaded in Components in order of their " +
+    "numbers from slot 1, a kit to a page: the kick on Drum 1, the snare on 2, the rest shared on 3 and 4";
+  const label = document.createElement("span");
+  label.className = "name";
+  label.textContent = "Casio kit";
+  const page = document.createElement("select");
+  page.innerHTML = '<option value="">choose…</option>' +
+    CASIO_KITS.map(([n, name]) => `<option value="${n}">${name} (page ${n})</option>`).join("");
+  page.addEventListener("change", () => page.value && act(async () => {
+    const first = (Number(page.value) - 1) * 32 - 34;  // (35 Kick 2: the page's first slot)
+    const kit = Object.fromEntries(CIRCUIT_ROWS.map(([note]) =>
+      [note, [note === 36 ? 1 : note === 38 ? 2 : 0, note + first]]));
+    await api("/api/settings", {outputs: {drums: {...d.output, kit}}});
+    drumsWanted = "";
+    if (selected) renderDrumsCard(selected);
+  }));
+  row.append(label, page);
+  return row;
 }
 
 function drumsFrame() {

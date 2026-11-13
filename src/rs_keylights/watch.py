@@ -17,7 +17,7 @@ from .lyrics import Line
 from .pedal import SLOTS as PEDAL_SLOTS
 from .sng import Chord, note_name
 from .sound import PINCH_TONE
-from .tones import TONES, tone
+from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, tone
 
 # While the page runs: keeps a Launchkey MK4 as a remote, in step with the page, for the song followed, else
 # the one playing, else the one picked; and shows each followed song's key as it starts.
@@ -1381,6 +1381,13 @@ class Watch:
         if self._picture_of == "parts" and arrangements_now:
             a = arrangements_now[min(self._part_turned, len(arrangements_now) - 1)]
             (field, said), which = FIELDS[self.field], self.field
+            if a["kind"] == "drums" and a.get("drum_set") is not None:  # (the keyboard's drum kit)
+                program = self._drum_set(a)
+                found = next((t for t in TONES if t.bank == DRUM_SET_BANK and t.program == program), None)
+                shown = (found.number, "Drum set", found.name.title()) if found else (None, "Drum set", "?")
+                title, knobs = "Drums kit", len(arrangements_now)
+                return (("parts", title, *shown, knobs, which, muted),
+                        lambda: parts_picture(title, *shown, knobs, which, muted))
             if a.get("output"):  # (on another MIDI device: its program)
                 program, device = self._program_of(a), a["output"]["port"]
                 shown = ((None, "Its own sound", device) if program is None else (program + 1, "Program", device))
@@ -1824,8 +1831,17 @@ class Watch:
             return
         column = min(column, len(arrangements) - 1)
         a, field = arrangements[column], FIELDS[self.field][0]
-        if a["kind"] == "drums":
-            self._say(now, lines=("Drums: no tones", "Volume: in the mixer"))
+        if a["kind"] == "drums":  # (on the keyboard: its drum kits, in turn; another device's: its own)
+            if a.get("drum_set") is None:
+                self._say(now, lines=("Drums: on", str(a.get("drums_on") or "another device")))
+                return
+            kits, was = [program for _name, program in DRUM_SETS], self._drum_set(a)
+            at = kits.index(was) if was in kits else 0
+            kit = kits[(at + steps) % len(kits)]
+            self._pending[("drums", "kit")] = kit
+            self._try(lambda: self.gui.change_part("drums", {"kit": kit}))
+            self._part_turned = column
+            self._show_for_a_while("parts", now)
             return
         if a.get("output"):  # (on another MIDI device: its programs, ten a step with knob 8)
             program = self._program_of(a)
@@ -1853,6 +1869,11 @@ class Watch:
             return numbers[(at + steps) % len(numbers)]
         group = max(i for i, start in enumerate(starts) if start <= at)
         return numbers[starts[(group + steps) % len(starts)]]
+
+    def _drum_set(self, arrangement: dict[str, Any]) -> int | None:
+        """The keyboard's drum kit the drum part plays on (its program; turns not in the page's state yet too)."""
+        pending = self._pending.get(("drums", "kit"))
+        return pending if pending is not None else arrangement.get("drum_set")
 
     def _program_of(self, arrangement: dict[str, Any]) -> int | None:
         """The program of the MIDI device an arrangement sounds on (turns not in the page's state yet too)."""

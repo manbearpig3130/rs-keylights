@@ -13,6 +13,7 @@ from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light, schedule, strums,
 from .player import Player, Track
 from .sng import Arrangement
 from .sound import HARMONICS, KEYBOARD_CHANNELS, Voices
+from .tones import DRUM_SET_BANK
 
 # The parts of a song played together, as play, the page and following make them: each part's lights
 # and voices, and one player for them all.
@@ -20,6 +21,9 @@ from .sound import HARMONICS, KEYBOARD_CHANNELS, Voices
 VoicesFor = Callable[[ArrangementRef, tuple[int, int, int]], Voices]  # a part's voices, on these channels
 HIT_LENGTH = 0.1  # seconds a drum's hit sounds (its sound decays by itself)
 DRUM_ORDER = (KICK, SNARE, CRASH, RIDE, CLOSED_HAT, OPEN_HAT, *reversed(TOMS))  # which wins a device's drum, two at once
+RINGS = {CRASH: 2.0, RIDE: 1.2, OPEN_HAT: 0.6, **{t: 0.4 for t in TOMS}}  # seconds a drum's heard for, about...
+RING = 0.15  # ...the others' (a kick, a closed hi-hat)
+TOGETHER = 0.03  # seconds: hits this close, at once (one of a device's drums can't play both)
 
 
 @dataclass(frozen=True)
@@ -62,7 +66,7 @@ class PlanCache:
     def __init__(self) -> None:
         self._lights: dict[tuple[int, int, int, float], tuple[Arrangement, list[Light]]] = {}
         self._tracks: dict[tuple[int, int, bool, int], list[tuple[PlannedPart, Track]]] = {}
-        self._drums: dict[tuple[int, int], list[tuple[Sequence[Hit], DrumVoices, Track]]] = {}
+        self._drums: dict[tuple[int, int], list[tuple[Sequence[Hit], DrumVoices, list[Track]]]] = {}
         self.player: dict[int, tuple[Track, Any]] = {}  # (Player's, by its track)
 
     def lights(self, arrangement: Arrangement, keys: KeyRange, shift: int, overlap: float) -> list[Light]:
@@ -85,15 +89,17 @@ class PlanCache:
         self._keep(self._tracks).setdefault(key, []).append((p, track))
         return track
 
-    def drums(self, hits: Sequence[Hit], voices: DrumVoices, sound: Any) -> Track:
+    def drums(self, hits: Sequence[Hit], voices: DrumVoices, sound: Any) -> list[Track]:
         key = (id(hits), id(sound))
-        for was_hits, was_voices, track in self._drums.get(key, ()):
-            if was_hits is hits and was_voices == voices and track.sound is sound:
-                was_voices.sent.clear()  # (its drums' sounds chosen again, as a new one's would be)
-                return track
-        track = drum_track(hits, voices, sound)
-        self._keep(self._drums).setdefault(key, []).append((hits, voices, track))
-        return track
+        for was_hits, was_voices, tracks in self._drums.get(key, ()):
+            if was_hits is hits and was_voices == voices and all(t.sound is sound for t in tracks):
+                for track in tracks:  # (its drums' sounds chosen again, as a new one's would be)
+                    if isinstance(track.voices, DrumVoices):
+                        track.voices.sent.clear()
+                return tracks
+        tracks = drum_tracks(hits, voices, sound)
+        self._keep(self._drums).setdefault(key, []).append((hits, voices, tracks))
+        return tracks
 
     def _keep(self, store: dict[Any, Any]) -> dict[Any, Any]:
         """The store, emptied first when it's full."""
@@ -166,6 +172,12 @@ class DrumVoices:
     # last on that control); what was sent last, by control
     patches: Mapping[int, tuple[int, int]] = field(default_factory=dict)
     sent: dict[int, int] = field(default_factory=dict, compare=False)
+    # Drums that share some of the device's (each hit on whichever suits it then: place): their sounds there
+    # (General MIDI note -> the patch select's value), and the drums they share (the device's note -> its patch
+    # select's Control Change)
+    shared: Mapping[int, int] = field(default_factory=dict)
+    pool: Mapping[int, int] = field(default_factory=dict)
+    kit: int | None = None  # the keyboard's drum kit (its program, tones.DRUM_SETS'); none: as it is
 
     def pick(self, light: Light) -> tuple[int, tuple[int, ...], int]:
         return self.channel, self.notes_for(light), max(1, min(127, light.mask))
@@ -197,6 +209,41 @@ def drum_track(hits: Sequence[Hit], voices: DrumVoices, sound: Any = None) -> Tr
     return Track(lights, voices, lit=False, sound=sound)
 
 
+def drum_tracks(hits: Sequence[Hit], voices: DrumVoices, sound: Any = None) -> list[Track]:
+    """A drum part's tracks: its drum_track, and with drums that share some of the device's (voices.shared), a
+    track for each of those (pool) with the hits placed on it."""
+    if not (voices.shared and voices.pool):
+        return [drum_track(hits, voices, sound)]
+    out = [drum_track([h for h in hits if h.note not in voices.shared], voices, sound)]
+    placed = place([h for h in hits if h.note in voices.shared], tuple(voices.pool))
+    for device_note, number in voices.pool.items():
+        own = DrumVoices(channel=voices.channel, notes={n: device_note for n in voices.shared}, volume=voices.volume,
+                         patches={n: (number, value) for n, value in voices.shared.items()})
+        out.append(Track([Light(h.time, h.time + HIT_LENGTH, (), (h.note,), h.velocity) for h in placed[device_note]],
+                         own, lit=False, sound=sound))
+    return out
+
+
+def place(hits: Sequence[Hit], drums: Sequence[int]) -> dict[int, list[Hit]]:
+    """Hits shared by several of a device's drums (each plays one sound at a time, its sound chosen first), each on
+    one of them: one that has its sound already (nothing to change; struck again, it stops itself, as it would),
+    else the one whose sound dies away first (RINGS: a crash isn't stopped while another's free); never one struck
+    at the same moment (TOGETHER). More at once than there are drums: the first of DRUM_ORDER."""
+    out: dict[int, list[Hit]] = {d: [] for d in drums}
+    has: dict[int, int | None] = {d: None for d in drums}
+    struck = {d: -math.inf for d in drums}
+    heard = {d: -math.inf for d in drums}  # (until)
+    for h in sorted(hits, key=lambda h: (h.time, DRUM_ORDER.index(h.note) if h.note in DRUM_ORDER else 99)):
+        free = [d for d in drums if h.time - struck[d] >= TOGETHER]
+        if not free:
+            continue
+        same = [d for d in free if has[d] == h.note]
+        drum = same[0] if same else min(free, key=lambda d: (heard[d], struck[d]))
+        out[drum].append(h)
+        has[drum], struck[drum], heard[drum] = h.note, h.time, h.time + RINGS.get(h.note, RING)
+    return out
+
+
 def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float = LIGHTS_EARLY,
                min_period: float = MIN_PERIOD, extra: Sequence[Track] = (), cache: PlanCache | None = None) -> Player:
     """Sets the parts' tones on the keyboard and makes their player (lead: seconds the keys light early;
@@ -204,7 +251,10 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
     for track in extra:
         if isinstance(track.voices, DrumVoices):  # (its channel's volume; its device's drum sounds as they are)
             sound: Any = track.sound or keyboard  # (a Keyboard or a Synth: both set a channel's volume)
-            sound.set_volume(track.voices.channel, track.voices.volume)
+            if track.sound is None and track.voices.kit is not None:  # (the keyboard's: its kit too)
+                keyboard.set_voice(track.voices.channel, track.voices.kit, DRUM_SET_BANK, volume=track.voices.volume)
+            else:
+                sound.set_volume(track.voices.channel, track.voices.volume)
     for p in planned:
         if p.voices is None:
             continue

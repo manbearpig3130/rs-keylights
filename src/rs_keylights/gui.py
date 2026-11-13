@@ -48,7 +48,7 @@ from .songtones import FIRST_KINDS, KINDS as TONE_KINDS, kind_changes, song_tone
 from .keyshow import KeyShow
 from .songkey import Key, find_key, scale_show, shapes, tuning_name
 from .sound import GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Squeal, Voice, Voices, squeal_from
-from .tones import TONES, Tone, tone
+from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, Tone, tone
 from .watch import Watch
 
 # A page in the browser for what the commands do: the song library, parts and their tones, playback
@@ -281,7 +281,8 @@ def _recalled(table: dict[str, Any], change: Any, known: Any) -> tuple[Any, dict
 
 def _circuit_kit(change: Any) -> dict[str, list[int | None]]:
     """A Novation Circuit's drums for each General MIDI drum (CIRCUIT_KIT, changed), checked: which of its 4 drums
-    plays it (1 to 4), and its sound there (one of its samples, 1 to 64; None: the one that drum has)."""
+    plays it (1 to 4; 0, CIRCUIT_SHARED: whichever of those no drum's on suits it then), and its sound there (one of
+    its samples, 1 to 64; None: the one that drum has, and a shared drum's not played)."""
     if not isinstance(change, dict):
         raise GuiError("Expected the Circuit's drum for each drum")
     out = {str(note): list(drum) for note, drum in CIRCUIT_KIT.items()}
@@ -289,9 +290,9 @@ def _circuit_kit(change: Any) -> dict[str, list[int | None]]:
         if str(note) not in out:
             raise GuiError(f"No drum {note!r}")
         if not isinstance(drum, (list, tuple)) or len(drum) != 2:
-            raise GuiError("Expected a Circuit drum (1 to 4) and its sample (1 to 64, or none)")
+            raise GuiError("Expected a Circuit drum (1 to 4, or 0: shared) and its sample (1 to 64, or none)")
         sample = drum[1]
-        out[str(note)] = [int(_number(drum[0], "Circuit drum", 1, 4)),
+        out[str(note)] = [int(_number(drum[0], "Circuit drum", CIRCUIT_SHARED, 4)),
                           None if sample in (None, "") else int(_number(sample, "sample", 1, 64))]
     return out
 
@@ -300,28 +301,40 @@ def _circuit_kit(change: Any) -> dict[str, list[int | None]]:
 # original Novation Circuit's 4 drums on its channel 10 (its Programmer's Reference Guide 1.3: Drum 1 to 4 on notes 60,
 # 62, 64 and 65, and each one's sample chosen with a Control Change, its patch select, 0 to 63): each drum of the part
 # on one of them (CIRCUIT_KIT, changed on the page), with a sample of its own if it's given one (sent before its hits
-# as it's needed, so one of the Circuit's drums plays several)
+# as it's needed, so one of the Circuit's drums plays several). Or shared (CIRCUIT_SHARED): those drums on the
+# Circuit's drums no other's on, each hit on whichever suits it then (parts.place: so two at once both play, and a
+# crash rings on), the kick and snare kept on drums of their own (their knobs on the Circuit theirs)
 DRUM_MAPS = ("gm", "circuit")
 CIRCUIT_NOTES = {1: 60, 2: 62, 3: 64, 4: 65}
 CIRCUIT_PATCH_SELECT = {1: 8, 2: 18, 3: 44, 4: 50}
+CIRCUIT_SHARED = 0
 CIRCUIT_KIT: dict[int, tuple[int, int | None]] = {  # (Drum 1 the kick, 2 the snare, 3 the hi-hats and ride: time is
     # kept on one or the other; 4 the crash and toms)
     drums.KICK: (1, None), drums.SNARE: (2, None), drums.CLOSED_HAT: (3, None), drums.OPEN_HAT: (3, None),
     drums.RIDE: (3, None), drums.CRASH: (4, None), **{t: (4, None) for t in drums.TOMS}}
 
 
-def _drum_voicing(output: dict[str, Any] | None) -> tuple[dict[int, int | None], dict[int, tuple[int, int]]]:
-    """The drums' device's notes for each General MIDI drum, and the sounds chosen on it first (CC, value)."""
+def _drum_voicing(output: dict[str, Any] | None) -> dict[str, Any]:
+    """The drums' device's voicing (DrumVoices'): its notes for each General MIDI drum, the sounds chosen on it first
+    (CC, value), and the drums shared and the Circuit drums they share (none: the drums no other's on are 4's)."""
     if not output or output.get("map") != "circuit":
-        return {}, {}
-    kit = _circuit_kit(output.get("kit") or {})
+        return {"notes": {}, "patches": {}, "shared": {}, "pool": {}}
+    kit = {int(note): (int(drum or 0), sample) for note, (drum, sample) in _circuit_kit(output.get("kit") or {}).items()}
     notes: dict[int, int | None] = {}
     patches: dict[int, tuple[int, int]] = {}
+    shared = {note: int(sample) - 1 for note, (drum, sample) in kit.items() if drum == CIRCUIT_SHARED and sample}
+    own = {drum for drum, _sample in kit.values() if drum != CIRCUIT_SHARED}
+    pool = {CIRCUIT_NOTES[d]: CIRCUIT_PATCH_SELECT[d] for d in sorted(set(CIRCUIT_NOTES) - own) or [4]}
     for note, (drum, sample) in kit.items():
-        notes[int(note)] = CIRCUIT_NOTES[int(drum or 1)]
+        if drum == CIRCUIT_SHARED:
+            notes[note] = next(iter(pool)) if sample else None  # (as it's struck on the page: its first drum)
+            if sample:
+                patches[note] = (next(iter(pool.values())), int(sample) - 1)
+            continue
+        notes[note] = CIRCUIT_NOTES[drum]
         if sample:
-            patches[int(note)] = (CIRCUIT_PATCH_SELECT[int(drum or 1)], int(sample) - 1)
-    return notes, patches
+            patches[note] = (CIRCUIT_PATCH_SELECT[drum], int(sample) - 1)
+    return {"notes": notes, "patches": patches, "shared": shared, "pool": pool}
 DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
 DRUM_HIT_LENGTH = 0.15  # seconds a drum struck on the page sounds (its sound decays by itself)
@@ -534,7 +547,8 @@ class Gui:
                                          "outputs": {}, "outputs_known": {}, "most_lights": False, "beat_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME, "keys_output": None,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
-                                         "pedal_favourites": list(PEDAL_FAVOURITES), "pinch": asdict(Squeal())}
+                                         "pedal_favourites": list(PEDAL_FAVOURITES), "pinch": asdict(Squeal()),
+                                         "drum_set": DRUM_SETS[0][1]}  # (the keyboard's drum kit: its program)
         self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
         self.follow_version = 0  # changes with them, so pages know to show them again
         self._follow_saved = False
@@ -607,6 +621,8 @@ class Gui:
                 self.settings["keys_output"] = _keys_output(self.settings["keys_output"])
             except (GuiError, TypeError, ValueError, AttributeError):
                 self.settings["keys_output"] = None
+            if self.settings["drum_set"] not in dict(DRUM_SETS).values():
+                self.settings["drum_set"] = DRUM_SETS[0][1]
             try:
                 self.settings["pinch"] = asdict(squeal_from(Squeal(), self.settings["pinch"]))
             except (ValueError, TypeError, AttributeError):
@@ -853,7 +869,10 @@ class Gui:
         if not made and not drums.setup_done():
             return arrangements
         chosen = self._drum_settings(sid)
+        output = self.settings["outputs"].get("drums")
+        elsewhere = output["port"] if output and self._synth(output["port"]) is not None else None
         entry = {"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": made and chosen["play"],
+                 "drum_set": None if elsewhere else self.settings["drum_set"], "drums_on": elsewhere,
                  "lights": 0, "tones": {}, "chords": (), "tone_changes": (), "notes": (), "output": None,
                  "volume": chosen["volume"], "made": made, "making": bool(self._making.get(sid, {}).get("step")),
                  "progress": self._making.get(sid, {}).get("progress") if self._making.get(sid, {}).get("step") else None,
@@ -881,16 +900,27 @@ class Gui:
             return []
         output = self.settings["outputs"].get("drums")
         synth = self._synth(output["port"]) if output else None
-        notes, patches = _drum_voicing(output) if output and synth else ({}, {})
-        voices = DrumVoices(channel=output["channel"] if output and synth else drums.DRUM_CHANNEL, notes=notes,
-                            patches=patches, volume=chosen["volume"])
-        return [self._made.drums(hits, voices, synth)]
+        voicing = _drum_voicing(output if output and synth else None)
+        voices = DrumVoices(channel=output["channel"] if output and synth else drums.DRUM_CHANNEL,
+                            volume=chosen["volume"], kit=None if synth else self.settings["drum_set"], **voicing)
+        return self._made.drums(hits, voices, synth)
 
     def set_drums(self, body: dict[str, Any]) -> dict[str, Any]:
         """A song's drum part played or not ("play"), how loud ("volume", 0 to 127), or made ("make": again, if it
-        is), in the background (a minute or so); what plays goes on with it at once."""
+        is), in the background (a minute or so); what plays goes on with it at once. Or the keyboard's drum kit
+        ("kit": its program; every song's)."""
         sid = str(body.get("song", ""))
         loaded = self._load(sid)
+        if "kit" in body:
+            kit = int(_number(body["kit"], "drum kit", 0, 127))
+            if kit not in dict(DRUM_SETS).values():
+                raise GuiError(f"No drum kit {kit}")
+            with self._lock:
+                changed = kit != self.settings["drum_set"]
+                self.settings["drum_set"] = kit
+            if changed:
+                self._save()
+                self._drums_on(sid)
         if body.get("make"):
             self._make_drums(sid, loaded)
         with self._lock:
@@ -918,13 +948,15 @@ class Gui:
         hits = self._drum_hits(sid) or []
         chosen = self.settings["outputs"].get("drums")
         there = chosen is not None and self._synth(chosen["port"]) is not None
-        mapped, _patches = _drum_voicing(chosen) if chosen and there else ({}, {})
+        mapped = _drum_voicing(chosen if chosen and there else None)["notes"]
         return {"made": bool(hits), "hits": [[round(h.time, 3), h.note, h.velocity] for h in hits],
                 "device": chosen["port"] if chosen and there else None,
                 "channel": chosen["channel"] if chosen and there else drums.DRUM_CHANNEL,
                 "notes": {str(n): mapped.get(n, n) for n in drums.NAMES}, "names": {str(n): name for n, name in drums.NAMES.items()},
                 "missing": chosen["port"] if chosen and not there else None,
-                "output": chosen, "kit": _circuit_kit((chosen or {}).get("kit") or {})}
+                "output": chosen, "kit": _circuit_kit((chosen or {}).get("kit") or {}),
+                "drum_set": self.settings["drum_set"],
+                "drum_sets": [[program, name.title()] for name, program in DRUM_SETS]}
 
     def hit_drum(self, body: dict[str, Any]) -> dict[str, Any]:
         """A drum struck (from the page's drums card: to hear it, and tune its sound): its General MIDI note
@@ -934,7 +966,8 @@ class Gui:
         chosen = self.settings["outputs"].get("drums")
         synth = self._synth(chosen["port"]) if chosen else None
         if synth is not None:
-            notes, patches = _drum_voicing(chosen)
+            voicing = _drum_voicing(chosen)
+            notes, patches = voicing["notes"], voicing["patches"]
             played = notes.get(note, note)
             if played is None:
                 return {"played": None}
@@ -947,6 +980,7 @@ class Gui:
             keyboard = self._keys_keyboard(open_one=True)
             if keyboard is None:
                 raise GuiError(f"No {self._keyboard_name} to play it on")
+            keyboard.set_voice(drums.DRUM_CHANNEL, self.settings["drum_set"], DRUM_SET_BANK)  # (its kit: as set)
             keyboard.sound(drums.DRUM_CHANNEL, note, velocity)
         threading.Timer(DRUM_HIT_LENGTH, lambda: keyboard.sound(drums.DRUM_CHANNEL, note, 0)).start()
         return {"played": note}
@@ -2471,7 +2505,8 @@ class Gui:
         changes = dict(changes)
         drummed = changes.pop("drums", None)  # (the drum part: its own mute and volume)
         if drummed is not None:
-            self.set_drums({"song": song["id"], **{k: v for k, v in drummed.items() if k in ("play", "volume", "make")}})
+            self.set_drums({"song": song["id"], **{k: v for k, v in drummed.items()
+                                                   if k in ("play", "volume", "make", "kit")}})
         if not changes:
             return
         if info["mode"] == "follow":

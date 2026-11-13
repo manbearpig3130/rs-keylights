@@ -211,7 +211,7 @@ def test_settings_are_kept(server, tmp_path):
         "keys_tone": 1, "keys_volume": 100, "keys_output": None, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187], "pinch": {"up": 19, "velocity": 127, "note_velocity": 70, "scoop": 0.5,
                                                  "scoop_ms": 80.0, "width": 1.05, "rate": 15.0, "grows_ms": 200.0,
-                                                 "vibrato": "always"}}
+                                                 "vibrato": "always"}, "drum_set": 0}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
@@ -1488,3 +1488,15 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
     assert call(server, "/api/play/options", {"stem_volumes": {"bass": 120}})[0] == 400
     call(server, "/api/stop", {})
     assert info["making"] or made
+
+
+def test_shared_circuit_drums_go_on_the_drums_none_is_on_with_their_own_samples():
+    from rs_keylights.gui import _drum_voicing
+    kit = {"36": [1, 2], "38": [2, 4], "42": [0, 8], "46": [0, 12], "49": [0, 15], "51": [0, None], "43": [0, 9],
+           "47": [0, 13], "50": [0, 16]}
+    voicing = _drum_voicing({"map": "circuit", "kit": kit})
+    assert voicing["pool"] == {64: 44, 65: 50} and voicing["shared"][42] == 7 and 51 not in voicing["shared"]
+    assert voicing["notes"][36] == 60 and voicing["patches"][36] == (8, 1) and voicing["notes"][51] is None
+    # (the ride: no sample, not played)
+    kept = _drum_voicing({"map": "circuit", "kit": {**kit, "43": [4, None]}})
+    assert kept["pool"] == {64: 44} and kept["notes"][43] == 65  # (a tom kept on Drum 4: the rest share 3)
