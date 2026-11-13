@@ -394,6 +394,12 @@ def _changed_options(options: dict[str, Any], change: dict[str, Any]) -> dict[st
             raise GuiError(f"Expected the parts' volumes ({', '.join(stems.STEMS)})")
         out["stem_volumes"] = {**{s: 100 for s in stems.STEMS}, **out.get("stem_volumes", {}),
                                **{k: int(_number(v, f"the {k}' volume", 0, 100)) for k, v in given.items()}}
+    if "stem_mutes" in change:  # (and each one muted or not: its volume kept)
+        given = change["stem_mutes"]
+        if not isinstance(given, dict) or any(k not in stems.STEMS for k in given):
+            raise GuiError(f"Expected the parts muted ({', '.join(stems.STEMS)})")
+        out["stem_mutes"] = {**{s: False for s in stems.STEMS}, **out.get("stem_mutes", {}),
+                             **{k: bool(v) for k, v in given.items()}}
     if "audio_device" in change:  # (an audio output, by name; none: the Mac's own, as it is)
         device = change["audio_device"]
         if device is not None and not isinstance(device, str):
@@ -535,7 +541,8 @@ class Gui:
         # Playing songs: the options, the song picked, and each song's parts, lit keys, tones and start
         self.play_options: dict[str, Any] = {"speed": 1.0, "real_pitch": True, "silent": False, "song": None,
                                              "audio": False, "audio_volume": AUDIO_VOLUME, "audio_device": None,
-                                             "stem_volumes": {stem: 100 for stem in stems.STEMS}}  # (real
+                                             "stem_volumes": {stem: 100 for stem in stems.STEMS},
+                                             "stem_mutes": {stem: False for stem in stems.STEMS}}  # (real
         # pitch: the notes as they sound on the guitar, at first)
         self.song_settings: dict[str, dict[str, Any]] = {}
         self.play_version = 0
@@ -1403,8 +1410,8 @@ class Gui:
             audio = self._song_audio
             if audio is not None and "audio_volume" in changed:
                 audio.volume = options["audio_volume"] / 100
-            if audio is not None and "stem_volumes" in changed:  # (heard at once)
-                audio.weights.update(_stem_weights(options["stem_volumes"], audio.weights))
+            if audio is not None and changed & {"stem_volumes", "stem_mutes"}:  # (heard at once)
+                audio.weights.update(_stem_weights(options, audio.weights))
             if isinstance(session, Playback) and session.running and self._playing:
                 if changed & {"audio", "audio_device"}:
                     self._audio_on(self._playing["id"])
@@ -1622,7 +1629,7 @@ class Gui:
                 loaded = self._load(sid)
                 named = next((r for r, _a in loaded if r.artist), loaded[0][0])
                 samples, parts, rate = self._song_samples(sid, named)
-                weights = _stem_weights(self.play_options["stem_volumes"], parts) if parts else None
+                weights = _stem_weights(self.play_options, parts) if parts else None
                 audio = SongAudio(parts or samples, rate, where, self.play_options["audio_volume"] / 100,
                                   stream_factory=self._audio_stream, weights=weights, search=samples)
                 with self._lock:
@@ -1656,6 +1663,22 @@ class Gui:
         making = self._splitting.get(sid, {})
         return {"made": stems.made(ref), "making": bool(making.get("making")), "progress": making.get("progress"),
                 "error": making.get("error"), "can": stems.can_make(), "names": list(stems.STEMS)}
+
+    def audio_info(self, sid: str | None) -> dict[str, Any]:
+        """The song's own audio, for a remote (the Launchkey's stem mixer): on or off, its volume, its parts' volumes
+        and which are muted, and whether the song (if there's one) is split into them (being split: how far; whether
+        it can be)."""
+        options = self.play_options
+        split: dict[str, Any] = {}
+        if sid:
+            try:
+                split = self.stems_info(sid)
+            except (GuiError, OSError, ValueError):
+                split = {}
+        return {"on": bool(options["audio"]), "volume": int(options["audio_volume"]),
+                "volumes": dict(options["stem_volumes"]), "mutes": dict(options["stem_mutes"]),
+                "made": bool(split.get("made")), "making": bool(split.get("making")),
+                "progress": split.get("progress"), "can": bool(split.get("can")), "there": drums.can_decode()}
 
     def set_stems(self, body: dict[str, Any]) -> dict[str, Any]:
         """A song's parts made ("make"), in the background (a minute or two); played with its audio once they are."""
@@ -1959,6 +1982,7 @@ class Gui:
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "music": self.game_music(), "volumes": list(self.settings["volumes"]),
+                    "audio": self.audio_info(followed["id"] if followed else None),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
                     "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
         sid, song = playing or self.play_options.get("song"), None
@@ -1990,6 +2014,7 @@ class Gui:
                 "real_pitch": self.play_options["real_pitch"], **defaults, "song": song, "position": position,
                 "length": length, "paused": paused, "speed": self.play_options["speed"],
                 "volumes": list(self.settings["volumes"]), "loop": self.loop_info(sid),
+                "audio": self.audio_info(sid if song is not None else None),
                 "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
                     "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
 
@@ -3341,9 +3366,11 @@ def _pinch(value: Any) -> Tone | None:
     return _tone(value)
 
 
-def _stem_weights(volumes: dict[str, int], parts: Any) -> dict[str, float]:
-    """The song's parts' weights (0 to 1) from their volumes (0 to 100), for those it has."""
-    return {stem: volumes.get(stem, 100) / 100 for stem in parts}
+def _stem_weights(options: dict[str, Any], parts: Any) -> dict[str, float]:
+    """The song's parts' weights (0 to 1) from playing's options: their volumes (0 to 100; muted: 0), for those it
+    has."""
+    volumes, mutes = options["stem_volumes"], options["stem_mutes"]
+    return {stem: 0.0 if mutes.get(stem) else volumes.get(stem, 100) / 100 for stem in parts}
 
 
 def _audio_outputs() -> list[str]:

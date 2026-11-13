@@ -13,6 +13,9 @@ from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLU
                                 _pedal_tone_said)
 
 
+STEM_NAMES = ("drums", "bass", "guitar", "vocals", "piano", "other")
+
+
 class FakeGui:
     def __init__(self, mode="follow"):
         self.settings = {"launchkey": True}
@@ -33,6 +36,10 @@ class FakeGui:
         self.game = {"answered": True, "hook": True, "riff": True}  # (following: the game's riffloop mod)
         self.riff, self.riff_calls = {"speed": 100, "accelerator": False, "passes": 1}, []
         self.music = None  # (following: the game's Music volume; None: its mod hasn't it)
+        self.audio = {"on": False, "volume": 80, "volumes": {s: 100 for s in STEM_NAMES},  # (the song's own audio)
+                      "mutes": {s: False for s in STEM_NAMES}, "made": True, "making": False, "progress": None,
+                      "can": True, "there": True}
+        self.options, self.splits = [], []
         self.pedal = {"slot": 49, "previous": None, "error": None, "favourites": [51, 187], "hold": False}
         self.song = {
             "id": "song", "title": "Amon Amarth - Twilight of the Thunder God", "played": "L" if mode == "follow" else None,
@@ -57,7 +64,8 @@ class FakeGui:
     def remote_info(self):
         return {**self.info, "sound": self.sound, "real_pitch": self.real_pitch, "keys": self.keys,
                 "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal),
-                "riff": dict(self.riff), "music": self.music}
+                "riff": dict(self.riff), "music": self.music,
+                "audio": {**self.audio, "volumes": dict(self.audio["volumes"]), "mutes": dict(self.audio["mutes"])}}
 
     def toggle_listen(self):
         self.listen = not self.listen
@@ -165,9 +173,22 @@ class FakeGui:
         return self.real_pitch
 
     def set_play_options(self, body):
-        self.speeds.append(body["speed"])
-        self.info["speed"] = body["speed"]
+        self.options.append(dict(body))
+        if "speed" in body:
+            self.speeds.append(body["speed"])
+            self.info["speed"] = body["speed"]
+        if "audio" in body:
+            self.audio["on"] = body["audio"]
+        if "audio_volume" in body:
+            self.audio["volume"] = body["audio_volume"]
+        self.audio["volumes"].update(body.get("stem_volumes", {}))
+        self.audio["mutes"].update(body.get("stem_mutes", {}))
         return body
+
+    def set_stems(self, body):
+        self.splits.append(dict(body))
+        self.audio["making"], self.audio["progress"] = True, 0.0
+        return {}
 
     def browse_move(self, songs):
         self.browsed = min(max(self.browsed + songs, 0.0), len(self.library) - 1.0)
@@ -1799,3 +1820,129 @@ def test_a_drum_part_being_made_shows_how_far_on_the_songs_screen():
     clock.now = 0.5
     watch.step()
     assert not any("Making drums" in str(x) for x in watch._screen(clock.now)[0][0])
+
+
+def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(105)]  # Func: the mixer, on the arrangements' volumes
+    clock.now = 0.5
+    watch.step()
+    assert watch.mix_page == "parts" and ("button", 51, 3, 127) in launchkey.calls  # (the up arrow lit: its page)
+    launchkey.queued = [Button(52)]  # the down arrow: the song's parts'
+    clock.now = 1.0
+    watch.step()
+    assert watch.mix_knobs and watch.mix_page == "stems"
+    assert launchkey.calls.index(("button", 52, 3, 127)) > launchkey.calls.index(("button", 51, 3, 127))
+    names = ["Dr", "Bs", "Gtr", "Vx", "Ky", "Oth", "All"]
+
+    def mixer(volumes, turned, quiet):
+        return mixer_picture(names, volumes, turned, quiet=quiet, tops=[100] * 7).data()
+
+    off = [False] * 6 + [True]  # (the song's audio: off as it starts)
+    assert screens(launchkey)[-1] == mixer([100] * 6 + [80], 6, off)
+    assert pads(launchkey)[(0, 0)] == (100, 100, 100) and pads(launchkey)[(0, 2)] == (127, 45, 0)  # a part each
+    assert pads(launchkey)[(0, CONTROLS)] == (5, False) and pads(launchkey)[(0, KEYS_COLUMN)] == (0, False)
+    assert pads(launchkey)[(1, 0)] == (0, 0, 0)  # (none below)
+    launchkey.queued = [Turn(2, -30)]  # knob 3: the guitar's volume
+    clock.now = 1.5
+    watch.step()
+    assert gui.options[-1] == {"stem_volumes": {"guitar": 70}}
+    assert screens(launchkey)[-1] == mixer([100, 100, 70, 100, 100, 100, 80], 2, off)
+    launchkey.queued = [Turn(2, -90)]  # (to none, no lower)
+    clock.now = 2.0
+    watch.step()
+    assert gui.audio["volumes"]["guitar"] == 0
+    launchkey.queued = [Pad(0, 0)]  # the drums' pad on top: muted (red, greyed: its volume kept)
+    clock.now = 2.5
+    watch.step()
+    assert gui.options[-1] == {"stem_mutes": {"drums": True}} and pads(launchkey)[(0, 0)] == (5, False)
+    assert screens(launchkey)[-1] == mixer([100, 100, 0, 100, 100, 100, 80], 0, [True] + off[1:])
+    launchkey.queued = [Pad(0, 0)]  # again: back
+    clock.now = 3.0
+    watch.step()
+    assert gui.audio["mutes"]["drums"] is False and pads(launchkey)[(0, 0)] == (100, 100, 100)
+    launchkey.queued = [Pad(0, CONTROLS)]  # the right pad on top: the song's audio on (green), not the keyboard's mute
+    clock.now = 3.5
+    watch.step()
+    assert gui.audio["on"] and gui.sound and pads(launchkey)[(0, CONTROLS)] == (21, False)
+    launchkey.queued = [Turn(CONTROLS, 15)]  # knob 8: its volume
+    clock.now = 4.0
+    watch.step()
+    assert gui.options[-1] == {"audio_volume": 95}
+    assert screens(launchkey)[-1] == mixer([100, 100, 0, 100, 100, 100, 95], 6, [False] * 7)
+    launchkey.queued = [Turn(KEYS_COLUMN, 5), Pad(1, 1)]  # knob 7: none; a pad below: what the page does
+    clock.now = 4.5
+    watch.step()
+    assert gui.options[-1] == {"audio_volume": 95} and gui.changes == []
+    assert note(watch) == (None, ("Pads on top: mute a part", "Knobs: its volume, 8: all")) and watch.mix_knobs
+    launchkey.queued = [Button(51)]  # the up arrow: the arrangements' volumes again
+    clock.now = 5.0
+    watch.step()
+    assert watch.mix_page == "parts" and watch.mix_knobs and pads(launchkey)[(0, 0)] == (9, False)  # (the lead's)
+    launchkey.queued = [Button(52), Button(105)]  # its parts', then Func: closed
+    clock.now = 5.5
+    watch.step()
+    assert not watch.mix_knobs and watch.mode == "parts"
+    launchkey.queued = [Button(105)]  # opened again: on the page it was kept on
+    clock.now = 6.0
+    watch.step()
+    assert watch.mix_page == "stems"
+    launchkey.queued = [Button(105), Turn(CONTROLS, 1)]  # closed; knob 8 alone: the arrangements' volumes, as ever
+    clock.now = 6.5
+    watch.step()
+    assert watch.mix_knobs and watch.mix_page == "parts" and gui.keys["volume"] == 101
+    launchkey.queued = [Button(52)]  # (up for a while, not kept: the arrow's the knobs' on playing the song, as ever)
+    clock.now = 7.0
+    watch.step()
+    assert not watch.mix_knobs and watch.mode == "playback"
+
+
+def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    gui.audio.update(made=False)
+    watch.step()
+    launchkey.queued = [Button(105), Button(52)]
+    clock.now = 0.5
+    watch.step()
+    assert note(watch) == (None, ("Song not split yet:", "a pad on top splits it"))
+    assert pads(launchkey)[(0, 1)] == (0, 5, 15)  # (its parts' pads: dim)
+    launchkey.queued = [Turn(0, 5)]  # a part's knob: nothing to turn yet
+    clock.now = 1.0
+    watch.step()
+    assert gui.options == [] and note(watch) == (None, ("Song not split yet:", "a pad on top splits it"))
+    launchkey.queued = [Pad(0, 3)]  # a part's pad: it's split (a minute or two: pulsing)
+    clock.now = 1.5
+    watch.step()
+    assert gui.splits == [{"song": "song", "make": True}] and pads(launchkey)[(0, 3)] == (3, True)
+    assert note(watch) == (None, ("Splitting the song", "into its parts..."))
+    gui.audio["progress"] = 0.42
+    clock.now = 2.0
+    watch.step()  # (what the page has now)
+    launchkey.queued = [Pad(0, 3)]  # again: how far it is (not started twice)
+    clock.now = 2.1
+    watch.step()
+    assert len(gui.splits) == 1 and note(watch) == (None, ("Splitting the song", "into its parts: 42%"))
+    launchkey.queued = [Turn(CONTROLS, -10)]  # (the song's own volume: split or not)
+    clock.now = 2.5
+    watch.step()
+    assert gui.options[-1] == {"audio_volume": 70}
+    gui.audio.update(made=False, making=False, can=False)  # (the separator not rebuilt)
+    clock.now = 3.0
+    watch.step()
+    launchkey.queued = [Pad(0, 0)]
+    clock.now = 3.1
+    watch.step()
+    assert len(gui.splits) == 1 and note(watch) == (None, ("To split songs, run", "tools/drums-setup.sh"))
+
+    watch, gui, launchkey, clock = watching()  # following: the game plays the song
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(105), Button(52)]
+    clock.now = 0.5
+    watch.step()
+    assert watch.mix_knobs and watch.mix_page == "parts"
+    assert note(watch) == (None, ("The song's parts:", "not while following"))
+    assert pads(launchkey)[(0, 0)] == (9, False)  # (the arrangements' pads still)

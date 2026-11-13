@@ -48,13 +48,23 @@ def made(ref: ArrangementRef, cache: Path | None = None) -> bool:
         all((_folder(ref, cache) / f"{stem}.m4a").exists() for stem in SEPARATED)
 
 
+_can: dict[Path, tuple[float, int, bool]] = {}  # (separators looked at: as each was then, its time and size)
+
+
 def can_make(tools: Path | None = None) -> bool:
-    """Whether the separator takes out every part (drums-setup.sh run again since it took out drums alone)."""
+    """Whether the separator takes out every part (drums-setup.sh run again since it took out drums alone). (Asked
+    often: it's read once, again only when it changes.)"""
     helper = (tools or drums.tools_dir()) / "rs-stems-drums"
     try:
-        return b"\x00piano\x00" in helper.read_bytes()
+        stat = helper.stat()
+        seen = _can.get(helper)
+        if seen is not None and seen[:2] == (stat.st_mtime, stat.st_size):
+            return seen[2]
+        can = b"\x00piano\x00" in helper.read_bytes()
     except OSError:
         return False
+    _can[helper] = (stat.st_mtime, stat.st_size, can)
+    return can
 
 
 def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_home: Path | None = None,

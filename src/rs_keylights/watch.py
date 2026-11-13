@@ -48,7 +48,10 @@ from .tones import TONES, tone
 #   again, as they do outside it; the pitch strip moves the slider last used (a knob's, or a pad's on top; knob
 #   8 or Mute: all of them). The pads below give lit keys, rails beside the sliders showing them. On the screen
 #   until Func again or anything else is done (but the pads below and Rocksmith's keys). The pads are on the
-#   arrangements while it's up, and back on playing the song after, if they were.
+#   arrangements while it's up, and back on playing the song after, if they were. Kept up, the down arrow turns it
+#   to its other page, the song's own audio (the page's 🎵): knobs 1 to 6 its parts' volumes (stems), knob 8 its
+#   own, the pads on top mute each part, the right one turns the audio on or off; a song not split, a part's pad
+#   splits it. The up arrow: the arrangements' volumes again. (Not while following.)
 # - The right column: Mute (top pad: green sound, red just the lights; muted, every screen shows a crossed-out
 #   speaker in its corner), and following the game (bottom pad).
 # - Its Scale button: while its own Scale mode (which takes the song's key) is on, the song's scale is on the
@@ -161,6 +164,15 @@ SOUND_ON, SOUND_OFF, FOLLOWING, NOT_FOLLOWING = 21, 5, 37, 39  # the right colum
 KEYS_ON, KEYS_RGB = 49, (60, 0, 127)  # its keys' pads: purple
 GUITAR_ON, GUITAR_RGB = 13, (127, 100, 0)  # the guitar's pads: yellow
 MUTED_PAD = 5  # an arrangement (or its keys) muted, in the mixer: red
+# The mixer's other page (the down arrow, while Func keeps it up; the up arrow: the arrangements' again): the song's
+# own audio (the page's 🎵), its parts (stems) a knob each and the pad on top its mute, knob 8 its volume and the
+# pad on top its switch. Each part: its name on the page, on the screen, its pad's palette colour and its own
+STEMS = (("drums", "Dr", (100, 100, 100)), ("bass", "Bs", (0, 45, 127)), ("guitar", "Gtr", (127, 45, 0)),
+         ("vocals", "Vx", (127, 0, 90)), ("piano", "Ky", (60, 0, 127)), ("other", "Oth", (0, 100, 90)))
+STEM_PULSE = 3  # (their pads while the song's being split: white, pulsing)
+STEMS_TO_SPLIT = 0.12  # a song not split yet: their pads this dim (a tap splits it)
+STEM_STEP = 1  # a step of their knobs, of a volume (0 to 100)
+AUDIO_ON, AUDIO_OFF = 21, 5  # the song's audio's pad: green playing, red off
 MUTED_LEVEL = 0.08  # and outside it: its colour, as dim as it goes
 LIT, DIM = (3, 127), (1, 20)  # a button's light: palette colour and brightness
 CONTROLS = 7  # the column of the right-hand pads and the last knob
@@ -215,6 +227,9 @@ class GuiProtocol(Protocol):
         ...
 
     def set_play_options(self, body: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def set_stems(self, body: dict[str, Any]) -> dict[str, Any]:
         ...
 
     def remote_dialling(self, dialling: dict[str, Any]) -> None:
@@ -288,6 +303,8 @@ class Watch:
         self.field = 0  # the tones knobs 1 to 6 step through (one of FIELDS)
         self.mix_knobs = False  # the knobs are the volumes (the mixer)
         self._mixer_kept = False  # the mixer stays until it's closed (else it's up for a while: knob 8)
+        self.mix_page = "parts"  # its page: "parts" (the arrangements' volumes) or "stems" (the song's audio's)
+        self._mix_page_last = "parts"  # (the one Func opens it on: the last it was kept on)
         self._mode_after = "parts"  # the mode the knobs and pads go back to as it closes (it has the arrangements)
         self._mix_slider = CONTROLS  # the mixer's slider last used (its knob; knob 8: all of them), the pitch
         # strip's while it's up
@@ -564,6 +581,8 @@ class Watch:
                     colour = (0 if pc is None else TONIC if pc == key["tonic"] else IN_SCALE if pc in scale
                               else ALSO if pc in also else 0)
                     picture[(row, column)] = ("palette", colour, False)
+        elif self.mix_knobs and self._stems_page(info):
+            self._stem_pads(picture, info)
         else:
             parts = self.mode == "parts"
             arrangements = song["arrangements"][:ARRANGEMENT_KNOBS] if song and parts else []
@@ -620,11 +639,39 @@ class Watch:
         picture[SIDE_BUTTONS[1]] = LIT if self.mix_knobs else DIM  # Func: the mixer
         picture[ENCODER_BUTTONS[0]] = LIT if self.mode == "parts" else DIM  # which the knobs are for: the parts
         picture[ENCODER_BUTTONS[1]] = LIT if self.mode == "playback" else DIM  # or playing the song
+        if self.mix_knobs and self._mixer_kept:  # (the mixer kept up: its pages)
+            stems = self._stems_page(info)
+            picture[ENCODER_BUTTONS[0]], picture[ENCODER_BUTTONS[1]] = (DIM, LIT) if stems else (LIT, DIM)
         picture[PLAY] = LIT if _sign(info) == "playing" else DIM
         other = self._browsed is not None and (song is None or self._browsed != song["id"])
         switches = info.get("mode") != "follow" and (other or info.get("mode") == "play")  # to another, or stopping
         picture[RECORD] = LIT if switches else DIM
         return picture
+
+    def _stems_page(self, info: dict[str, Any]) -> bool:
+        """The mixer's on the song's audio's page (not while following: the game plays the song)."""
+        return self.mix_page == "stems" and info.get("mode") != "follow"
+
+    def _stem_pads(self, picture: dict[Any, Any], info: dict[str, Any]) -> None:
+        """The mixer's stems page: on top a pad a part (its colour; muted, red; the song not split, dim: a tap
+        splits it, pulsing white while it does), the right one the song's audio (green on, red off); none below
+        (but following's)."""
+        audio = info.get("audio") or {}
+        mutes = audio.get("mutes") or {}
+        for column in range(CONTROLS):
+            picture[(0, column)], picture[(1, column)] = ("palette", 0, False), ("rgb", 0, 0, 0)
+        for column, (stem, _label, rgb) in enumerate(STEMS):
+            if audio.get("making"):
+                picture[(0, column)] = ("palette", STEM_PULSE, True)
+            elif not audio.get("made"):
+                picture[(0, column)] = ("rgb", *(round(c * STEMS_TO_SPLIT) for c in rgb))
+            elif mutes.get(stem):
+                picture[(0, column)] = ("palette", MUTED_PAD, False)
+            else:
+                picture[(0, column)] = ("rgb", *rgb)
+        picture[(0, CONTROLS)] = ("palette", AUDIO_ON if audio.get("on") else AUDIO_OFF, False)
+        following = info.get("mode") == "follow"
+        picture[(1, CONTROLS)] = ("palette", FOLLOWING if following else NOT_FOLLOWING, following)
 
     def _playback_pads(self, picture: dict[Any, Any], info: dict[str, Any]) -> None:
         """Playing the song: the loop's pads on top (its start and end, lit when it has them; on, pulsing; the
@@ -659,8 +706,9 @@ class Watch:
             return
         if not (isinstance(event, Button) and event.number == TRACK_BUTTONS[0]):
             self._lyrics_home = False  # (Track back, next: the lyrics as they're sung first)
+        paging = self._mixer_kept and isinstance(event, Button) and event.number in ENCODER_BUTTONS  # (its pages)
         mixing = (isinstance(event, (Turn, Strip)) or isinstance(event, Pad) and event.row == 0 or
-                  isinstance(event, Button) and event.number == SIDE_BUTTONS[1])
+                  isinstance(event, Button) and event.number == SIDE_BUTTONS[1] or paging)
         game_key = isinstance(event, Button) and (event.number in (SIDE_BUTTONS[0], TRACK_BUTTONS[1]) or
                                                   event.number == TRACK_BUTTONS[0] and info.get("mode") == "follow")
         # (Rocksmith's keys, or said to be: the mixer stays up; Record, as ever, closes it)
@@ -670,6 +718,9 @@ class Watch:
             self._close_mixer()
         if self.mix_knobs and mixing:
             self._mix(event, info, now)
+            return
+        if self.mix_knobs and self._stems_page(info) and isinstance(event, Pad) and event.column != CONTROLS:
+            self._say(now, lines=("Pads on top: mute a part", "Knobs: its volume, 8: all"))  # (none below)
             return
         if isinstance(event, ScaleMode):  # its own display shows the scale; the pads and the keys show it too
             if event.on != self.scale_view:
@@ -1285,6 +1336,16 @@ class Watch:
         info = self._info or {}
         arrangements_now = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]  # (with knobs)
         muted = not info.get("sound", True)
+        if self._picture_of == "mixer" and self._stems_page(info):  # the song's parts', then the song's audio's
+            audio = info.get("audio") or {}
+            mutes, split = audio.get("mutes") or {}, bool(audio.get("made"))
+            names = [label for _stem, label, _rgb in STEMS] + ["All"]
+            volumes = [self._stem_volume(stem, info) for stem, _label, _rgb in STEMS] + [self._audio_volume(info)]
+            quiet = [not split or bool(mutes.get(stem)) for stem, _label, _rgb in STEMS] + [not audio.get("on")]
+            turned = len(STEMS) if self._mix_slider == CONTROLS else min(self._mix_slider, len(STEMS) - 1)
+            tops = [100] * len(names)
+            return (("mixer", "stems", *volumes, *quiet, turned, muted),
+                    lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, tops=tops))
         if self._picture_of == "mixer":  # the arrangements', the game's music (following), then its keys'
             music = self._music_of(info)
             game = [] if music is None else [music]
@@ -1526,6 +1587,7 @@ class Watch:
         if not self.mix_knobs:
             self._mode_after, self.mode = self.mode, "parts"
             self._mix_slider, self._mix_strip = CONTROLS, None
+            self.mix_page = self._mix_page_last if kept else "parts"  # (knob 8's: the arrangements' volumes)
         self.mix_knobs, self._mixer_kept = True, kept
         self._show_for_a_while("mixer", now)
         if kept:
@@ -1545,11 +1607,16 @@ class Watch:
         used), or closes it. What's said over it goes as it's used."""
         arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
         self._note_until = 0.0
-        if isinstance(event, Button):  # (Func)
+        if isinstance(event, Button) and event.number in ENCODER_BUTTONS:  # (its pages: up, the arrangements';
+            # down, the song's audio's)
+            self._mix_page_to("parts" if event.number == ENCODER_BUTTONS[0] else "stems", info, now)
+        elif isinstance(event, Button):  # (Func)
             if self._mixer_kept:
                 self._close_mixer()
             else:
                 self._open_mixer(now, kept=True)
+        elif self._stems_page(info):
+            self._mix_stems(event, info, now)
         elif isinstance(event, Turn):
             self._open_mixer(now, kept=self._mixer_kept)
             self._turn_volume(event.encoder, event.steps, info, now)  # (after: what it can't do is said over it)
@@ -1569,6 +1636,92 @@ class Watch:
             self._toggle_part(arrangements[event.column], now)
             self._mix_slider = event.column
 
+    def _mix_page_to(self, page: str, info: dict[str, Any], now: float) -> None:
+        """The mixer on one of its pages (kept up): the arrangements' volumes, or the song's audio's parts'."""
+        self._open_mixer(now, kept=True)
+        if page == "stems" and info.get("mode") == "follow":
+            self._say(now, lines=("The song's parts:", "not while following"))
+            return
+        if page != self.mix_page:
+            self._mix_slider, self._mix_strip = CONTROLS, None
+        self.mix_page = self._mix_page_last = page
+        audio = info.get("audio") or {}
+        if page == "stems" and not audio.get("made"):
+            self._say(now, lines=self._splitting(audio) if audio.get("making") else
+                      ("Song not split yet:", "a pad on top splits it"))
+
+    @staticmethod
+    def _splitting(audio: dict[str, Any]) -> tuple[str, str]:
+        return ("Splitting the song", f"into its parts: {round((audio.get('progress') or 0) * 100)}%")
+
+    def _mix_stems(self, event: Pad | Turn | Button | ScaleMode | Strip, info: dict[str, Any], now: float) -> None:
+        """The mixer's stems page: knobs 1 to 6 the song's parts' volumes (in its own audio), 8 its volume; the pads
+        on top mute each or play it again, the right one turns the song's audio on or off. A song not split: a
+        part's pad splits it (a minute or two)."""
+        audio = info.get("audio") or {}
+        self._open_mixer(now, kept=self._mixer_kept)
+        if isinstance(event, Turn):
+            self._turn_stem(event.encoder, event.steps, info, now)
+        elif isinstance(event, Strip):
+            self._slide_volume(event.value, event.at or now, info, now)
+        elif isinstance(event, Pad) and event.column == CONTROLS:
+            on = not audio.get("on")
+            if self._try(lambda: self.gui.set_play_options({"audio": on})):
+                self._info = {**info, "audio": {**audio, "on": on}}
+                self._mix_slider = CONTROLS
+        elif isinstance(event, Pad) and event.column < len(STEMS):
+            stem = STEMS[event.column][0]
+            if not audio.get("made"):
+                self._split(info, now)
+                return
+            muted = not (audio.get("mutes") or {}).get(stem)
+            if self._try(lambda: self.gui.set_play_options({"stem_mutes": {stem: muted}})):
+                self._info = {**info, "audio": {**audio, "mutes": {**(audio.get("mutes") or {}), stem: muted}}}
+                self._mix_slider = event.column
+
+    def _split(self, info: dict[str, Any], now: float) -> None:
+        """The song split into its parts (a part's pad, on a song not split): started, or how far it is, said."""
+        audio, song = info.get("audio") or {}, info.get("song")
+        if audio.get("making"):
+            self._say(now, lines=self._splitting(audio))
+        elif song is None:
+            self._say(now, line="No song to split")
+        elif not audio.get("can"):
+            self._say(now, lines=("To split songs, run", "tools/drums-setup.sh"))
+        elif self._try(lambda: self.gui.set_stems({"song": song["id"], "make": True})):
+            self._info = {**info, "audio": {**audio, "making": True, "progress": 0.0}}
+            self._say(now, lines=("Splitting the song", "into its parts..."))
+
+    def _turn_stem(self, encoder: int, steps: int, info: dict[str, Any], now: float) -> None:
+        """A knob of the stems page: 1 to 6 a part's volume, 8 the song's audio's (0 to 100), at once."""
+        audio = info.get("audio") or {}
+        if encoder == CONTROLS:
+            volume = min(max(self._audio_volume(info) + steps * STEM_STEP, 0), 100)
+            self._pending[("audio", "volume")] = volume
+            self._try(lambda: self.gui.set_play_options({"audio_volume": volume}))
+            self._mix_slider = CONTROLS
+            return
+        if encoder >= len(STEMS):
+            return
+        if not audio.get("made"):
+            self._say(now, lines=self._splitting(audio) if audio.get("making") else
+                      ("Song not split yet:", "a pad on top splits it"))
+            return
+        stem = STEMS[encoder][0]
+        volume = min(max(self._stem_volume(stem, info) + steps * STEM_STEP, 0), 100)
+        self._pending[("stem", stem)] = volume
+        self._try(lambda: self.gui.set_play_options({"stem_volumes": {stem: volume}}))
+        self._mix_slider = encoder
+
+    def _stem_volume(self, stem: str, info: dict[str, Any]) -> int:
+        """A part's volume in the song's audio (turns not in the page's state yet too)."""
+        pending = self._pending.get(("stem", stem))
+        return pending if pending is not None else int(((info.get("audio") or {}).get("volumes") or {}).get(stem, 100))
+
+    def _audio_volume(self, info: dict[str, Any]) -> int:
+        pending = self._pending.get(("audio", "volume"))
+        return pending if pending is not None else int((info.get("audio") or {}).get("volume", 100))
+
     def _slide_volume(self, value: int, at: float, info: dict[str, Any], now: float) -> None:
         """The pitch strip in the mixer: the slider last used (all of them, without one) up or down as it slides,
         a step a step, as a knob turns it; let go (springing back) or put down again, nothing moves."""
@@ -1580,7 +1733,8 @@ class Watch:
         self._mix_strip = (value, step, at)
         if last is None or (at - last[2] > NEW_TOUCH and abs(step - last[1]) > NEW_TOUCH_STEPS) or step == last[1]:
             return
-        self._turn_volume(self._mix_slider, step - last[1], info, now)
+        turn = self._turn_stem if self._stems_page(info) else self._turn_volume  # (the page's sliders)
+        turn(self._mix_slider, step - last[1], info, now)
 
     def _turn_volume(self, encoder: int, steps: int, info: dict[str, Any], now: float) -> None:
         """A mixer's knob: 1 to 6 the volume of the arrangement in its place (the same in every song), 7 its keys',

@@ -1477,6 +1477,13 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
     _, options = call(server, "/api/play/options", {"stem_volumes": {"drums": 0, "vocals": 40}})
     assert options["stem_volumes"]["drums"] == 0 and options["stem_volumes"]["bass"] == 100
     assert audio.weights["drums"] == 0.0 and audio.weights["vocals"] == 0.4 and audio.weights["other"] == 1.0
+    _, options = call(server, "/api/play/options", {"stem_mutes": {"vocals": True}})  # (muted: its volume kept)
+    assert options["stem_mutes"]["vocals"] and options["stem_volumes"]["vocals"] == 40 and audio.weights["vocals"] == 0.0
+    remote = gui.remote_info()["audio"]  # (the Launchkey's stem mixer: what it shows)
+    assert remote["on"] and remote["made"] and remote["volumes"]["drums"] == 0 and remote["mutes"]["vocals"]
+    call(server, "/api/play/options", {"stem_mutes": {"vocals": False}})
+    assert audio.weights["vocals"] == 0.4
+    assert call(server, "/api/play/options", {"stem_mutes": {"kazoo": True}})[0] == 400
     assert call(server, "/api/play/options", {"stem_volumes": {"kazoo": 10}})[0] == 400
     assert call(server, "/api/play/options", {"stem_volumes": {"bass": 120}})[0] == 400
     call(server, "/api/stop", {})

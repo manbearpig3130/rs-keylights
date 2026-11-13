@@ -2925,7 +2925,8 @@ function renderAudioCard(s) {
   card.hidden = !s;
   if (card.hidden || !s.stems) return;
   const d = s.stems, volumes = (playOptions && playOptions.stem_volumes) || {};
-  const shown = JSON.stringify([s.id, d, volumes]);
+  const mutes = (playOptions && playOptions.stem_mutes) || {};
+  const shown = JSON.stringify([s.id, d, volumes, mutes]);
   if (shown === audioShown) return;
   audioShown = shown;
   $("audioPartsNote").textContent = d.making ? "Splitting it into parts…" :
@@ -2961,11 +2962,12 @@ function renderAudioCard(s) {
     slider.addEventListener("change", () => changeOptions({stem_volumes: {[stem]: Number(slider.value)}}));
     const mute = document.createElement("button");
     mute.type = "button";
-    const off = Number(slider.value) === 0;
+    const off = !!mutes[stem];  // (muted: its volume kept, for when it's back)
     mute.className = "part-mute" + (off ? " on" : "");
     mute.textContent = off ? "🔇" : "🔊";
     mute.title = off ? `Muted: the ${STEM_NAMES[stem]} back` : `Mute the ${STEM_NAMES[stem]}`;
-    mute.addEventListener("click", () => changeOptions({stem_volumes: {[stem]: off ? 100 : 0}}));
+    mute.addEventListener("click", () => changeOptions({stem_mutes: {[stem]: !off}}));
+    slider.style.opacity = off ? "0.4" : "";
     grid.append(label, slider, out, mute);
   }
   clearTimeout(stemsPoll);  // (being split: how far, until it's done)
@@ -3243,11 +3245,12 @@ function checkLights() {
 let playOptions = null;
 
 async function loadPlayOptions(info) {
-  const was = playOptions && JSON.stringify(playOptions.stem_volumes);
+  const parts = (o) => o && JSON.stringify([o.stem_volumes, o.stem_mutes]);
+  const was = parts(playOptions);
   playOptions = info || await api("/api/play/options");
   showSpeed(playOptions.speed);
   showOptions();
-  if (selected && was !== JSON.stringify(playOptions.stem_volumes)) renderAudioCard(selected);  // (its parts)
+  if (selected && was !== parts(playOptions)) renderAudioCard(selected);  // (its parts)
 }
 
 function changeOptions(change) {

@@ -361,8 +361,17 @@ song playing, else the active one:
   first). Nothing's said for the pads (the sliders show them). Opened by Func, it stays until Func again or
   anything else is done (Mute leaves it open, the speaker in its corner; the pads below, Follow and
   Rocksmith's menu keys don't close it). Follow says what it did over the names for a few seconds, or
-  until the mixer is used again. While it's open the pads are on the arrangements, even after ▼; they go back to playing the
+  until the mixer is used again. While it's open the pads are on the arrangements; they go back to playing the
   song as it closes.
+- **The mixer's other page: the song's parts.** While Func keeps the mixer up, **▼** (beside the knobs, lit) turns
+  it to the song's own audio (the page's 🎵) and **▲** back to the arrangements' volumes. **Knobs 1–6** are its
+  parts' volumes (drums, bass, guitar, vocals, keys, other: Dr, Bs, Gtr, Vx, Ky, Oth on the screen), heard as they
+  turn; **knob 8** is the song's audio's own volume (All). The **pads on top** mute each part or play it again
+  (its colour; muted: red, its slider greyed, its volume kept), and the **right pad on top** turns the song's audio
+  on or off (green playing, red off: off each time rs-keylights starts), instead of Mute. The pitch strip moves the
+  slider last used. A song not split yet has its parts' pads dim: a tap on one splits it (a minute or two, the pads
+  pulsing white; again says how far it is). Func opens the mixer on the page it was last kept on; knob 8 alone
+  opens the arrangements' volumes, as ever. Not while following (the game plays the song).
 - **The right column**: the top pad is Mute, as on the page (green: sound on; red: muted, just the lights;
   every screen shows a crossed-out speaker in its corner), the bottom one following the game (on or off).
 - **Rocksmith's menus**, following (lit; with RS Re-ARMed's riffloop mod, which types the game's keys):
