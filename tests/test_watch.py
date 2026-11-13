@@ -36,6 +36,7 @@ class FakeGui:
         self.game = {"answered": True, "hook": True, "riff": True}  # (following: the game's riffloop mod)
         self.riff, self.riff_calls = {"speed": 100, "accelerator": False, "passes": 1}, []
         self.music = None  # (following: the game's Music volume; None: its mod hasn't it)
+        self.game_stems, self.game_stem_calls = None, []  # (the game's song's parts: rearmed-mods' Song Stems)
         self.audio = {"on": False, "volume": 80, "volumes": {s: 100 for s in STEM_NAMES},  # (the song's own audio)
                       "mutes": {s: False for s in STEM_NAMES}, "made": True, "making": False, "progress": None,
                       "can": True, "there": True}
@@ -65,6 +66,7 @@ class FakeGui:
         return {**self.info, "sound": self.sound, "real_pitch": self.real_pitch, "keys": self.keys,
                 "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal),
                 "riff": dict(self.riff), "music": self.music,
+                "game_stems": dict(self.game_stems) if self.game_stems else self.game_stems,
                 "audio": {**self.audio, "volumes": dict(self.audio["volumes"]), "mutes": dict(self.audio["mutes"])}}
 
     def toggle_listen(self):
@@ -90,6 +92,17 @@ class FakeGui:
             raise ValueError("Music volume: update the riffloop mod")
         self.music = min(max(self.music + body["step"], 0), 100)
         return {"music": self.music}
+
+    def set_game_stems(self, body):  # (the game's song's guitar or bass, as RSMods.ini has them)
+        self.game_stem_calls.append(dict(body))
+        part = body["part"]
+        if "level" in body:
+            self.game_stems[part] = body["level"]
+        elif body.get("mute"):
+            self.game_stems[f"{part}_was"], self.game_stems[part] = self.game_stems[part], 0
+        else:
+            self.game_stems[part] = self.game_stems.pop(f"{part}_was", 100)
+        return dict(self.game_stems)
 
     def set_game_riff(self, body):  # (following: Riff Repeater's settings)
         self.riff_calls.append(dict(body))
@@ -1951,5 +1964,53 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     clock.now = 0.5
     watch.step()
     assert watch.mix_knobs and watch.mix_page == "parts"
-    assert note(watch) == (None, ("The song's parts:", "not while following"))
+    assert note(watch) == (None, ("The game's song parts", "need rearmed-mods"))  # (no RSMods.ini)
     assert pads(launchkey)[(0, 0)] == (9, False)  # (the arrangements' pads still)
+    gui.game_stems = {"on": False, "guitar": 100, "bass": 100}  # (rearmed-mods, its Song Stems off)
+    clock.now = 1.0
+    watch.step()
+    launchkey.queued = [Button(52)]
+    clock.now = 1.5
+    watch.step()
+    assert watch.mix_page == "parts" and note(watch) == (None, ("Song Stems is off:", "turn it on in the mods"))
+
+
+def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_and_its_music():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"] = gui.song  # (the lead playing: the guitar's taken out of the game's song)
+    gui.game_stems, gui.music = {"on": True, "guitar": 100, "bass": 60}, 80
+    watch.step()
+    launchkey.queued = [Button(105), Button(52)]
+    clock.now = 0.5
+    watch.step()
+    assert watch.mix_page == "stems"
+
+    def mixer(volumes, turned, quiet):
+        return mixer_picture(["Bs", "Gtr", "Music"], volumes, turned, quiet=quiet, tops=[100] * 3).data()
+
+    assert screens(launchkey)[-1] == mixer([60, 100, 80], 2, [True, False, False])  # (the bass waits its turn)
+    assert pads(launchkey)[(0, 2)] == (127, 45, 0) and pads(launchkey)[(0, 1)] == (0, 11, 32)  # (bright, dim)
+    assert pads(launchkey)[(0, 0)] == (0, False) and pads(launchkey)[(0, CONTROLS)] == (21, False)  # (none else;
+    # Mute, as ever)
+    launchkey.queued = [Turn(2, -40)]  # knob 3: the guitar in the game's song
+    clock.now = 1.0
+    watch.step()
+    assert gui.game_stem_calls[-1] == {"part": "guitar", "level": 60}
+    assert screens(launchkey)[-1] == mixer([60, 60, 80], 1, [True, False, False])
+    launchkey.queued = [Pad(0, 2)]  # its pad: muted (red), then back where it was
+    clock.now = 1.5
+    watch.step()
+    assert gui.game_stems["guitar"] == 0 and pads(launchkey)[(0, 2)] == (5, False)
+    launchkey.queued = [Pad(0, 2)]
+    clock.now = 2.0
+    watch.step()
+    assert gui.game_stems["guitar"] == 60 and pads(launchkey)[(0, 2)] == (127, 45, 0)
+    launchkey.queued = [Turn(CONTROLS, -5)]  # knob 8: the game's Music volume
+    clock.now = 2.5
+    watch.step()
+    assert gui.music == 75 and screens(launchkey)[-1] == mixer([60, 60, 75], 2, [True, False, False])
+    calls = len(gui.game_stem_calls)
+    launchkey.queued = [Turn(0, 5)]  # the drums' knob: not in the game's song
+    clock.now = 3.0
+    watch.step()
+    assert len(gui.game_stem_calls) == calls and note(watch) == (None, ("In the game's song:", "just the bass and guitar"))

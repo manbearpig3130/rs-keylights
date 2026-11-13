@@ -1500,3 +1500,24 @@ def test_shared_circuit_drums_go_on_the_drums_none_is_on_with_their_own_samples(
     # (the ride: no sample, not played)
     kept = _drum_voicing({"map": "circuit", "kit": {**kit, "43": [4, None]}})
     assert kept["pool"] == {64: 44} and kept["notes"][43] == 65  # (a tom kept on Drum 4: the rest share 3)
+
+
+def test_the_games_song_parts_are_set_in_its_mods_settings_muted_and_back_where_they_were(tmp_path):
+    (tmp_path / "game").mkdir()
+    index = SongIndex(tmp_path / "game", tmp_path / "index.json")
+    gui = Gui(index, settings_file=tmp_path / "gui.json", list_ports=list, other_follow=lambda: False)
+    assert gui.game_stems_info() is None
+    with pytest.raises(GuiError, match="rearmed-mods"):
+        gui.set_game_stems({"part": "guitar", "level": 50})
+    ini = tmp_path / "game" / "RSMods.ini"
+    ini.write_text("[Toggle Switches]\nSongStems = off\n\n[Mod Settings]\nSongStemsGuitarLevel = 100\n")
+    with pytest.raises(GuiError, match="Song Stems is off"):
+        gui.set_game_stems({"part": "guitar", "level": 50})
+    ini.write_text(ini.read_text().replace("= off", "= on"))
+    assert gui.set_game_stems({"part": "guitar", "level": 70}) == {"on": True, "guitar": 70, "bass": 100}
+    assert gui.set_game_stems({"part": "guitar", "step": -5})["guitar"] == 65
+    assert gui.set_game_stems({"part": "guitar", "mute": True})["guitar"] == 0
+    assert gui.set_game_stems({"part": "guitar", "mute": False})["guitar"] == 65  # (back where it was)
+    assert "SongStemsGuitarLevel = 65" in ini.read_text()
+    with pytest.raises(GuiError, match="guitar or bass"):
+        gui.set_game_stems({"part": "drums", "level": 0})

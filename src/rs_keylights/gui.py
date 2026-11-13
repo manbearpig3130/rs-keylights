@@ -34,7 +34,7 @@ from . import drums, midiexport, theory
 from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
 from .player import Track, squeal_bends
 from .session import Following, Playback
-from . import stems
+from . import gamestems, stems
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
 from .lyrics import Line, lyric_lines
@@ -487,6 +487,8 @@ class Gui:
         self._game_seen: str | None = None
         self._game_sent: tuple[float, str | None] = (-math.inf, None)
         self._riff_settings: dict[str, Any] = {"speed": 100, "accelerator": False, "passes": 1}  # (as set here)
+        self._game_stems_read: tuple[Any, dict[str, Any] | None] = (None, None)  # (RSMods.ini as last read)
+        self._game_stems_was: dict[str, int] = {}  # (a part muted: its level before, to go back to)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -2016,6 +2018,7 @@ class Gui:
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "music": self.game_music(), "volumes": list(self.settings["volumes"]),
+                    "game_stems": self.game_stems_info(),
                     "audio": self.audio_info(followed["id"] if followed else None),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
                     "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
@@ -2220,6 +2223,49 @@ class Gui:
         self.game_time()
         said = self._game_said
         return "playing" if said is not None and said.playing else "paused" if said is not None and said.paused else None
+
+    def game_stems_info(self) -> dict[str, Any] | None:
+        """The game's song's guitar and bass (rearmed-mods' Song Stems mod, gamestems): the mod on or off ("on") and
+        each part's level (0 to 100); None without rearmed-mods (no RSMods.ini). (Read again only as it changes.)"""
+        path = gamestems.ini_path(self.index.game_dir)
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        key = (stat.st_mtime_ns, stat.st_size)
+        if self._game_stems_read[0] != key:
+            self._game_stems_read = (key, gamestems.read(path))
+        return self._game_stems_read[1]
+
+    def set_game_stems(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The game's song's guitar or bass ("part") at a level ("level", 0 to 100), stepped up or down ("step"),
+        or muted and back ("mute": true at 0, false back where it was): kept in RSMods.ini, heard within a second
+        (the Song Stems mod reading it again). The levels as they are then."""
+        part = str(body.get("part", ""))
+        if part not in gamestems.PARTS:
+            raise GuiError(f"No part {part!r} in the game's song (guitar or bass)")
+        info = self.game_stems_info()
+        if info is None:
+            raise GuiError("The game's song parts need rearmed-mods (its Song Stems mod)")
+        if not info["on"]:
+            raise GuiError("Song Stems is off: turn it on in rearmed-mods")
+        level = info[part]
+        if "level" in body:
+            level = int(_number(body["level"], "level", 0, 100))
+        elif "step" in body:
+            level = min(max(level + int(_number(body["step"], "step", -100, 100)), 0), 100)
+        elif "mute" in body:
+            if body["mute"] and level > 0:
+                self._game_stems_was[part] = level
+                level = 0
+            elif not body["mute"] and level == 0:
+                level = self._game_stems_was.pop(part, gamestems.FULL)
+        if level != info[part]:
+            try:
+                gamestems.write(gamestems.ini_path(self.index.game_dir), {part: level})
+            except OSError as exc:
+                raise GuiError(f"Couldn't write RSMods.ini: {exc}") from exc
+        return self.game_stems_info() or {}
 
     def game_music(self) -> int | None:
         """Following, the game's Music volume (its mixer's: the song, 0 to 100) as the game has it, through its
@@ -3722,6 +3768,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/game/music": lambda: gui.set_game_music(body),
             "/api/drums": lambda: gui.set_drums(body),
             "/api/stems": lambda: gui.set_stems(body),
+            "/api/game-stems": lambda: gui.set_game_stems(body),
             "/api/drums/hit": lambda: gui.hit_drum(body),
             "/api/reindex": gui.reindex,
         }
