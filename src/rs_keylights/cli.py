@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--game-dir", type=Path, help=f"the Rocksmith2014 folder (default: RS Re-ARMed's, or ${GAME_DIR_ENV})")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    follow = commands.add_parser("follow", help="light the keys with the song Rocksmith plays (silently)")
+    follow = commands.add_parser("follow", help="light the keys with the song Rocksmith plays (silently, unless --sound)")
     follow.add_argument("--overlay-port", type=int, default=DEFAULT_OVERLAY_PORT,
                         help=f"RS Companion's stream overlay port (default: {DEFAULT_OVERLAY_PORT})")
     follow.add_argument("--offset-ms", type=float, default=0.0, help="light the keys this much earlier (negative: later)")

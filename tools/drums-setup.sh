@@ -5,7 +5,7 @@
 #   rs-stems-drums  rearmed-mods' Song Stems helper (from its source, REARMED_MODS: default ~/git/rearmed-mods), built
 #                   with three more parts to take out, the drums, the vocals and the piano: it decodes the song's audio
 #                   and separates it with Song Stems' Demucs model (installed with rearmed-mods: ~/Library/Application
-#                   Support/RS Re-ARMed/stems), for a drum part and for a song's parts (stems: rs-keylights stems)
+#                   Support/RS Re-ARMed/stems), for a drum part and for a song's parts (the page's Split into parts)
 #   venv            a Python with ADTOF's PyTorch port (github.com/xavriley/ADTOF-pytorch, at the commit below), which
 #                   transcribes the drums
 #
