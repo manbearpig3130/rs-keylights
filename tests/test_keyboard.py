@@ -279,3 +279,14 @@ def test_a_channels_bend_range_is_set_once_and_its_bends_scaled_to_it():
     assert out.sent[-4] == [0xBA, 6, 24]
     keyboard.close()
     assert [0xBA, 6, 2] in out.sent[-12:]  # (as it starts, as it closes)
+
+
+def test_a_channels_tone_chosen_keeping_its_volume_keeps_the_one_it_has():
+    out = FakeMidiOut()
+    keyboard = Keyboard(midi_out_factory=lambda: out)
+    keyboard.open()
+    keyboard.set_voice(10, 0, 120, volume=60)  # (a drum part at 60)
+    keyboard.set_voice(10, 16, 120, volume=None)  # (a drum struck on the page, its kit chosen: its volume kept)
+    assert out.sent[-3:] == [[0xB9, 0, 120], [0xC9, 16], [0xB9, 7, 60]]
+    keyboard.set_voice(12, 5, volume=None)  # (a channel with none yet: the usual)
+    assert out.sent[-1] == [0xBB, 7, 100]

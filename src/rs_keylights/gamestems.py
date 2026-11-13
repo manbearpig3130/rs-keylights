@@ -59,7 +59,7 @@ def read(path: Path) -> dict[str, Any] | None:
     for part, key in LEVELS.items():
         try:
             level = int(float(_value(entries, SECTION, key) or FULL))
-        except ValueError:
+        except (ValueError, OverflowError):  # (not a number, or inf: the song as it is)
             level = FULL
         out[part] = min(max(level, 0), 100)
     return out

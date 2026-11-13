@@ -38,3 +38,14 @@ def test_not_an_archive(tmp_path):
     path.write_bytes(b"\x00" * 64)
     with pytest.raises(ArchiveError, match="not a .psarc"):
         Archive(path)
+
+
+def test_an_archive_whose_table_is_too_short_for_its_entries_is_refused_at_once(tmp_path):
+    import struct
+    path = tmp_path / "broken.psarc"
+    good = psarc({"x": b"y"})
+    header = bytearray(good[:32])
+    struct.pack_into(">I", header, 20, 0xFFFFFFFF)  # (four billion entries, it says)
+    path.write_bytes(bytes(header) + good[32:])
+    with pytest.raises(ArchiveError, match="not a .psarc"):
+        Archive(path)

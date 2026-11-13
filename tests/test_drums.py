@@ -203,3 +203,32 @@ def test_a_drum_part_on_the_keyboard_has_its_kit_chosen_there_as_it_starts():
     keys.events.clear()
     player_for([], keys, extra=drum_tracks([Hit(1.0, KICK, 110)], DrumVoices(volume=90)))  # (none: as it is)
     assert not any(e[0] == "voice" for e in keys.events)
+
+
+def test_a_drums_sound_chosen_on_the_device_from_elsewhere_is_chosen_again_for_the_parts_next_hit():
+    from rs_keylights.keyboard import Synth
+    from rs_keylights.parts import player_for
+    from test_keyboard import FakeMidiOut
+
+    class Circuit(FakeMidiOut):
+        def get_ports(self):
+            return ["Circuit"]
+
+    out = Circuit()
+    synth = Synth("Circuit", midi_out_factory=lambda: out)
+    synth.open()
+    voices = DrumVoices(notes={}, shared={TOMS[2]: 15, 42: 7}, pool={64: 44})
+    keys = FakeKeys()
+    keys.set_volume = lambda channel, volume: None
+    player = player_for([], keys, extra=drum_tracks([Hit(1.0, TOMS[2], 90), Hit(2.0, TOMS[2], 90),
+                                                     Hit(3.0, TOMS[2], 90)], voices, synth))
+    for at in (0.5, 1.2):
+        player.advance(at)
+    assert [m for m in out.sent if m[:2] == [0xB9, 44]] == [[0xB9, 44, 15]]  # (the tom's sample, then it)
+    player.advance(2.2)  # (the same sample: not sent again)
+    assert [m for m in out.sent if m[:2] == [0xB9, 44]] == [[0xB9, 44, 15]]
+    synth.control(10, 44, 7)  # (a hi-hat struck on the page: Drum 3 on its sample now)
+    player.advance(3.2)
+    assert [m for m in out.sent if m[:2] == [0xB9, 44]][-2:] == [[0xB9, 44, 7], [0xB9, 44, 15]]  # (the tom's again)
+    player_for([], keys, extra=drum_tracks([Hit(1.0, TOMS[2], 90)], voices, synth))  # (a new player: chosen again)
+    assert (10, 44) not in synth.controls_sent

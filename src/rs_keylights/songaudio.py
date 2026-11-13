@@ -72,9 +72,10 @@ class Stretcher:
         import numpy as np
         lo, hi = max(start, 0), min(start + FRAME, self._length)
         out = np.zeros((FRAME, self._channels), dtype=np.float32)
+        weights = dict(self.weights)  # (as they are now: changed meanwhile, the next frame has them, all together)
         if hi > lo:
             for name, part in self._parts.items():
-                weight = self.weights.get(name, 1.0)
+                weight = weights.get(name, 1.0)
                 if weight:
                     out[lo - start:hi - start] += _float(part[lo:hi]) * weight
         return out

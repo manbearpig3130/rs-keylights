@@ -215,6 +215,12 @@ class GuiProtocol(Protocol):
     def set_game_stems(self, body: dict[str, Any]) -> dict[str, Any]:
         ...
 
+    def game_browse(self) -> dict[str, Any] | None:
+        ...
+
+    def game_key(self, name: str) -> int:
+        ...
+
     def toggle_sound(self) -> bool:
         ...
 
@@ -1708,6 +1714,8 @@ class Watch:
 
     @staticmethod
     def _splitting(audio: dict[str, Any]) -> tuple[str, str]:
+        if audio.get("waiting"):  # (another song's being split first)
+            return ("Waiting to split:", "another song's first")
         return ("Splitting the song", f"into its parts: {round((audio.get('progress') or 0) * 100)}%")
 
     def _mix_stems(self, event: Pad | Turn | Button | ScaleMode | Strip, info: dict[str, Any], now: float) -> None:

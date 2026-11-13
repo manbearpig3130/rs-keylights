@@ -1505,9 +1505,11 @@ function renderDrumsCard(s) {
     drumsShown = "";
     for (const g of $("drumkit").querySelectorAll(".piece")) {
       const k = KIT[g.dataset.drum], note = d.notes[String(k.notes[0])];
+      const shared = (d.shared || {})[String(k.notes[0])];  // (a Circuit's drums it's shared on, hit by hit)
       g.querySelector("title")?.remove();
       const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-      title.textContent = `${k.name}: ` + (note == null ? "not played on this device" :
+      title.textContent = `${k.name}: ` + (shared ? `${d.device}'s Drum ${shared.join(" or ")} (shared)` :
+        note == null ? "not played on this device" :
         d.device ? `${d.device}'s note ${note}` : `note ${note}`) + " (click to hear it)";
       g.prepend(title);
     }
@@ -2981,7 +2983,8 @@ function renderAudioCard(s) {
   const shown = JSON.stringify([s.id, d, volumes, mutes]);
   if (shown === audioShown) return;
   audioShown = shown;
-  $("audioPartsNote").textContent = d.making ? "Splitting it into parts…" :
+  $("audioPartsNote").textContent = d.waiting ? "Waiting its turn: another song is being split…" :
+    d.making ? "Splitting it into parts…" :
     d.made ? "Each part's volume (every song's), heard as you move it:" :
     d.can ? "Split it to set the drums', bass', guitar's, vocals', keys' and the rest's volumes." :
     "To split songs into parts, run tools/drums-setup.sh again (it now takes out the vocals and keys too).";

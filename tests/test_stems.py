@@ -30,7 +30,7 @@ def as_int16(x):
     return np.round(x * 32767).astype(np.int16)
 
 
-def test_a_songs_parts_are_made_kept_and_read_back_with_what_is_left_as_other(tmp_path, monkeypatch):
+def test_a_songs_parts_are_made_kept_and_read_back_and_what_is_left_is_other(tmp_path, monkeypatch):
     song = sum(parts().values())
     tools, home = tmp_path / "tools", tmp_path / "stems-home"
     (home / "htdemucs_6s.mlmodelc").mkdir(parents=True)
@@ -64,7 +64,8 @@ else:
     stems.make(song_ref, tmp_path, tools=tools, stems_home=home, progress=far.append)
     assert stems.made(song_ref) and far[-1] == 1.0 and far == sorted(far)
     got = stems.load(song_ref, as_int16(song))
-    assert set(got) == set(stems.STEMS)
+    assert set(got) == set(stems.SEPARATED)  # (other: the song less them, not kept apart)
+    got["other"] = as_int16(song) - sum(got[s].astype(np.int32) for s in stems.SEPARATED)
     for stem, part in parts().items():  # (each part as it was: AAC's error, about 1%)
         error = np.sqrt(np.mean((got[stem] / 32767 - part) ** 2)) / np.sqrt(np.mean(part ** 2))
         assert error < 0.05, stem
@@ -89,3 +90,14 @@ def test_the_least_used_songs_parts_go_first_over_the_most_kept(tmp_path, monkey
     monkeypatch.setattr(stems, "CACHE_MOST", 250)
     stems._prune(tmp_path, keep=tmp_path / "old")
     assert sorted(f.name for f in tmp_path.iterdir()) == ["new", "old"]  # (the one just made: kept)
+
+
+def test_the_song_and_its_parts_mixed_at_their_weights_give_each_part_at_its_level():
+    rng = np.random.default_rng(1)
+    each = {stem: rng.normal(size=(100, 2)) for stem in stems.STEMS}
+    song = sum(each.values())
+    levels = {"drums": 0.0, "bass": 1.0, "guitar": 0.5, "vocals": 1.0, "piano": 0.2, "other": 0.3}
+    weights = stems.mix_weights(levels)
+    mixed = song * weights["song"] + sum(each[s] * weights[s] for s in stems.SEPARATED)
+    assert np.allclose(mixed, sum(each[s] * levels[s] for s in stems.STEMS))
+    assert stems.mix_weights({}) == {"song": 1.0, **{s: 0.0 for s in stems.SEPARATED}}  # (all as it is: the song)

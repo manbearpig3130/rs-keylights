@@ -93,9 +93,6 @@ class PlanCache:
         key = (id(hits), id(sound))
         for was_hits, was_voices, tracks in self._drums.get(key, ()):
             if was_hits is hits and was_voices == voices and all(t.sound is sound for t in tracks):
-                for track in tracks:  # (its drums' sounds chosen again, as a new one's would be)
-                    if isinstance(track.voices, DrumVoices):
-                        track.voices.sent.clear()
                 return tracks
         tracks = drum_tracks(hits, voices, sound)
         self._keep(self._drums).setdefault(key, []).append((hits, voices, tracks))
@@ -169,9 +166,10 @@ class DrumVoices:
     techniques: bool = False
     # A drum's sound chosen on the device first (General MIDI note -> a Control Change and its value: a Novation
     # Circuit's drum patch select, so one of its 4 drums plays several), sent as it's needed (another than the
-    # last on that control); what was sent last, by control
+    # last on that control); what was sent last, by (channel, control), for a device that keeps no record of its own
+    # (a Synth does, controls_sent: so a drum struck on the page, choosing a sound there, is known to the part too)
     patches: Mapping[int, tuple[int, int]] = field(default_factory=dict)
-    sent: dict[int, int] = field(default_factory=dict, compare=False)
+    sent: dict[tuple[int, int], int] = field(default_factory=dict, compare=False)
     # Drums that share some of the device's (each hit on whichever suits it then: place): their sounds there
     # (General MIDI note -> the patch select's value), and the drums they share (the device's note -> its patch
     # select's Control Change)
@@ -184,12 +182,25 @@ class DrumVoices:
 
     def prepare(self, sound: Any, light: Light) -> None:
         """Before a hit sounds: its drum's sound chosen on the device, if it isn't already."""
+        record = self._record(sound)
         for pitch in light.pitches:
             if pitch in self.patches:
                 number, value = self.patches[pitch]
-                if self.sent.get(number) != value:
+                if record.get((self.channel, number)) != value:
                     sound.control(self.channel, number, value)
-                    self.sent[number] = value
+                    record[(self.channel, number)] = value
+
+    def _record(self, sound: Any) -> dict[tuple[int, int], int]:
+        """What's been sent on the device's controls: its own record, if it keeps one, else this part's."""
+        record = getattr(sound, "controls_sent", None)
+        return record if isinstance(record, dict) else self.sent
+
+    def choose_again(self, sound: Any) -> None:
+        """Each of its drums' sounds sent again before its next hit (a new player: as a new part's would be, in
+        case the device was changed meanwhile, by hand say)."""
+        record = self._record(sound)
+        for number, _value in self.patches.values():
+            record.pop((self.channel, number), None)
 
     def notes_for(self, light: Light) -> tuple[int, ...]:
         mapped = (self.notes.get(p, p) for p in light.pitches)
@@ -251,6 +262,7 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
     for track in extra:
         if isinstance(track.voices, DrumVoices):  # (its channel's volume; its device's drum sounds as they are)
             sound: Any = track.sound or keyboard  # (a Keyboard or a Synth: both set a channel's volume)
+            track.voices.choose_again(sound)  # (its drums' sounds sent again, as a new player's are)
             if track.sound is None and track.voices.kit is not None:  # (the keyboard's: its kit too)
                 keyboard.set_voice(track.voices.channel, track.voices.kit, DRUM_SET_BANK, volume=track.voices.volume)
             else:

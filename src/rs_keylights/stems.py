@@ -122,8 +122,9 @@ def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_h
 
 
 def load(ref: ArrangementRef, mix: Any, cache: Path | None = None) -> dict[str, Any] | None:
-    """A song's parts (samples x channels, int16, as long as mix: the song's own, decoded), other among them; None
-    if they aren't made. (Used: kept longer, the least played going first.)"""
+    """A song's parts taken out of it (SEPARATED: samples x channels, int16, as long as mix, the song's own, decoded);
+    None if they aren't made. Other, what's left, isn't kept apart: it's the song less them (mix_weights). (Used:
+    kept longer, the least played going first.)"""
     import numpy as np
     if not made(ref, cache):
         return None
@@ -140,10 +141,16 @@ def load(ref: ArrangementRef, mix: Any, cache: Path | None = None) -> dict[str, 
             n = min(len(part), len(mix))
             fitted[:n, :part.shape[1]] = part[:n, :mix.shape[1]]
             out[stem] = fitted
-    rest = mix.astype(np.int32) - sum(out[s].astype(np.int32) for s in SEPARATED)
-    out["other"] = np.clip(rest, -32768, 32767).astype(np.int16)
     os.utime(folder)
     return out
+
+
+def mix_weights(levels: dict[str, float]) -> dict[str, float]:
+    """The song and its parts taken out of it (load), as weights to mix them at for each part's level (0 to 1, by
+    STEMS: other's too): other is the song less the rest, so the song is at other's level, and each part at its own
+    less that. (The song's audio and its parts, without a seventh copy of it in memory for other.)"""
+    other = levels.get("other", 1.0)
+    return {"song": other, **{stem: levels.get(stem, 1.0) - other for stem in SEPARATED}}
 
 
 def _run(args: list[str], env: dict[str, str], what: str, along: Callable[[float], None] | None = None) -> None:

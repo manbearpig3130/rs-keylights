@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import asdict, replace
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -336,6 +336,7 @@ def _drum_voicing(output: dict[str, Any] | None) -> dict[str, Any]:
             patches[note] = (CIRCUIT_PATCH_SELECT[drum], int(sample) - 1)
     return {"notes": notes, "patches": patches, "shared": shared, "pool": pool}
 DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
+SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
 DRUM_HIT_LENGTH = 0.15  # seconds a drum struck on the page sounds (its sound decays by itself)
 DRUMS_PLACE_MOST = 4  # for a remote, a song's drum part is an arrangement after its own, in this place at most (its
@@ -467,6 +468,7 @@ class Gui:
         self.index = index
         self._synth_factory = synth_factory  # other MIDI devices sounding parts (outputs), opened once they're used
         self._synths: dict[str, Synth] = {}
+        self._synths_missing: dict[str, float] = {}  # (devices that weren't there: when they were looked for)
         self.pedal = pedal_factory()  # the guitar's pedal, its presets switched from the Launchkey and the page
         self._names_error: str | None = None  # (why the presets' names couldn't be read from it, last time)
         threading.Thread(target=self._read_pedal_names, name="rs-keylights pedal names", daemon=True).start()
@@ -516,6 +518,8 @@ class Gui:
         self._audio_kept: tuple[str, Any, dict[str, Any] | None, int] | None = None  # the last song's audio decoded:
         # its id, samples, parts (if they're made) and rate
         self._splitting: dict[str, dict[str, Any]] = {}  # songs' parts being made (or failed), by song
+        self._split_queue: deque[tuple[str, ArrangementRef]] = deque()  # songs waiting to be split, one at a time
+        self._split_running = False  # (a thread splitting them)
         self._audio_error: str | None = None
         self._audio_stream = audio_stream  # (sounddevice's OutputStream; tests: their own)
         # Played by a thread of their own: the remote's MIDI thread only hands them on (CoreMIDI can deadlock if
@@ -950,13 +954,17 @@ class Gui:
         hits = self._drum_hits(sid) or []
         chosen = self.settings["outputs"].get("drums")
         there = chosen is not None and self._synth(chosen["port"]) is not None
-        mapped = _drum_voicing(chosen if chosen and there else None)["notes"]
+        voicing = _drum_voicing(chosen if chosen and there else None)
+        mapped = voicing["notes"]
+        drum_of = {note: drum for drum, note in CIRCUIT_NOTES.items()}
+        shared = {str(n): [drum_of[p] for p in voicing["pool"]] for n in voicing["shared"]}  # (a Circuit's drums
+        # each shared drum goes on, hit by hit)
         return {"made": bool(hits), "hits": [[round(h.time, 3), h.note, h.velocity] for h in hits],
                 "device": chosen["port"] if chosen and there else None,
                 "channel": chosen["channel"] if chosen and there else drums.DRUM_CHANNEL,
                 "notes": {str(n): mapped.get(n, n) for n in drums.NAMES}, "names": {str(n): name for n, name in drums.NAMES.items()},
                 "missing": chosen["port"] if chosen and not there else None,
-                "output": chosen, "kit": _circuit_kit((chosen or {}).get("kit") or {}),
+                "output": chosen, "kit": _circuit_kit((chosen or {}).get("kit") or {}), "shared": shared,
                 "drum_set": self.settings["drum_set"],
                 "drum_sets": [[program, name.title()] for name, program in DRUM_SETS]}
 
@@ -982,7 +990,8 @@ class Gui:
             keyboard = self._keys_keyboard(open_one=True)
             if keyboard is None:
                 raise GuiError(f"No {self._keyboard_name} to play it on")
-            keyboard.set_voice(drums.DRUM_CHANNEL, self.settings["drum_set"], DRUM_SET_BANK)  # (its kit: as set)
+            keyboard.set_voice(drums.DRUM_CHANNEL, self.settings["drum_set"], DRUM_SET_BANK,
+                               volume=None)  # (its kit: as set; its volume kept, a drum part's playing)
             keyboard.sound(drums.DRUM_CHANNEL, note, velocity)
         threading.Timer(DRUM_HIT_LENGTH, lambda: keyboard.sound(drums.DRUM_CHANNEL, note, 0)).start()
         return {"played": note}
@@ -1446,8 +1455,9 @@ class Gui:
             audio = self._song_audio
             if audio is not None and "audio_volume" in changed:
                 audio.volume = options["audio_volume"] / 100
-            if audio is not None and changed & {"stem_volumes", "stem_mutes"}:  # (heard at once)
-                audio.weights.update(_stem_weights(options, audio.weights))
+            if audio is not None and changed & {"stem_volumes", "stem_mutes"} and len(audio.weights) > 1:  # (heard
+                # at once; a song not split, the song alone: as it is)
+                audio.weights.update(stems.mix_weights(_stem_weights(options, stems.STEMS)))
             if isinstance(session, Playback) and session.running and self._playing:
                 if changed & {"audio", "audio_device"}:
                     self._audio_on(self._playing["id"])
@@ -1665,8 +1675,9 @@ class Gui:
                 loaded = self._load(sid)
                 named = next((r for r, _a in loaded if r.artist), loaded[0][0])
                 samples, parts, rate = self._song_samples(sid, named)
-                weights = _stem_weights(self.play_options, parts) if parts else None
-                audio = SongAudio(parts or samples, rate, where, self.play_options["audio_volume"] / 100,
+                weights = stems.mix_weights(_stem_weights(self.play_options, stems.STEMS)) if parts else None
+                audio = SongAudio({"song": samples, **parts} if parts else samples, rate, where,
+                                  self.play_options["audio_volume"] / 100,
                                   stream_factory=self._audio_stream, weights=weights, search=samples)
                 with self._lock:
                     if token != self._audio_token:
@@ -1694,11 +1705,13 @@ class Gui:
     # The song's parts (stems), each at a volume of its own in its audio
 
     def stems_info(self, sid: str) -> dict[str, Any]:
-        """A song's parts: made, being made (how far), failed (why), and whether they can be made."""
+        """A song's parts: made, being made (how far; or waiting for another song's to be), failed (why), and
+        whether they can be made."""
         ref = self._load(sid)[0][0]
         making = self._splitting.get(sid, {})
         return {"made": stems.made(ref), "making": bool(making.get("making")), "progress": making.get("progress"),
-                "error": making.get("error"), "can": stems.can_make(), "names": list(stems.STEMS)}
+                "waiting": bool(making.get("making") and making.get("waiting")), "error": making.get("error"),
+                "can": stems.can_make(), "names": list(stems.STEMS)}
 
     def audio_info(self, sid: str | None) -> dict[str, Any]:
         """The song's own audio, for a remote (the Launchkey's stem mixer): on or off, its volume, its parts' volumes
@@ -1714,36 +1727,50 @@ class Gui:
         return {"on": bool(options["audio"]), "volume": int(options["audio_volume"]),
                 "volumes": dict(options["stem_volumes"]), "mutes": dict(options["stem_mutes"]),
                 "made": bool(split.get("made")), "making": bool(split.get("making")),
-                "progress": split.get("progress"), "can": bool(split.get("can")), "there": drums.can_decode()}
+                "waiting": bool(split.get("waiting")), "progress": split.get("progress"), "can": bool(split.get("can")), "there": drums.can_decode()}
 
     def set_stems(self, body: dict[str, Any]) -> dict[str, Any]:
-        """A song's parts made ("make"), in the background (a minute or two); played with its audio once they are."""
+        """A song's parts made ("make"), in the background (a minute or two); played with its audio once they are.
+        One song's split at a time (two at once would share the Neural Engine, and the cache's pruning): another
+        asked for meanwhile waits its turn ("waiting")."""
         sid = str(body.get("song", ""))
         loaded = self._load(sid)
         if body.get("make"):
+            ref = next((r for r, _a in loaded if r.artist), loaded[0][0])
             with self._lock:
                 if self._splitting.get(sid, {}).get("making"):
                     return self.stems_info(sid)
-                self._splitting[sid] = {"making": True, "progress": 0.0, "error": None}
+                self._splitting[sid] = {"making": True, "waiting": True, "progress": 0.0, "error": None}
+                self._split_queue.append((sid, ref))
+                start, self._split_running = not self._split_running, True
                 self.play_version += 1
-            ref = next((r for r, _a in loaded if r.artist), loaded[0][0])
+            if start:
+                threading.Thread(target=self._split_songs, name="rs-keylights stems", daemon=True).start()
+        return self.stems_info(sid)
 
-            def far(done: float) -> None:
+    def _split_songs(self) -> None:
+        """The songs waiting to be split, split in turn, until none are waiting."""
+        while True:
+            with self._lock:
+                if not self._split_queue:
+                    self._split_running = False
+                    return
+                sid, ref = self._split_queue.popleft()
+                self._splitting[sid] = {**self._splitting.get(sid, {}), "waiting": False}
+                self.play_version += 1
+
+            def far(done: float, sid: str = sid) -> None:
                 self._splitting[sid] = {**self._splitting.get(sid, {}), "progress": round(done, 3)}
 
-            def run() -> None:
-                try:
-                    stems.make(ref, self.index.game_dir, progress=far)
-                    self._splitting[sid] = {"making": False, "progress": None, "error": None}
-                except Exception as exc:  # (the separator missing, or failing: said on the page)
-                    self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}
-                with self._lock:
-                    self.play_version += 1
-                    if self._playing and self._playing["id"] == sid and self._song_audio is not None:
-                        self._audio_on(sid)  # (its parts, at their volumes, from now)
-
-            threading.Thread(target=run, name="rs-keylights stems", daemon=True).start()
-        return self.stems_info(sid)
+            try:
+                stems.make(ref, self.index.game_dir, progress=far)
+                self._splitting[sid] = {"making": False, "progress": None, "error": None}
+            except Exception as exc:  # (the separator missing, or failing: said on the page)
+                self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}
+            with self._lock:
+                self.play_version += 1
+                if self._playing and self._playing["id"] == sid and self._song_audio is not None:
+                    self._audio_on(sid)  # (its parts, at their volumes, from now)
 
     def _audio_off(self) -> None:
         self._audio_token += 1
@@ -1831,14 +1858,15 @@ class Gui:
                     raise GuiError(f"The {self._keyboard_name} lights 4 keys at most: give the parts fewer lit keys")
             was, self.follow_settings = self.follow_settings, settings
             voices_for = self._follow_voices()  # (the parts' sounds fit the keyboard's channels: else as it was)
-            for played_id in (body.get("parts") or {}) if voices_for else ():
-                played = self.index.find(played_id)
-                refs = self._song_refs(played) if played is not None else []
-                needed = sum(channels_needed(voices_for(r, (0, 0, 0)))
-                             for r, play, _lights in parts_chosen(settings, played, refs) if play) if played else 0
-                if needed > len(KEYBOARD_CHANNELS):
-                    self.follow_settings = was
-                    raise GuiError(CHANNELS_USED_UP)
+            if voices_for is not None:
+                for played_id in body.get("parts") or {}:
+                    played = self.index.find(played_id)
+                    refs = self._song_refs(played) if played is not None else []
+                    needed = sum(channels_needed(voices_for(r, (0, 0, 0)))
+                                 for r, play, _lights in parts_chosen(settings, played, refs) if play) if played else 0
+                    if needed > len(KEYBOARD_CHANNELS):
+                        self.follow_settings = was
+                        raise GuiError(CHANNELS_USED_UP)
             self.follow_settings, self._follow_saved = settings, True
             self.follow_version += 1
             self._save()
@@ -3175,20 +3203,27 @@ class Gui:
         return {"port": chosen["port"], "program": chosen.get("program")} if chosen else None
 
     def _synth(self, port: str) -> Synth | None:
-        """Another MIDI device, opened (once: it stays open); None if it isn't there (or it's the keyboard)."""
+        """Another MIDI device, opened (once: it stays open); None if it isn't there (or it's the keyboard). One
+        that wasn't there isn't looked for again for SYNTH_LOOK_AGAIN (asked often: a remote's state)."""
         if port == self.settings["midi_port"]:
             return None
         with self._lock:
             synth = self._synths.get(port)
+            missed = self._synths_missing.get(port)
         if synth is not None and synth.is_open:
             return synth
+        if missed is not None and time.monotonic() - missed < SYNTH_LOOK_AGAIN:
+            return None
         synth = self._synth_factory(port)
         try:
             synth.open()
         except (KeyboardError, OSError, RuntimeError):
+            with self._lock:
+                self._synths_missing[port] = time.monotonic()
             return None
         with self._lock:
             self._synths[port] = synth
+            self._synths_missing.pop(port, None)
         return synth
 
     def output_status(self) -> dict[str, bool]:

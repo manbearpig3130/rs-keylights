@@ -61,9 +61,11 @@ class Archive:
         if len(header) < HEADER.size:
             raise ArchiveError(f"{self.path.name}: too short for a .psarc")
         magic, _version, _compression, toc_length, entry_size, entry_count, block_size, flags = HEADER.unpack(header)
-        if magic != b"PSAR" or entry_size < 30 or entry_count < 1:
-            raise ArchiveError(f"{self.path.name}: not a .psarc")
+        if magic != b"PSAR" or entry_size < 30 or entry_count < 1 or toc_length < HEADER.size + entry_count * entry_size:
+            raise ArchiveError(f"{self.path.name}: not a .psarc")  # (its table too short for its entries: broken)
         toc = self._file.read(toc_length - HEADER.size)
+        if len(toc) < entry_count * entry_size:
+            raise ArchiveError(f"{self.path.name}: its table of contents is cut short")
         if flags & ENCRYPTED_TOC:
             decryptor = Cipher(algorithms.AES(TOC_KEY), CFB(TOC_IV)).decryptor()
             toc = decryptor.update(toc) + decryptor.finalize()

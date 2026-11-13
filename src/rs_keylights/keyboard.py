@@ -172,16 +172,19 @@ class Keyboard:
             self._voices.clear()
 
     def set_voice(self, channel: int, program: int, bank: int | None = None, ours: bool = True,
-                  volume: int = NORMAL_VOLUME) -> None:
-        """A sound channel's tone (Bank Select when given, then Program Change) and volume; not sent again for a
-        channel that has it (it can catch the notes sounding). Notes coming back from the keyboard on a channel
-        of ours aren't keys pressed (not ours: another keyboard's channel)."""
+                  volume: int | None = NORMAL_VOLUME) -> None:
+        """A sound channel's tone (Bank Select when given, then Program Change) and volume (None: the one it has,
+        NORMAL_VOLUME if it has none yet); not sent again for a channel that has it (it can catch the notes
+        sounding). Notes coming back from the keyboard on a channel of ours aren't keys pressed (not ours: another
+        keyboard's channel)."""
         if not 1 <= channel <= 16 or channel == self.channel:
             raise ValueError(f"A sound channel must be 1 to 16 and not the lights' ({self.channel})")
         if not 0 <= program <= 127 or (bank is not None and not 0 <= bank <= 127):
             raise ValueError("The program and bank must be 0 to 127")
         status = channel - 1
         with self._lock:
+            if volume is None:
+                volume = self._volumes.get(channel, NORMAL_VOLUME)
             if ours:
                 self._sounding.setdefault(channel, set())
             if self._voices.get(channel) != (program, bank):
@@ -399,8 +402,12 @@ class Synth:
         self._sounding: dict[int, set[int]] = {}  # channel -> its notes on
         self._bent: set[int] = set()
         self._volumes: dict[int, int] = {}
+        # Each Control Change's value as it was last sent, by (channel, number): what it has chosen (a Circuit drum's
+        # sample), whoever chose it (a drum part, or one struck on the page), so none sends it again needlessly
+        self.controls_sent: dict[tuple[int, int], int] = {}
 
     def open(self) -> None:
+        self.controls_sent.clear()  # (connected again: what it has isn't known)
         out = self._factory()
         ports = out.get_ports()
         wanted = self.port_name.casefold()
@@ -457,6 +464,7 @@ class Synth:
         """A Control Change on its channel (a Novation Circuit's drum patch select, say)."""
         with self._lock:
             self._send([0xB0 | (channel - 1), number, value])
+            self.controls_sent[(channel, number)] = value
 
     def modulate(self, channel: int, depth: int) -> None:
         with self._lock:

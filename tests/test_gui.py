@@ -1,5 +1,6 @@
 import json
 import math
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -1344,6 +1345,10 @@ def test_the_drums_on_a_circuit_have_a_kit_its_drums_and_samples_and_a_drum_stru
     assert part["device"] == "Circuit" and part["notes"]["43"] == 65 and part["kit"]["43"] == [4, 21]
     assert gui.hit_drum({"note": drums.TOMS[0]}) == {"played": 65}
     assert circuit.sent[-2:] == [[0xB9, 50, 20], [0x99, 65, 100]]  # (Drum 4's patch select: sample 21; then it)
+    assert part["shared"] == {}  # (none shared)
+    casio = {"36": [1, 2], "38": [2, 4], **{n: [0, int(n) - 34] for n in ("42", "46", "49", "51", "43", "47", "50")}}
+    gui.set_settings({"outputs": {"drums": {"port": "Circuit", "channel": 10, "map": "circuit", "kit": casio}}})
+    assert gui.drum_part(sid)["shared"]["49"] == [3, 4]  # (the crash: on Drum 3 or 4, hit by hit)
     circuit_drums = gui.settings["outputs"]["drums"]
     gui.set_settings({"outputs": {"drums": None}})  # the keyboard's drums, then the Circuit chosen again by itself:
     assert "drums" not in gui.settings["outputs"]
@@ -1443,8 +1448,8 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
     from rs_keylights import gui as gui_module, stems
     gui, sid = server.gui, first_song(server)
     song = call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]
-    assert song["stems"] == {"made": False, "making": False, "progress": None, "error": None, "can": False,
-                             "names": list(stems.STEMS)}
+    assert song["stems"] == {"made": False, "making": False, "progress": None, "waiting": False, "error": None,
+                             "can": False, "names": list(stems.STEMS)}
     made = []
     monkeypatch.setattr(stems, "make", lambda ref, game, progress: made.append(ref) or progress(1.0))
     monkeypatch.setattr(stems, "made", lambda ref, cache=None: bool(made))
@@ -1474,15 +1479,19 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
     assert wait_for(lambda: made and gui._song_audio and "drums" in gui._song_audio.weights, bool)  # (split: at once)
     assert call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["stems"]["made"]
     audio = gui._song_audio
+
+    def level(stem):  # (a part as it's heard: the song mixed at other's level, each part at its own less that)
+        return round(audio.weights["song"] + (audio.weights[stem] if stem != "other" else 0.0), 6)
+
     _, options = call(server, "/api/play/options", {"stem_volumes": {"drums": 0, "vocals": 40}})
     assert options["stem_volumes"]["drums"] == 0 and options["stem_volumes"]["bass"] == 100
-    assert audio.weights["drums"] == 0.0 and audio.weights["vocals"] == 0.4 and audio.weights["other"] == 1.0
+    assert level("drums") == 0.0 and level("vocals") == 0.4 and level("other") == 1.0
     _, options = call(server, "/api/play/options", {"stem_mutes": {"vocals": True}})  # (muted: its volume kept)
-    assert options["stem_mutes"]["vocals"] and options["stem_volumes"]["vocals"] == 40 and audio.weights["vocals"] == 0.0
+    assert options["stem_mutes"]["vocals"] and options["stem_volumes"]["vocals"] == 40 and level("vocals") == 0.0
     remote = gui.remote_info()["audio"]  # (the Launchkey's stem mixer: what it shows)
     assert remote["on"] and remote["made"] and remote["volumes"]["drums"] == 0 and remote["mutes"]["vocals"]
     call(server, "/api/play/options", {"stem_mutes": {"vocals": False}})
-    assert audio.weights["vocals"] == 0.4
+    assert level("vocals") == 0.4
     assert call(server, "/api/play/options", {"stem_mutes": {"kazoo": True}})[0] == 400
     assert call(server, "/api/play/options", {"stem_volumes": {"kazoo": 10}})[0] == 400
     assert call(server, "/api/play/options", {"stem_volumes": {"bass": 120}})[0] == 400
@@ -1521,3 +1530,27 @@ def test_the_games_song_parts_are_set_in_its_mods_settings_muted_and_back_where_
     assert "SongStemsGuitarLevel = 65" in ini.read_text()
     with pytest.raises(GuiError, match="guitar or bass"):
         gui.set_game_stems({"part": "drums", "level": 0})
+
+
+def test_songs_are_split_one_at_a_time_the_others_waiting_their_turn(server, monkeypatch):
+    from rs_keylights import stems
+    gui = server.gui
+    (gui.index.game_dir / "dlc" / "other_m.psarc").write_bytes(
+        song_archive("other", {"lead": ("O", Song(levels={0: [N(1.0)]}))}, song="Another", artist="Band"))
+    gui.reindex()
+    first, second = [s["id"] for s in call(server, "/api/library")[1]["songs"]][:2]
+    go, started = threading.Event(), []
+
+    def make(ref, game, progress):  # (a split taking a while: until it's let go)
+        started.append(ref)
+        assert go.wait(5)
+
+    monkeypatch.setattr(stems, "make", make)
+    gui.set_stems({"song": first, "make": True})
+    assert wait_for(lambda: len(started), bool) == 1
+    info = gui.set_stems({"song": second, "make": True})
+    assert info["making"] and info["waiting"] and len(started) == 1  # (its turn once the first's done)
+    assert gui.set_stems({"song": second, "make": True})["waiting"] and len(gui._split_queue) == 1  # (once only)
+    go.set()
+    assert wait_for(lambda: len(started) == 2 and not gui.stems_info(second)["making"], bool)
+    assert not gui._split_running

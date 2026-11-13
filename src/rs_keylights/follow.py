@@ -776,7 +776,7 @@ def _sng_name(ref: ArrangementRef) -> str:
     return ref.sng.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
 
 
-def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, int, object]]:
+def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, bool, int, object]]:
     """What makes parts play differently: which, their lit keys (pooled or not), octave shift and voices."""
     return [(p.part.ref.persistent_id, p.part.lights, p.pooled, p.shift, p.voices) for p in planned]
 
