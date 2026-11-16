@@ -2014,3 +2014,55 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
     clock.now = 3.0
     watch.step()
     assert len(gui.game_stem_calls) == calls and note(watch) == (None, ("In the game's song:", "just the bass and guitar"))
+
+
+def warming_up(watch, gui, **changes):
+    """A warm-up going (its info, as the page's), with the page's warm-up calls kept."""
+    gui.warmup_calls = []
+    gui.info["warmup"] = {"drill": 1, "drills": 6, "done": False, "paused": False, "name": "Spider (1-3, 2-4)",
+                          "names": [], "phase": "play", "ready_left": 0.0, "beat": 3.0, "speed": 40, "click": 40,
+                          "per": 1, "rate": 40 * 0.25 / 60, "shown": True, "ladder": True, "drill_left": 20.0,
+                          "drill_length": 40.0, "beats": 12, "left": 200.0, "ending": None, "until_stopped": False,
+                          "marks": [[0, i, v] for i, v in enumerate(["ok", "late", "missed", "ok"])],
+                          "round": {"notes": 8, "right": 7, "ok": 6, "verdict": "steady", "off_ms": 20},
+                          "hearing": {"on": True, "error": None, "level": 0.01}, **changes}
+
+    def set_warmup(body):
+        gui.warmup_calls.append(body)
+        return {}
+
+    gui.set_warmup = set_warmup
+
+
+def test_a_warm_up_takes_the_launchkey_its_drills_on_top_its_notes_below():
+    from rs_keylights.bitmap import warmup_picture
+    from rs_keylights.launchkey import TRACK_BUTTONS
+    from rs_keylights.watch import WARMUP_HINT, WARMUP_NOW, WARMUP_STOP, WARMUP_VERDICTS
+    watch, gui, launchkey, clock = watching("play")
+    warming_up(watch, gui)
+    watch.step()
+    shown = pads(launchkey)
+    assert shown[(0, 1)] == (WARMUP_NOW, True)  # (the drill going: pulsing)
+    assert shown[(0, 0)] == (0, 20, 0) and shown[(0, 2)] == (14, 14, 14)  # (done, to come)
+    assert [shown[(1, c)] for c in range(3, 7)] == [WARMUP_VERDICTS[v] for v in ("ok", "late", "missed", "ok")]
+    assert shown[(1, 0)] == (0, 0, 0) and shown[(1, CONTROLS)] == (WARMUP_STOP, False)
+    assert screens(launchkey)[-1] == warmup_picture("Spider (1-3, 2-4)", "40/min, a click a note", "6/8 right, nearly",
+                                                    0.5, "playing", WARMUP_HINT).data()
+    for event in (Button(PLAY), Turn(0, 2), Button(TRACK_BUTTONS[1]), Pad(0, 4), Pad(0, CONTROLS), Pad(1, CONTROLS)):
+        launchkey.queued.append(event)
+        watch.step()
+    assert gui.warmup_calls == [{"pause": True}, {"step": 1}, {"step": 1}, {"go": 2}, {"go": 4}, {"ladder": False},
+                                {"stop": True}]
+    gui.info["warmup"].update(phase="show")
+    launchkey.queued.append(Button(RECORD))
+    clock.now += 1.0
+    watch.step()
+    assert gui.warmup_calls[-1] == {"your_turn": True}
+    launchkey.queued.append(Button(TRACK_BUTTONS[0]))  # (just shown: back to the drill before)
+    watch.step()
+    assert gui.warmup_calls[-1] == {"go": 0}
+    gui.info["warmup"] = None  # (over: the Launchkey's the song's again)
+    clock.now += 1.0
+    watch.step()
+    assert screens(launchkey)[-1] != warmup_picture("Spider (1-3, 2-4)", "", "", 0.0, "playing", WARMUP_HINT).data()
+    assert pads(launchkey)[(1, CONTROLS)] != (WARMUP_STOP, False)

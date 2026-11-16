@@ -9,7 +9,8 @@ from typing import Any, Callable, Protocol
 import math
 
 from .bitmap import (FASTEST, SLOWEST, WIDTH, Bitmap, arrangements_picture, keys_picture, lyrics_picture, mixer_picture,
-                     parts_picture, pedal_picture, playback_picture, song_bar, song_picture, with_note, wrap)
+                     parts_picture, pedal_picture, playback_picture, song_bar, song_picture, warmup_picture, with_note,
+                     wrap)
 from .launchkey import (ENCODER_BUTTONS, PLAY, RECORD, SIDE_BUTTONS, STATIONARY, TEMPORARY, TRACK_BUTTONS, Button,
                         Launchkey, Pad, ScaleMode, Strip, Turn, step_at)
 from .chords import NAMES, chord_name
@@ -187,6 +188,20 @@ TIMED = ("speed", "position", "section", "loop", "chords", "keys", "parts", "ped
 # shown for a while
 ON_THE_SONG = (None, "speed", "position", "section", "loop", "chords")  # the song's screen (or the lyrics), what it
 # shows
+# The warm-up (the page's), while it goes, takes the Launchkey: Play pauses and resumes it, Record is Your turn (the
+# drill being shown), Track back and on go back (to the drill's start; just started, to the one before) and on, any
+# knob its speed (a step a click). The pads on top are its drills (the one going lit, those done dim green: a tap goes
+# there), the ones below its last notes judged (green right and in time, amber early or late, red wrong or missed,
+# the newest on the right); the right column's top pad its speed ladder (green: on), the bottom one stops it.
+WARMUP_NOW, WARMUP_DONE, WARMUP_TO_COME = 37, (0, 20, 0), (14, 14, 14)  # the drills' pads
+WARMUP_MARKS = 7  # the pads below: notes judged
+WARMUP_VERDICTS = {"ok": (0, 127, 0), "early": (127, 55, 0), "late": (127, 55, 0), "wrong": (127, 0, 0),
+                   "missed": (127, 0, 0)}
+WARMUP_LADDER_ON, WARMUP_LADDER_OFF, WARMUP_STOP = 21, 23, 5
+WARMUP_STEPS = 4  # speed steps a turn at most (a fast spin)
+WARMUP_HINT = "Knob: speed  Track: drill"
+WARMUP_ROUND = {"faster": "clean: faster", "clean": "clean", "steady": "nearly", "sloppy": "sloppy",
+                "slower": "slower", "new speed": "new speed"}
 TONE_NUMBERS = [t.number for t in TONES]
 GROUPS = [t.number for i, t in enumerate(TONES) if i == 0 or TONES[i - 1].group != t.group]  # each one's first
 SAME, DEFAULT = 0, -1  # palm mutes and pinch harmonics: the tone the rest has (as the page keeps it: over a default), or
@@ -297,6 +312,9 @@ class GuiProtocol(Protocol):
         ...
 
     def keep_pedal_tone(self, slot: int | None = None) -> str:
+        ...
+
+    def set_warmup(self, body: dict[str, Any]) -> dict[str, Any]:
         ...
 
     def set_game_riff(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -586,6 +604,10 @@ class Watch:
         key = song.get("key") if song else None
         picture: dict[Any, Any] = {}
         picture["scale"] = (key["tonic"], key["mode"]) if key else None
+        warming = _warming(info)
+        if warming is not None:
+            self._warmup_pads(picture, warming)
+            return picture
         if self.scale_view and key:
             scale, also = set(key["scale"]), set(key["other"])
             for column in range(8):
@@ -660,6 +682,96 @@ class Watch:
         switches = info.get("mode") != "follow" and (other or info.get("mode") == "play")  # to another, or stopping
         picture[RECORD] = LIT if switches else DIM
         return picture
+
+    @staticmethod
+    def _warmup_pads(picture: dict[Any, Any], w: dict[str, Any]) -> None:
+        """The warm-up's pads and buttons (WARMUP_NOW...)."""
+        going = not w.get("paused")
+        for column in range(CONTROLS):
+            if column >= int(w.get("drills") or 0):
+                picture[(0, column)] = ("palette", 0, False)
+            elif column == w.get("drill"):
+                picture[(0, column)] = ("palette", WARMUP_NOW, going)
+            else:
+                picture[(0, column)] = ("rgb", *(WARMUP_DONE if column < int(w.get("drill") or 0) else WARMUP_TO_COME))
+        marks = [m[2] for m in w.get("marks") or [] if w.get("phase") == "play"][-WARMUP_MARKS:]
+        marks = [None] * (WARMUP_MARKS - len(marks)) + marks
+        for column, verdict in enumerate(marks):
+            picture[(1, column)] = ("rgb", *WARMUP_VERDICTS.get(verdict or "", (0, 0, 0)))
+        picture[(0, CONTROLS)] = ("palette", WARMUP_LADDER_ON if w.get("ladder") else WARMUP_LADDER_OFF, False)
+        picture[(1, CONTROLS)] = ("palette", WARMUP_STOP, False)
+        for number in (*SIDE_BUTTONS, *ENCODER_BUTTONS):
+            picture[number] = DIM
+        for number in TRACK_BUTTONS:
+            picture[number] = LIT
+        picture[PLAY] = LIT if going else DIM
+        picture[RECORD] = LIT if w.get("phase") == "show" else DIM
+
+    def _warmup_event(self, event: Pad | Turn | Button, w: dict[str, Any], now: float) -> None:
+        """The warm-up's controls (WARMUP_NOW...); anything else says what they are."""
+        if isinstance(event, Button) and event.number == PLAY:
+            self.gui.set_warmup({"resume": True} if w.get("paused") else {"pause": True})
+            self._say(now, line="Going on" if w.get("paused") else "Paused")
+        elif isinstance(event, Button) and event.number == RECORD:
+            if w.get("phase") == "show":
+                self.gui.set_warmup({"your_turn": True})
+            else:
+                self._say(now, lines=("Record: your turn,", "while a drill's shown"))
+        elif isinstance(event, Button) and event.number == TRACK_BUTTONS[0]:
+            early = w.get("phase") in ("ready", "show", "count")  # (just started: the one before)
+            self.gui.set_warmup({"go": max(int(w.get("drill") or 0) - (1 if early else 0), 0)})
+        elif isinstance(event, Button) and event.number == TRACK_BUTTONS[1]:
+            if not w.get("until_stopped") and int(w.get("drill") or 0) + 1 < int(w.get("drills") or 0):
+                self.gui.set_warmup({"go": int(w.get("drill") or 0) + 1})
+            else:
+                self._say(now, line="The last drill: stop it with its pad")
+        elif isinstance(event, Turn):
+            for _ in range(min(abs(event.steps), WARMUP_STEPS)):
+                self.gui.set_warmup({"step": 1 if event.steps > 0 else -1})
+        elif isinstance(event, Pad) and event.column == CONTROLS:
+            if event.row == 0:
+                self.gui.set_warmup({"ladder": not w.get("ladder")})
+                self._say(now, line=f"Speed ladder: {'off' if w.get('ladder') else 'on'}")
+            else:
+                self.gui.set_warmup({"stop": True})
+        elif isinstance(event, Pad) and event.row == 0 and event.column < int(w.get("drills") or 0):
+            self.gui.set_warmup({"go": event.column})
+        else:
+            self._say(now, lines=("Play: pause  Knob: speed", "Pads: drills  Red: stop"))
+
+    def _warmup_screen(self, w: dict[str, Any], muted: bool) -> tuple[tuple[Any, ...], Callable[[], Bitmap]]:
+        """The warm-up on the screen (warmup_picture), as it's going now."""
+        speed, per = int(w.get("speed") or 0), int(w.get("per") or 1)
+        speed_said = f"{speed}/min, " + ("a click a note" if per == 1 else f"{per} notes a click")
+        phase, beat = w.get("phase"), float(w.get("beat") or 0.0)
+        grid = float(w.get("rate") or 0.0) * 60 / speed if speed else 0.25
+        last = w.get("round") or {}
+        hearing = w.get("hearing") or {}
+        if w.get("paused"):
+            said = "Paused: Play goes on"
+        elif phase == "ready":
+            said = f"Get ready... {math.ceil(float(w.get('ready_left') or 0))}"
+        elif phase == "show":
+            said = "Watch it, then your turn"
+        elif phase == "count":
+            said = f"Your turn: {math.floor(beat / max(per * grid, 1e-9)) + 5}"
+        elif hearing.get("error"):
+            said = "Not hearing the guitar"
+        elif last.get("verdict") == "nothing heard" or not last:
+            said = "Play along"
+        else:
+            verdict = str(last.get("verdict"))
+            said = f"{last.get('ok')}/{last.get('notes')} right, {WARMUP_ROUND.get(verdict, verdict)}"
+        beats = float(w.get("beats") or 1)
+        if w.get("drill_left") is None:
+            done = (beat % beats) / beats if phase == "play" and beat >= 0 else 0.0
+        else:
+            done = 1 - float(w["drill_left"]) / max(float(w.get("drill_length") or 1), 1e-9) if phase == "play" else 0.0
+        done = round(min(max(done, 0.0), 1.0), 2)
+        sign = "paused" if w.get("paused") else "playing"
+        name = str(w.get("name") or "Warm-up")
+        return (("warmup", name, speed_said, said, done, sign, muted),
+                lambda: warmup_picture(name, speed_said, said, done, sign, WARMUP_HINT, muted))
 
     def _stems_page(self, info: dict[str, Any]) -> bool:
         """The mixer's on the song's audio's page (following: the game's song's, with the Song Stems mod on)."""
@@ -743,6 +855,10 @@ class Watch:
         info = self._info or {}
         song = info.get("song")
         if self.launchkey is None:
+            return
+        warming = _warming(info)
+        if warming is not None and isinstance(event, (Pad, Turn, Button)):  # (the warm-up has it)
+            self._warmup_event(event, warming, now)
             return
         if not (isinstance(event, Button) and event.number == TRACK_BUTTONS[0]):
             self._lyrics_home = False  # (Track back, next: the lyrics as they're sung first)
@@ -1376,6 +1492,9 @@ class Watch:
         info = self._info or {}
         arrangements_now = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]  # (with knobs)
         muted = not info.get("sound", True)
+        warming = _warming(info)
+        if warming is not None:
+            return self._warmup_screen(warming, muted)
         if self._picture_of == "mixer" and self._stems_page(info) and info.get("mode") == "follow":  # (the game's
             # song: its bass and guitar, then its Music volume)
             names = [label for stem, label, _rgb in STEMS if stem in GAME_STEMS] + ["Music"]
@@ -2051,6 +2170,12 @@ def _dimmed(look: Any, level: float) -> Any:
         return ("rgb", *(round(c * level) for c in look[1:]))
     rgb = PALETTE_RGB.get(look[1])
     return look if rgb is None else ("rgb", *(round(c * level) for c in rgb))
+
+
+def _warming(info: dict[str, Any]) -> dict[str, Any] | None:
+    """The warm-up, while it goes (it has the Launchkey)."""
+    w = info.get("warmup")
+    return w if isinstance(w, dict) and not w.get("done") else None
 
 
 def _sign(info: dict[str, Any]) -> str | None:

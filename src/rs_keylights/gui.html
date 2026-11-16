@@ -241,6 +241,46 @@
   .fretboard .live-shape.live-root.live-hit circle { fill: var(--accent); stroke: var(--accent); }
   .fretboard .live-shape.live-root.live-hit text { fill: var(--accent-text); }
   .fretboard .live-next { fill: none; stroke: var(--live); stroke-width: 2; opacity: .55; }
+  /* The warm-up: the drill, its tempo, how far it's gone, its tab and where it is on the neck (fingers numbered) */
+  .wu-drill { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+  .wu-name b { font-size: 16px; }
+  .wu-tempo { display: flex; align-items: center; gap: 6px; }
+  .wu-tempo button { padding: 2px 10px; font-weight: 700; }
+  #wuBpm { font-variant-numeric: tabular-nums; min-width: 7.5em; text-align: center; font-weight: 600; }
+  #wuHow { margin: 4px 0 6px; }
+  .wu-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .wu-progress .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .wu-progress .bar span { display: block; height: 100%; width: 0; background: var(--live); }
+  .wu-count { min-width: 9em; text-align: right; font-weight: 700; color: var(--live); font-variant-numeric: tabular-nums; }
+  #wuTab { min-height: 40px; }
+  .wu-score { min-height: 1.4em; margin-bottom: 4px; }
+  .wu-choose { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 2px 0 8px; }
+  .wu-choose span { display: contents; }
+  .wu-score .good { color: var(--ok); font-weight: 600; }
+  .wu-score .bad { color: var(--accent); font-weight: 600; }
+  .tab text.past.ok { fill: var(--ok); font-weight: 700; }
+  .tab text.past.early, .tab text.past.late { fill: var(--warn); font-weight: 700; }
+  .tab text.past.wrong, .tab text.past.missed { fill: var(--accent); font-weight: 700; }
+  .fretboard .wu-place circle { fill: var(--panel); stroke: var(--muted); stroke-width: 1.5; }
+  .fretboard .wu-place text { fill: var(--text); font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+  .fretboard .wu-place.wu-root circle { stroke: var(--accent); stroke-width: 2.5; }
+  .wu-done { margin-bottom: 8px; }
+  .wu-progress-box { margin-top: 10px; }
+  .wu-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 6px 0; }
+  .wu-tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 6px; min-width: 0; }
+  .wu-tile-label { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wu-tile-value { font-size: 22px; font-weight: 600; line-height: 1.2; }
+  .wu-tile-value .unit { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .wu-tile-delta { font-size: 12px; color: var(--muted); }
+  .wu-tile-delta.up { color: var(--ok); }
+  .wu-tile-delta.down { color: var(--warn); }
+  .wu-spark { display: block; width: 100%; height: 34px; margin-top: 4px; overflow: visible; }
+  .wu-spark .trend { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .wu-spark .base { stroke: var(--line); stroke-width: 1; }
+  .wu-spark .day { fill: var(--muted); }
+  .wu-spark .now { fill: var(--live); stroke: var(--panel); stroke-width: 2; }
+  .wu-spark .hit { fill: transparent; }
+  .wu-spark .hit:hover + .day, .wu-spark .hit:hover + .now { stroke: var(--text); stroke-width: 2; }
   .drumkit svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
   .drumkit .piece { cursor: pointer; }
   .drumkit .shell { fill: var(--input); stroke: var(--muted); stroke-width: 1.5; }
@@ -414,6 +454,60 @@
         <button type="button" id="loopOn">Loop</button>
         <button type="button" id="loopClear">Clear</button>
       </div>
+    </div>
+  </section>
+
+  <section id="warmupCard" class="card">
+    <div class="fret-head">
+      <h3 id="wuTitle">Warm-up</h3>
+      <span id="wuWhere" class="small muted"></span>
+      <label class="small" title="Before each drill, the keyboard plays its first notes on a guitar, at your speed, with its tab and neck lit; then it's your turn">
+        <input type="checkbox" id="wuShown"> Show each drill first</label>
+      <label class="small" title="Your playing heard through the guitar's cable: a round played clean (9 notes in 10 right and in time) and it goes a step faster; two sloppy ones in a row (fewer than 6 in 10), a step slower. Kept for each drill">
+        <input type="checkbox" id="wuLadder"> Speed up as I get it right</label>
+      <button type="button" id="wuPrev" class="icon" title="Back: this drill from its start (in its first seconds: the one before)" hidden>◀</button>
+      <button type="button" id="wuPause" title="Pause (the click stops; the drill waits where it is)" hidden>❚❚</button>
+      <button type="button" id="wuNext" class="icon" title="Skip to the next drill" hidden>▶</button>
+      <button type="button" id="wuStop" class="icon" title="Stop the warm-up" hidden>■</button>
+      <button type="button" id="wuStart" class="primary" title="Start: six drills, about five minutes, with a click on the keyboard. Stops a song playing (or following)">Start</button>
+    </div>
+    <div id="wuChoose" class="wu-choose small">
+      <label title="The whole warm-up, or one drill on its own (on until you stop it)">Practise <select id="wuWhat"></select></label>
+      <label title="The guitar's tuning, for every drill: the tab and the neck as it's tuned, and its notes heard so">Tuning <select id="wuTuning"></select></label>
+      <span id="wuScaleBox">
+        <label title="The scale drill's scale (Pentatonic: the song's, minor or major)">Scale <select id="wuScaleKind"></select></label>
+        <label title="Its key (the song's: the one shown, as its fingers play it; no song, A)">Key <select id="wuScaleKey"></select></label>
+        <label title="Where on the neck: Auto, from its root on the lowest string (an open string: open position); or from a fret of your own">Where <select id="wuScaleStart"></select></label>
+      </span>
+    </div>
+    <div id="wuIdle" class="small muted"></div>
+    <div id="wuRun" hidden>
+      <div class="wu-drill">
+        <div class="wu-name"><b id="wuName"></b> <span id="wuWorks" class="muted"></span></div>
+        <div class="wu-tempo">
+          <button type="button" id="wuSlower" title="Slower (kept for this drill)">−</button>
+          <span id="wuBpm" title="Notes a minute (each drill starts at 40, the slowest)"></span>
+          <button type="button" id="wuFaster" title="Faster (kept for this drill)">+</button>
+          <span id="wuPer" class="small muted"></span>
+        </div>
+      </div>
+      <div id="wuHow" class="small"></div>
+      <div class="wu-score small"><span id="wuScore"></span> <span id="wuHear" class="muted"></span></div>
+      <div class="wu-progress"><div class="bar"><span id="wuBar"></span></div><span id="wuCount" class="wu-count"></span>
+        <button type="button" id="wuTurn" class="primary" title="Seen enough: count me in now" hidden>Your turn</button></div>
+      <div id="wuTab" class="tab"></div>
+      <div id="wuBoard" class="fretboard"></div>
+    </div>
+    <div id="wuDone" hidden>
+      <div class="wu-done"><b>Warmed up.</b> <span id="wuDoneText" class="muted"></span></div>
+      <button type="button" id="wuAgain">Again</button>
+      <button type="button" id="wuClose">Close</button>
+    </div>
+    <div id="wuProgress" class="wu-progress-box" hidden>
+      <div id="wuStreak" class="small"></div>
+      <div id="wuTiles" class="wu-tiles"></div>
+      <div class="small muted">Each drill's speed in notes a minute, as you left it each day (the last 30 days; a
+        scale by its name and tuning). Point at a day for it.</div>
     </div>
   </section>
 
@@ -1249,7 +1343,7 @@ function tabSvg(d, first, at, width) {
       if (t < start || t >= end) return;
       const tech = d.techniques ? d.techniques[i] : null;
       const shown = t > at ? "" : Math.max(sounds, t + LIT) >= at ? "now" : "past";
-      const kind = `${shown}${tech && tech[0] & TECH.PALM_MUTE ? " pm" : ""}`;
+      const kind = `${shown}${tech && tech[0] & TECH.PALM_MUTE ? " pm" : ""}${d.marks && d.marks[i] ? " " + d.marks[i] : ""}`;
       for (const [string, fret] of places) {
         out.push(`<text class="${kind}" x="${x(t)}" y="${y(row, string)}">${esc(fretText(fret, tech))}</text>`);
       }
@@ -2300,12 +2394,370 @@ function saveStyles() {
   changePedalRules({styles});
 }
 
+// The warm-up (GET and POST /api/warmup): six drills with a click on the keyboard, about five minutes. Not going:
+// what it would be (the scale: the song shown's), and Start. Going: the drill, its speed in notes a minute (− and +
+// keep it for that drill; 40 at first, a click each note), how it's played, a bar of how far it's gone, its first
+// notes shown on the keyboard (Your turn: enough), the count-in, its tab (the pass going, in two rows: up, then
+// back down; the note now lit) and the neck with its notes, each with the finger that frets it (the scale's root
+// ringed red, the rest of the scale faint). Where it is comes with the page's state, and goes on from there at its
+// tempo between them
+let warmup = null;  // {drills, song, now}: the drills as asked for (the run going's, or the song shown's)
+let warmupAsked = "";  // what for: "run:<number>" or "song:<id>"
+let warmupClock = null;  // where it is, as last heard: {now, at (performance.now())}
+let warmupDrawn = "";  // the tab and neck drawn: drill|pass|note|width|flipped
+let warmupBoardDrawn = "";
+
+// What to practise, the tuning and the scale (kept on the Mac: POST /api/warmup), as the page last heard them
+function showWarmupChoices(d) {
+  const fill = (id, options, value) => {
+    const select = $(id), html = options.map(([v, label]) => `<option value="${esc(String(v))}">${esc(label)}</option>`).join("");
+    if (select.dataset.options !== html) { select.innerHTML = html; select.dataset.options = html; }
+    if (select !== document.activeElement) select.value = String(value);
+  };
+  fill("wuWhat", d.choices.what, d.what);
+  fill("wuTuning", d.choices.tunings.map((t) => [t, t]), d.tuning);
+  fill("wuScaleKind", d.choices.scales.map((k) => [k, k === "pentatonic" ? "Pentatonic (the song's)" : k[0].toUpperCase() + k.slice(1)]), d.scale.kind);
+  fill("wuScaleKey", [["", "The song's"], ...SHARPS.map((n, i) => [i, n])], d.scale.tonic ?? "");
+  fill("wuScaleStart", [["", "Auto"], [0, "Open position"], ...Array.from({length: 15}, (_, i) => [i + 1, `From fret ${i + 1}`])],
+    d.scale.start ?? "");
+  $("wuScaleBox").hidden = !["routine", "scale"].includes(d.what);
+}
+
+function chooseWarmup() {
+  const number = (id) => $(id).value === "" ? null : Number($(id).value);
+  act(async () => {
+    warmup = await api("/api/warmup", {song: selected ? selected.id : null, what: $("wuWhat").value,
+      tuning: $("wuTuning").value, scale: {kind: $("wuScaleKind").value, tonic: number("wuScaleKey"), start: number("wuScaleStart")}});
+    warmupDrawn = warmupBoardDrawn = "";
+    renderWarmup();
+  });
+}
+for (const id of ["wuWhat", "wuTuning", "wuScaleKind", "wuScaleKey", "wuScaleStart"]) $(id).addEventListener("change", chooseWarmup);
+
+// The progress log (GET /api/warmup/progress): a stat tile a drill, its speed now, how far it's come since its first
+// day, and its days as a sparkline (the last 30 days, each day where it falls; the latest lit); the days in a row
+// practised, and today's minutes. Asked for before a warm-up, and after one
+let warmupProgress = null, warmupProgressAsked = "", warmupRunSeen = 0;
+const SPARK = {W: 150, H: 30, PAD: 4};
+
+function loadWarmupProgress(why) {
+  if (why === warmupProgressAsked) return;
+  warmupProgressAsked = why;
+  api("/api/warmup/progress").then((p) => { warmupProgress = p; renderWarmupProgress(); }).catch(() => {});
+}
+
+function dayLabel(day) {
+  return new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {weekday: "short", day: "numeric", month: "short"});
+}
+
+function sparkline(row, p) {
+  const end = new Date(`${p.today}T12:00:00`), spanDays = p.days - 1;
+  const dayX = (day) => {
+    const ago = Math.round((end - new Date(`${day}T12:00:00`)) / 86400000);
+    return SPARK.PAD + (spanDays - ago) / Math.max(spanDays, 1) * (SPARK.W - 2 * SPARK.PAD);
+  };
+  const speeds = row.points.map((pt) => pt[1]), lo = Math.min(...speeds), hi = Math.max(...speeds);
+  const y = (v) => hi === lo ? SPARK.H / 2 : SPARK.H - SPARK.PAD - (v - lo) / (hi - lo) * (SPARK.H - 2 * SPARK.PAD);
+  const pts = row.points.map(([day, speed]) => [dayX(day), y(speed)]);
+  const out = [`<line class="base" x1="0" x2="${SPARK.W}" y1="${SPARK.H}" y2="${SPARK.H}"/>`];
+  if (pts.length > 1) out.push(`<polyline class="trend" points="${pts.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(" ")}"/>`);
+  row.points.forEach(([day, speed, right], i) => {
+    const [x, yy] = pts[i], last = i === pts.length - 1;
+    const said = `${dayLabel(day)}: ${speed} notes a minute` + (right == null ? "" : `, ${right}% right and in time`);
+    out.push(`<rect class="hit" x="${(x - 6).toFixed(1)}" y="0" width="12" height="${SPARK.H}"><title>${esc(said)}</title></rect>`,
+      `<circle class="${last ? "now" : "day"}" cx="${x.toFixed(1)}" cy="${yy.toFixed(1)}" r="${last ? 4 : 2}"/>`);
+  });
+  return `<svg class="wu-spark" viewBox="0 0 ${SPARK.W} ${SPARK.H}" preserveAspectRatio="none" role="img" ` +
+    `aria-label="${esc(row.name)}: ${esc(row.points.map((pt) => `${pt[0]} ${pt[1]}`).join(", "))}">${out.join("")}</svg>`;
+}
+
+function renderWarmupProgress() {
+  const p = warmupProgress, now = warmupClock && warmupClock.now;
+  const box = $("wuProgress");
+  box.hidden = !p || !p.rows.length || (!!now && !now.done);
+  if (box.hidden) return;
+  const minutes = p.today_minutes >= 1 ? ` · ${Math.round(p.today_minutes)} min today` : p.today_minutes > 0 ? " · under a minute today" : "";
+  $("wuStreak").textContent = p.streak ? `🔥 ${p.streak} day${p.streak === 1 ? "" : "s"} in a row${minutes}` :
+    "No warm-up yet today";
+  $("wuTiles").innerHTML = p.rows.map((row) => {
+    const change = row.speed - row.first, since = dayLabel(row.since);
+    const delta = row.points.length < 2 && change === 0 ? `<div class="wu-tile-delta">from ${esc(since)}</div>` :
+      `<div class="wu-tile-delta ${change > 0 ? "up" : change < 0 ? "down" : ""}">` +
+      `${change > 0 ? `▲ ${change}` : change < 0 ? `▼ ${-change}` : "the same"} since ${esc(since)}</div>`;
+    const label = row.tuning && row.tuning !== "E standard" ? `${row.name} · ${row.tuning}` : row.name;
+    return `<div class="wu-tile"><div class="wu-tile-label" title="${esc(label)}">${esc(label)}</div>` +
+      `<div class="wu-tile-value">${row.speed} <span class="unit">notes/min</span></div>${delta}${sparkline(row, p)}</div>`;
+  }).join("");
+}
+
+function warmupSpeeds(d) {
+  return d.drills.map((x) => `${x.name} ${x.speed}`).join(" · ");
+}
+
+function perClick(per) {
+  return per === 1 ? "a click each note" : `${per} notes a click`;
+}
+
+function showWarmup(st) {
+  const now = st.warmup;
+  const wanted = now ? `run:${now.run}` : `song:${selected ? selected.id : ""}`;
+  if (wanted !== warmupAsked) {
+    warmupAsked = wanted;
+    const asked = wanted;
+    api("/api/warmup" + (!now && selected ? `?id=${encodeURIComponent(selected.id)}` : "")).then((d) => {
+      if (warmupAsked === asked) { warmup = d; warmupDrawn = warmupBoardDrawn = ""; renderWarmup(); }
+    }).catch(() => { if (warmupAsked === asked) warmupAsked = ""; });
+  }
+  warmupClock = now ? {now, at: performance.now()} : null;
+  if (now) warmupRunSeen = now.run;
+  if (!now || now.done) loadWarmupProgress(now ? `done:${now.run}` : `idle:${warmupRunSeen}`);  // (once each run ends)
+  renderWarmup();
+  renderWarmupProgress();
+}
+
+function renderWarmup() {
+  const d = warmup, now = warmupClock && warmupClock.now;
+  const going = !!now && !now.done, done = !!now && now.done;
+  $("wuStart").hidden = !!now;
+  for (const id of ["wuPrev", "wuPause", "wuNext", "wuStop"]) $(id).hidden = !going;
+  $("wuIdle").hidden = !!now;
+  $("wuRun").hidden = !going;
+  $("wuDone").hidden = !done;
+  $("wuTurn").hidden = !going || now.phase !== "show";
+  if (!d) return;
+  $("wuShown").checked = !!d.shown;
+  $("wuLadder").checked = !!d.ladder;
+  $("wuChoose").hidden = !!now;
+  if (!now) {
+    showWarmupChoices(d);
+    const alone = d.what !== "routine", scale = d.drills.find((x) => x.key === "scale");
+    const from = !scale ? "" : d.scale.kind !== "pentatonic" || d.scale.tonic != null ? `; ${esc(scale.name)}` :
+      d.song ? `; the scale from ${esc(d.song.title)}` : "; the scale: A minor (pick a song for its own)";
+    const shown = d.shown ? ` ${alone ? "It's" : "Each is"} shown first, slowly, on the ${esc(KB())}'s guitar; then it's your turn.` : "";
+    $("wuWhere").textContent = "";
+    $("wuIdle").innerHTML = (alone ? `${esc(d.drills[0].name)} on its own, until you stop` :
+      `${d.drills.length} drills, about ${Math.round(d.seconds / 60)} minutes`) +
+      `, with a click on the ${esc(KB())}, in ${esc(d.tuning)}${from}.${shown}<br>${esc(warmupSpeeds(d))} ` +
+      "(notes a minute, as you left them)";
+    return;
+  }
+  if (done) {
+    $("wuWhere").textContent = "";
+    const tallies = now.tallies || {};
+    const right = d.drills.filter((x) => tallies[x.key] && tallies[x.key][0]).map((x) =>
+      `${x.name} ${Math.round(100 * tallies[x.key][1] / tallies[x.key][0])}%`).join(" · ");
+    $("wuDoneText").textContent = `Notes a minute now: ${warmupSpeeds(d)}` +
+      (right ? `. Right and in time: ${right}` : "");
+    return;
+  }
+  const drill = d.drills[now.drill];
+  if (!drill) return;
+  $("wuNext").hidden = now.until_stopped;
+  $("wuWhere").textContent = (now.until_stopped ? "on until you stop" :
+    `drill ${now.drill + 1} of ${now.drills} · ${fmt(now.left)} left`) + (now.paused ? " · paused" : "");
+  $("wuName").textContent = drill.name;
+  $("wuWorks").textContent = `· ${drill.works}`;
+  $("wuHow").textContent = drill.how;
+  $("wuBpm").textContent = `${now.speed} notes a minute`;
+  $("wuPer").textContent = now.per === 1 ? perClick(1) : `${perClick(now.per)} (${now.click} clicks a minute)`;
+  warmupScore(now);
+  $("wuPause").textContent = now.paused ? "▶ Resume" : "❚❚";
+  $("wuPause").title = now.paused ? "Resume" : "Pause (the click stops; the drill waits where it is)";
+}
+
+// Where the warm-up is now: its beat (below 0: counting in), going on from the last word at its tempo
+function warmupNow() {
+  const c = warmupClock;
+  if (!c) return null;
+  const n = c.now, since = Math.min((performance.now() - c.at) / 1000, COASTING);
+  const moving = !n.paused && !n.done;
+  const beat = n.phase === "ready" ? n.beat : n.beat + (moving ? since * n.rate : 0);
+  return {n, beat, ready: n.phase === "ready" ? Math.max(n.ready_left - (moving ? since : 0), 0) : 0,
+    drillLeft: n.drill_left == null ? null : Math.max(n.drill_left - (moving && n.phase !== "ready" ? since : 0), 0)};
+}
+
+// A pass's rows: its halves (most go up the strings, then back down), or the pass, a short one
+function warmupRows(beats) {
+  return beats >= 8 ? [[0, beats / 2], [beats / 2, beats]] : [[0, beats]];
+}
+
+function warmupTab(drill, pass, marks) {
+  const notes = drill.passes[pass % drill.passes.length];
+  const bars = [], marked = [];
+  for (let t = 0; t < drill.beats; t += 4) bars.push(t);
+  for (const [passed, index, verdict] of marks || []) if (passed === pass) marked[index] = verdict;
+  return {strings: drill.strings, notes: notes.map((x) => [x[0], x[1], x[2]]), techniques: notes.map((x) => x[3]),
+    bars, chords: [], muted: [], rows: warmupRows(drill.beats), marks: marked};
+}
+
+// How the last round went, and whether your guitar's heard
+const ROUND_SAID = {
+  faster: ["good", "✓ clean: a step faster"], clean: ["good", "✓ clean"],
+  steady: ["", "nearly: the same speed"], slower: ["bad", "two sloppy rounds: a step slower"],
+  "new speed": ["", "a new speed: getting used to it"], "nothing heard": ["", "nothing heard: playing?"],
+};
+function warmupScore(n) {
+  const r = n.round;
+  let said = "";
+  if (n.phase === "play" && r) {
+    const [kind, what] = r.verdict === "sloppy" ? ["bad", n.ladder ? "sloppy: once more and it slows down" : "sloppy"] :
+      ROUND_SAID[r.verdict] || ["", r.verdict];
+    const off = r.off_ms == null ? "" : Math.abs(r.off_ms) < 10 ? " · right with the click" :
+      ` · ${Math.abs(r.off_ms)} ms ${r.off_ms > 0 ? "after" : "before"} the click`;
+    said = r.verdict === "nothing heard" ? `<span>${what}</span>` :
+      `Last ${r.notes} notes: ${r.ok} right and in time${off} · <span class="${kind}">${esc(what)}</span>`;
+  }
+  $("wuScore").innerHTML = said;
+  const h = n.hearing || {};
+  $("wuHear").textContent = h.error ? `· not hearing your guitar: ${h.error}` : h.on ? "· 🎸 hearing you" :
+    "· starting to listen…";
+}
+
+// The line where it is, in its row (tabSvg draws one only in the first), moved as it goes between notes
+function warmupHead(tab, drill, at, width) {
+  const svg = tab.querySelector("svg"), rows = warmupRows(drill.beats);
+  const row = rows.findIndex(([start, end]) => at >= start && at < end);
+  let head = tab.querySelector("line.head");
+  if (!svg || row < 0) {
+    if (head) head.remove();
+    return;
+  }
+  if (!head) {
+    head = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    head.setAttribute("class", "head");
+    svg.append(head);
+  }
+  const height = (drill.strings.length - 1) * TAB.GAP, top = TAB.TOP + row * (height + TAB.ROW_GAP + TAB.TOP / 2);
+  const [start, end] = rows[row], right = width - TAB.RIGHT, x = TAB.LEFT + (at - start) / (end - start) * (right - TAB.LEFT);
+  head.setAttribute("x1", x);
+  head.setAttribute("x2", x);
+  head.setAttribute("y1", top - 4);
+  head.setAttribute("y2", top + height + 4);
+}
+
+function warmupBoard(drill) {
+  const guitar = {strings: drill.strings, capo: 0, bass: false, tuning: "E standard"};
+  const key = drill.scale.length ?
+    {tonic: drill.scale[0], scale: drill.scale, other: [], notes: drill.names, other_notes: [], name: drill.name} :
+    {tonic: -1, scale: [], other: [], notes: [], other_notes: [], name: drill.name};
+  return fretboardSvg(key, guitar).replace("<svg ", '<svg class="live-on" ');  // (the scale faint: the drill's over it)
+}
+
+// The pass's places, each with its finger; the one played now lit, the next few ringed
+function warmupPlaces(drill, steps, lit) {
+  const {R} = BOARD;
+  const {x, y} = geometry(drill.strings.length);
+  const out = [], seen = new Set();
+  const nextOnes = lit < 0 ? steps.slice(0, 3) : steps.slice(lit + 1, lit + 4);
+  steps.forEach(([, , places, , finger]) => {
+    const [string, fret] = places[0], place = `${string}:${fret}`;
+    if (seen.has(place)) return;
+    seen.add(place);
+    const root = drill.scale.length && (drill.strings[string] + fret) % 12 === drill.scale[0] ? " wu-root" : "";
+    out.push(`<g class="wu-place${root}"><circle cx="${x(fret)}" cy="${y(string)}" r="${R}"/>` +
+      `<text x="${x(fret)}" y="${y(string)}">${finger}</text></g>`);
+  });
+  for (const [, , places] of nextOnes) {
+    const [string, fret] = places[0];
+    out.push(`<circle class="live-next" cx="${x(fret)}" cy="${y(string)}" r="${R + 3}"/>`);
+  }
+  if (lit >= 0) {
+    const [, , places, , finger] = steps[lit], [string, fret] = places[0];
+    out.push(`<g class="live-now"><circle cx="${x(fret)}" cy="${y(string)}" r="${R + 1}"/>` +
+      `<text x="${x(fret)}" y="${y(string)}">${finger}</text></g>`);
+  }
+  return out.join("");
+}
+
+function warmupFrame() {
+  requestAnimationFrame(warmupFrame);
+  const card = $("warmupCard"), d = warmup, w = warmupNow();
+  if (!d || !w || w.n.done || card.hidden || !card.offsetParent) return;
+  const drill = d.drills[w.n.drill];
+  if (!drill) return;
+  const L = drill.beats, playing = w.n.phase !== "ready" && w.beat >= 0;  // (shown, or played)
+  const pass = playing ? Math.floor(w.beat / L) : 0, at = playing ? w.beat - pass * L : w.beat;
+  const steps = drill.passes[pass % drill.passes.length];
+  let lit = -1;
+  if (playing) steps.forEach((x, i) => { if (x[0] <= at) lit = i; });
+  const width = Math.max(320, Math.round($("wuTab").clientWidth));
+  const shown = `${w.n.drill}|${pass}|${lit}|${width}|${fretThickOnTop}|${warmupAsked}|${w.n.judged}`;
+  const tab = $("wuTab");
+  if (shown !== warmupDrawn) {
+    warmupDrawn = shown;
+    tab.innerHTML = tabSvg(warmupTab(drill, pass, w.n.phase === "play" ? w.n.marks : null), 0, playing ? at : -1, width);
+    const board = `${w.n.drill}|${pass % drill.passes.length}|${fretThickOnTop}|${warmupAsked}`;
+    if (board !== warmupBoardDrawn) {
+      warmupBoardDrawn = board;
+      $("wuBoard").innerHTML = warmupBoard(drill);
+    }
+    const layer = $("wuBoard").querySelector(".fret-live");
+    if (layer) layer.innerHTML = warmupPlaces(drill, steps, lit);
+  }
+  warmupHead(tab, drill, playing ? at : -1, width);
+  const done = w.drillLeft == null ? (playing ? at / L : 0) : 1 - w.drillLeft / (w.n.drill_length || 1);  // (on
+  // its own: how far through its pass)
+  $("wuBar").style.width = `${Math.min(100, Math.max(0, 100 * done))}%`;
+  const step = w.n.per * drill.grid;  // (beats between clicks)
+  $("wuCount").textContent = w.n.phase === "ready" ? `Get ready… ${Math.ceil(w.ready)}` :
+    w.n.phase === "show" ? "Watch and listen" :
+    w.beat < 0 ? `Your turn: ${Math.floor(w.beat / step) + 5}` : w.n.ending != null ? "Last time through" : "";
+}
+
+function changeWarmup(body) {
+  act(async () => {
+    const d = await api("/api/warmup", body);
+    if (body.start) warmupAsked = "";
+    else if (warmup) warmup = {...warmup, drills: d.drills, shown: d.shown, ladder: d.ladder};
+  });
+}
+$("wuStart").addEventListener("click", () => changeWarmup({start: true, song: selected ? selected.id : null}));
+$("wuStop").addEventListener("click", () => changeWarmup({stop: true}));
+$("wuClose").addEventListener("click", () => changeWarmup({stop: true}));
+$("wuAgain").addEventListener("click", () => changeWarmup({start: true, song: warmup && warmup.song ? warmup.song.id : null}));
+$("wuPause").addEventListener("click", () => {
+  const now = warmupClock && warmupClock.now;
+  if (now) changeWarmup(now.paused ? {resume: true} : {pause: true});
+});
+$("wuPrev").addEventListener("click", () => {
+  const w = warmupNow();
+  if (!w) return;
+  const drill = warmup && warmup.drills[w.n.drill];
+  const early = w.n.phase !== "play" || !drill || w.beat < 4 * w.n.per * drill.grid;  // (just started: the one
+  // before)
+  changeWarmup({go: Math.max(w.n.drill - (early ? 1 : 0), 0)});
+});
+$("wuNext").addEventListener("click", () => {
+  const now = warmupClock && warmupClock.now;
+  if (!now) return;
+  if (now.drill + 1 < now.drills) changeWarmup({go: now.drill + 1});
+  else changeWarmup({stop: true});
+});
+for (const [id, step] of [["wuSlower", -1], ["wuFaster", 1]]) {
+  $(id).addEventListener("click", () => {
+    if (warmupClock && warmupClock.now) changeWarmup({step});
+  });
+}
+$("wuTurn").addEventListener("click", () => changeWarmup({your_turn: true}));
+$("wuShown").addEventListener("change", () => {
+  const shown = $("wuShown").checked;
+  if (warmup) warmup = {...warmup, shown};
+  changeWarmup({shown});
+});
+$("wuLadder").addEventListener("change", () => {
+  const ladder = $("wuLadder").checked;
+  if (warmup) warmup = {...warmup, ladder};
+  changeWarmup({ladder});
+});
+requestAnimationFrame(warmupFrame);
+
 // The page's layout (✎ in the header): the middle column's cards in the order wanted, with copies of the ones that
 // can have several (Fretboard, Tab, Keys: each with its own part, a tab of the bass beside the lead's, say) and the
 // rest there once or not at all; and the settings column's cards in order, or put away. Moved by dragging (⠿) or
 // ▲ ▼, removed with ✕, added from the bar over the cards. Kept in this browser (a phone has its own)
 const CARD_KINDS = {
   song: {name: "Song", fixed: "songCard"},
+  warmup: {name: "Warm-up", fixed: "warmupCard", first: true},
   fretboard: {name: "Fretboard", make: makeFretCard},
   tab: {name: "Tab", make: makeTabCard},
   keys: {name: "Keys", make: makeRollCard},
@@ -2321,7 +2773,7 @@ const FIRST_KINDS = ["song", "fretboard", "tab", "keys", "drums", "theory"];  //
 const LAYOUT_KEY = "rsk.layout";
 const SIDE_CARDS = [...document.querySelectorAll("#side > .card")].map((c) => c.id);  // (as the page has them)
 function defaultLayout() {
-  return {middle: ["song", "audio", "fretboard", "tab", "keys", "drums", "lyrics", "plays", "theory", "pedaltones"].map((kind) => ({id: kind, kind, part: ""})),
+  return {middle: ["song", "warmup", "audio", "fretboard", "tab", "keys", "drums", "lyrics", "plays", "theory", "pedaltones"].map((kind) => ({id: kind, kind, part: ""})),
           side: [...SIDE_CARDS], away: [], known: Object.keys(CARD_KINDS)};
 }
 function loadLayout() {
@@ -2332,8 +2784,12 @@ function loadLayout() {
     ids.add(c.id) && (!CARD_KINDS[c.kind].fixed || (!seen.has(c.kind) && seen.add(c.kind))));
   if (!middle.some((c) => c.kind === "song")) middle.unshift({id: "song", kind: "song"});  // (always there)
   const known = Array.isArray(kept.known) ? kept.known : FIRST_KINDS;
-  for (const kind of Object.keys(CARD_KINDS)) {  // (a card new since it was kept: there, at the end)
-    if (!known.includes(kind) && !middle.some((c) => c.kind === kind)) middle.push({id: kind, kind, part: ""});
+  for (const kind of Object.keys(CARD_KINDS)) {  // (a card new since it was kept: there, at the end; or under the
+    // song's, a first one)
+    if (known.includes(kind) || middle.some((c) => c.kind === kind)) continue;
+    const card = {id: kind, kind, part: ""};
+    if (CARD_KINDS[kind].first) middle.splice(middle.findIndex((c) => c.kind === "song") + 1, 0, card);
+    else middle.push(card);
   }
   const side = (Array.isArray(kept.side) ? kept.side : []).filter((id) => SIDE_CARDS.includes(id));
   for (const id of SIDE_CARDS) if (!side.includes(id)) side.push(id);  // (cards new since: at the end)
@@ -3428,6 +3884,12 @@ function showState(st) {
   } else if (st.mode === "following") {
     status.textContent = st.follow.song ? `Following: ${st.follow.song}` : "Following Rocksmith: waiting for a song";
     status.title = "";
+  } else if (st.warmup && !st.warmup.done) {
+    const w = st.warmup, drill = warmup && warmup.drills[w.drill];
+    status.className = "on";
+    status.textContent = `Warm-up${drill ? ` · ${drill.name}` : ""} · ${w.left == null ? "on until you stop" :
+      `${fmt(w.left)} left`}${w.paused ? " · paused" : ""}`;
+    status.title = "";
   } else {
     status.textContent = "Idle";
     status.title = "";
@@ -3438,6 +3900,7 @@ function showState(st) {
   }
   showRemote(st);
   showLoop(st);
+  showWarmup(st);
   showListening(st.listening);
   showPedal(st.pedal);
   noteFretClock(st);

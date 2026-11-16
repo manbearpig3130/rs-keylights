@@ -19,6 +19,7 @@ Apple Silicon game) or Rocksmith 2014 Remastered. Other Casio keyboards with key
 
 - [Setup](#setup)
 - [The page](#the-page)
+- [Warm-up](#warm-up)
 - [Following Rocksmith](#following-rocksmith)
 - [The Launchkey](#the-launchkey)
 - [Drums](#drums)
@@ -209,6 +210,109 @@ key. If the Mac's firewall is on, allow Python's incoming connections when macOS
 Without `--lan` the server answers only on 127.0.0.1, to pages it served. `--port` changes its port and
 `--no-browser` doesn't open the page.
 
+## Warm-up
+
+The **Warm-up** card runs six short drills with a click on the Casio: about 8 minutes at the slowest, less as you
+speed up. Play them with nothing between the guitar and the amp.
+
+| Drill | Works on |
+|---|---|
+| Chromatic 1-2-3-4 | alternate picking, both hands in time; a fret higher each pass |
+| Spider (1-3, 2-4) | finger independence and stretch |
+| String skipping (octaves) | picking the right string every time |
+| Legato trills | hammer-ons and pull-offs |
+| Pentatonic | the scale of the song shown (as its fingers play it, if it's tuned down), else A minor |
+| Gallops and tremolo picking | picking-hand stamina and palm muting |
+
+Each drill goes like this:
+
+1. A few seconds to read it.
+2. The Casio shows it: it plays the drill's first notes on a clean guitar, at your speed, with a click, while the tab
+   and neck light up. **Your turn** skips the rest, and **Show each drill first** turns the showing off.
+3. A count-in of 4 clicks, then you play it for about 30 seconds, finishing the pass you're on (the chromatic: up the
+   strings and back down).
+
+The card shows:
+
+- the drill's tab, with the note being played lit;
+- the neck, with each note's finger (the scale's root ringed red);
+- a bar showing how far the drill has gone.
+
+The Casio lights each note's key as it comes, and the first note's key while you read the drill and count in.
+
+### What to practise
+
+Before you start, the card's choices:
+
+- **Practise:** the whole warm-up, or one drill on its own. A drill on its own goes round until you stop it.
+- **Tuning:** every standard tuning from E down to A, and the drop tunings from Drop D down to Drop A. The tab, the
+  neck and what it listens for follow it. The default is E standard.
+- **Scale**, **Key** and **Where:** the scale drill's. The defaults play the pentatonic of the song shown (else A
+  minor). Choose from major, natural minor, harmonic minor, minor and major pentatonic, blues, Dorian, Phrygian,
+  Lydian and Mixolydian, in any key. Auto starts from the root on the lowest string (open position when that's an
+  open string); or pick a fret to start from.
+
+The choices are kept for next time.
+
+### Speed
+
+Speed is counted in notes a minute. Every drill starts at the slowest, 40 (one note every 1.5 seconds), with a click on
+each note. **−** and **+** change it by 4 clicks a minute. Past 120 clicks a minute it changes to 2 notes a click and
+then 4, at half the click, so the click stays easy to follow. Each drill keeps the speed you leave it at. ◀ starts
+the drill again (just after it starts, it goes back to the one before), ▶ skips it, and ❚❚ pauses.
+
+### Your playing, heard
+
+rs-keylights listens to the guitar through the Rocksmith cable (the input chosen in the Guitar card) and judges each
+note you play. It needs the `listen` extra. On the tab, a note turns:
+
+- **green:** the right note, in time;
+- **amber:** the right note, early or late;
+- **red:** a wrong note, or one it didn't hear.
+
+"In time" is measured from your own usual timing. A low note under another string still ringing can't be told from
+its neighbours, so a note heard in time with no clear pitch counts as right.
+
+Notes are judged in rounds of 8 clicks. The line under the drill says how the last round went: how many notes were
+right and in time, and how far after (or before) the click you play. With **Speed up as I get it right** on:
+
+- a clean round (9 notes in 10 right and in time) goes a step faster;
+- two sloppy rounds in a row (fewer than 6 in 10) go a step slower;
+- a round where it heard nothing doesn't count.
+
+The change starts at the next group of clicks, and each drill keeps its speed. At the end, the card shows each drill's
+speed and how many of its notes were right and in time.
+
+### Progress
+
+Each drill you play is logged in `~/Library/Application Support/rs-keylights/warmups.jsonl`: its speed as it started
+and as you left it, its notes right and in time, and how long you played. Before a warm-up and after one, the card
+shows:
+
+- how many days in a row you've warmed up, and your minutes today;
+- a tile for each drill played in the last 30 days: its speed now, how far it's come since your first day (▲), and a
+  line of its speed each day. Point at a day for its speed and how much was right. A scale has a tile for each
+  scale and tuning.
+
+### On the Launchkey
+
+While a warm-up runs, it takes over the Launchkey:
+
+| Control | Does |
+|---|---|
+| **Play** | pause and resume |
+| **Record** | Your turn, while a drill is being shown |
+| **Track ◀ ▶** | back to the drill's start (just after it starts: the drill before), and on to the next |
+| Any knob | speed, a step a click |
+| Pads on top | the drills: the one going pulses, those done are dim green; tap one to go to it |
+| Pads below | your last 7 notes: green right and in time, amber early or late, red wrong or missed |
+| Right column | top: the speed ladder on or off (green: on); bottom (red): stop |
+
+The screen shows the drill, its speed, how far it's gone, and what's happening: reading it, being shown it, the
+count-in, or how your last round went.
+
+Starting the warm-up stops a song playing or following, and playing a song stops the warm-up.
+
 ## Following Rocksmith
 
 **Follow Rocksmith** (in the header) plays along with the game:
@@ -237,6 +341,7 @@ gives them back when it stops. It works on the song followed, else the song play
 turns the remote off.
 
 The buttons beside the knobs switch what the knobs and pads do: **▲** the arrangements, **▼** playing the song.
+While a warm-up runs, it has the Launchkey instead (see [On the Launchkey](#on-the-launchkey)).
 
 ### The arrangements (▲)
 

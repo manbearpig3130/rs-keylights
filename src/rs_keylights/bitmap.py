@@ -305,6 +305,26 @@ def playback_picture(muted: bool = False) -> Bitmap:
     return picture
 
 
+def warmup_picture(name: str, speed: str, said: str, done: float | None, sign: str | None, hint: str,
+                   muted: bool = False) -> Bitmap:
+    """The warm-up: the drill, its speed, a line of how far it's gone (after a sign: playing, or paused), what's
+    happening (reading it, being shown it, counting in, how the last round went), and what the controls do."""
+    picture = Bitmap()
+    picture.text(1, 1, (wrap(name, WIDTH - 2, 1) or [""])[0])
+    picture.text(1, 11, (wrap(speed, WIDTH - 2, 1) or [""])[0])
+    left = 0 if sign is None else SONG_BAR
+    if sign is not None:
+        picture.shape(1, 30, SIGNS[sign])
+    picture.fill(left, 33, WIDTH - left, 1)
+    if done is not None:
+        picture.fill(left, 32, song_bar(done, sign), 3)
+    picture.text(1, 40, (wrap(said, WIDTH - 2, 1) or [""])[0])
+    picture.text(1, 51, (wrap(hint, WIDTH - (16 if muted else 2), 1) or [""])[0])
+    if muted:
+        picture.shape(WIDTH - 11, 51, MUTED)
+    return picture
+
+
 def song_picture(title: str, artist: str, key: str, notes: str, done: float | None = None, sign: str | None = None,
                  handle: bool = False, speed: float | None = None, beside: str | None = None,
                  muted: bool = False, corner: str | None = None,

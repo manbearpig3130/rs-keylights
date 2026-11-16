@@ -51,3 +51,53 @@ def test_silence_isnt_heard_and_a_note_goes_out_after_it_stops():
 def test_a_bass_needs_its_lower_range():
     assert 20 not in heard(Detector(), tone([20]))  # G#0, under a guitar's
     assert heard(Detector(lowest=BASS_LOWEST), tone([20])) == (20,)
+
+
+def _plucked(notes, seconds, rate=48000):
+    """Plucked strings (Karplus-Strong): (time, pitch, string, slurred) each, a string's note stopping as its next
+    starts (slurred: no pick, its wave going on at the new pitch); others ring on."""
+    rng = np.random.default_rng(3)
+    out = rng.normal(0, 0.0003, int(seconds * rate))
+    last: dict[int, np.ndarray] = {}
+    for i, (t, pitch, string, slurred) in enumerate(notes):
+        end = next((n[0] for n in notes[i + 1:] if n[2] == string), seconds)
+        period = int(round(rate / (440 * 2 ** ((pitch - 69) / 12))))
+        y = np.zeros(int((end - t) * rate) + 2 * period)
+        if slurred and string in last:
+            tail = last[string][-period:]
+            y[:period] = tail * 0.1 / max(np.abs(tail).max(), 1e-9)
+        else:
+            y[:period] = (rng.random(period) * 2 - 1) * 0.1
+        k = 1
+        while k * period < len(y):
+            lo, hi = k * period, min((k + 1) * period, len(y))
+            before = y[lo - period - 1:hi - period - 1] if lo > period else np.concatenate(([0.0], y[:hi - period - 1]))
+            y[lo:hi] = 0.996 * 0.5 * (y[lo - period:hi - period] + before)
+            k += 1
+        y = y[:int((end - t) * rate)]
+        last[string] = y
+        a = int(t * rate)
+        out[a:a + len(y)] += y[:len(out) - a]
+    return out.astype(np.float32)
+
+
+def test_notes_are_heard_as_they_start_picked_or_slurred_with_their_pitch():
+    from rs_keylights.listen import Onsets
+    notes = [(0.3 + i * 0.25, 45 + i, 0, False) for i in range(4)]  # (E 5 6 7 8, picked)
+    notes += [(1.3 + i * 0.25, 50 + i, 1, False) for i in range(2)]  # (A 5 6: the E string ringing on)
+    notes += [(1.8 + i * 0.25, 45 + fret, 1, i > 0) for i, fret in enumerate((5, 7, 5, 7, 5, 8))]  # (A 5 h7 p5 h7 p5 h8)
+    notes += [(3.4 + i * 0.125, 40, 0, False) for i in range(6)]  # (the open E picked fast, the A ringing on loud)
+    audio = _plucked(notes, 4.6)
+    onsets, heard = Onsets(), []
+    for i in range(0, len(audio) - 511, 512):
+        now = (i + 512) / 48000
+        expected = [n[1] for n in notes if now - 0.3 <= n[0] <= now + 0.05]
+        heard += onsets.feed(audio[i:i + 512], now, expected)
+    for t, pitch, _string, _slurred in notes:
+        near = [h for h in heard if abs(h[0] - t) <= 0.015]
+        assert near, (t, pitch, heard)  # (each start in time...)
+        if t < 3.4:
+            assert near[0][1] == pitch, (t, pitch, heard)  # (...with its pitch; a low note under another string
+        else:  # ringing as loud: none, rather than a wrong one)
+            assert near[0][1] in (pitch, None), (t, pitch, heard)
+    assert len(heard) == len(notes)  # (nothing heard that wasn't played)

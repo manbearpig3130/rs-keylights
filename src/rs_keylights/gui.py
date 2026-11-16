@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict, deque
+from datetime import date, datetime, timedelta
 from dataclasses import asdict, replace
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,9 +35,9 @@ from . import drums, midiexport, theory
 from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
 from .player import Track, squeal_bends
 from .session import Following, Playback
-from . import gamestems, stems
+from . import gamestems, stems, warmup
 from .songaudio import SongAudio, song_samples
-from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener
+from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
 from .pedal import SLOTS as PEDAL_SLOTS, Pedal, PedalError
 from .pedaltones import PedalTones, PedalTonesError
@@ -49,6 +50,7 @@ from .keyshow import KeyShow
 from .songkey import Key, find_key, scale_show, shapes, tuning_name
 from .sound import GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Squeal, Voice, Voices, squeal_from
 from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, Tone, tone
+from .warmup import Warmup
 from .watch import Watch
 
 # A page in the browser for what the commands do: the song library, parts and their tones, playback
@@ -338,6 +340,8 @@ def _drum_voicing(output: dict[str, Any] | None) -> dict[str, Any]:
 DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
 SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
+WARMUP_LOG = "warmups.jsonl"  # the warm-up's progress log, beside the settings: a line a drill played
+PROGRESS_DAYS = 30  # the days of it shown
 AUDIO_KEPT_FOR = 60.0  # seconds the last song's audio stays decoded once it's stopped (split: half a GB or more)
 DRUM_HIT_LENGTH = 0.15  # seconds a drum struck on the page sounds (its sound decays by itself)
 DRUMS_PLACE_MOST = 4  # for a remote, a song's drum part is an arrangement after its own, in this place at most (its
@@ -465,8 +469,10 @@ class Gui:
         riff_loop: RiffLoop | None = None,
         pedal_tones_factory: Callable[[Callable[[int | None], str]], PedalTones] = PedalTones,
         audio_stream: Callable[..., Any] | None = None,
+        onset_listener: Callable[..., OnsetListener] = OnsetListener,
     ):
         self.index = index
+        self._onset_listener = onset_listener  # (the warm-up's: your playing heard; tests: their own)
         self._synth_factory = synth_factory  # other MIDI devices sounding parts (outputs), opened once they're used
         self._synths: dict[str, Synth] = {}
         self._synths_missing: dict[str, float] = {}  # (devices that weren't there: when they were looked for)
@@ -542,6 +548,10 @@ class Gui:
         self._other_follow = other_follow or _other_follow_running
         self._lock = threading.RLock()
         self._session: Playback | Following | None = None
+        self._warmup: Warmup | None = None  # the warm-up going (or done, until it's closed)
+        self._warmup_song: str | None = None  # the song whose scale it has
+        self._warmup_run = 0  # (each one started: a new number, for the page)
+        self._warmup_hearing: OnsetListener | None = None  # (your playing, heard as it goes)
         self._playing: dict[str, Any] | None = None  # the song being played: id, title, parts
         self._loaded: OrderedDict[str, list[tuple[ArrangementRef, Arrangement]]] = OrderedDict()
         self._lyric_lines: OrderedDict[str, tuple[Line, ...]] = OrderedDict()  # songs' lyrics, the last few
@@ -555,7 +565,14 @@ class Gui:
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME, "keys_output": None,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
                                          "pedal_favourites": list(PEDAL_FAVOURITES), "pinch": asdict(Squeal()),
-                                         "drum_set": DRUM_SETS[0][1]}  # (the keyboard's drum kit: its program)
+                                         "drum_set": DRUM_SETS[0][1],  # (the keyboard's drum kit: its program)
+                                         "warmup_speeds": {},  # (each warm-up drill's speed, as last left)
+                                         "warmup_shown": True,  # (each drill shown first, on the keyboard)
+                                         "warmup_ladder": True,  # (faster as you get it right: heard)
+                                         "warmup_what": "routine",  # (the warm-up's drills, or one on its own)
+                                         "warmup_tuning": warmup.TUNINGS[0][0],
+                                         "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None}}
+        self._warmup_log_lock = threading.Lock()  # (the progress log: a drill's line at a time)
         self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
         self.follow_version = 0  # changes with them, so pages know to show them again
         self._follow_saved = False
@@ -630,6 +647,10 @@ class Gui:
                 self.settings["keys_output"] = None
             if self.settings["drum_set"] not in dict(DRUM_SETS).values():
                 self.settings["drum_set"] = DRUM_SETS[0][1]
+            self.settings["warmup_speeds"] = _warmup_speeds(self.settings["warmup_speeds"])
+            self.settings["warmup_shown"] = self.settings["warmup_shown"] is not False
+            self.settings["warmup_ladder"] = self.settings["warmup_ladder"] is not False
+            self.settings.update(_warmup_choices(self.settings))
             try:
                 self.settings["pinch"] = asdict(squeal_from(Squeal(), self.settings["pinch"]))
             except (ValueError, TypeError, AttributeError):
@@ -1819,6 +1840,222 @@ class Gui:
             self._stop()
         return self.state()
 
+    # Warming up: drills with a click on the keyboard's drums, before playing (warmup)
+
+    def warmup_info(self, sid: str | None = None) -> dict[str, Any]:
+        """The warm-up going (or done): its drills, at their speeds, and where it is ("now"); else the drills it
+        would have, with the song's scale (the one shown, if any) and the speeds they were last left at; and
+        whether each is shown first."""
+        with self._lock:
+            session, song = self._warmup, self._warmup_song
+        shown = bool(self.settings["warmup_shown"])
+        if session is not None:
+            drills, speeds, now = session.drills, dict(session.speeds), session.info()
+        else:
+            song = sid or None
+            drills, speeds, now = self._warmup_drills(song), self.settings["warmup_speeds"], None
+        speeds = {d.key: warmup.kept_speed(d, speeds.get(d.key)) for d in drills}
+        settings = self.settings
+        return {"drills": [warmup.drill_data(d, speeds[d.key]) for d in drills], "now": now, "shown": shown,
+                "ladder": bool(settings["warmup_ladder"]),
+                "seconds": None if settings["warmup_what"] != "routine" else
+                round(sum(warmup.drill_seconds(d, speeds[d.key], shown) for d in drills)),
+                "song": self._warmup_song_info(song),
+                "what": settings["warmup_what"], "tuning": settings["warmup_tuning"], "scale": settings["warmup_scale"],
+                "choices": {"what": [["routine", "The warm-up (all six)"]] +
+                            [[d.key, d.name] for d in warmup.routine()],
+                            "tunings": [name for name, _t in warmup.TUNINGS],
+                            "scales": ["pentatonic", *warmup.SCALES]}}
+
+    def _warmup_drills(self, song: str | None) -> tuple[warmup.Drill, ...]:
+        """The drills chosen (the warm-up's, or one), in the tuning chosen, the scale's the song's or one chosen."""
+        settings = self.settings
+        return warmup.routine(self._warmup_key(song), warmup.tuning_named(settings["warmup_tuning"]),
+                              settings["warmup_scale"], settings["warmup_what"])
+
+    def set_warmup(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The warm-up started ("song": the one whose scale it has), stopped (or closed, done), paused or resumed,
+        on to another drill ("go": its number), to your turn at the one shown ("your_turn"), or a step faster or
+        slower ("step": 1 or -1; kept for that drill); and whether each drill's shown first ("shown"). Starting it
+        stops what plays (or follows), and a song played stops it."""
+        sid = str(body.get("song") or "") or None
+        chosen = {f"warmup_{name}": body[name] for name in ("what", "tuning", "scale") if name in body}
+        if chosen:
+            kept = _warmup_choices({**self.settings, **chosen}, strict=True)
+            with self._lock:
+                self.settings.update(kept)
+                self._kept.update(kept)
+            self._save()
+        for name, setting in (("shown", "warmup_shown"), ("ladder", "warmup_ladder")):
+            if name in body:
+                with self._lock:
+                    self.settings[setting] = self._kept[setting] = bool(body[name])
+                    if self._warmup is not None:
+                        setattr(self._warmup, name, bool(body[name]))
+                self._save()
+        if body.get("start"):
+            drills = self._warmup_drills(sid)
+            lowest = warmup.tuning_named(self.settings["warmup_tuning"])[0]
+            with self._lock:
+                self._end_idle_show()
+                with self._keys_lock:
+                    self._stop()
+                    keyboard = self._open_keyboard()
+                    try:
+                        session = Warmup(drills, keyboard, self.settings["warmup_speeds"],
+                                         bool(self.settings["warmup_shown"]),
+                                         ladder=bool(self.settings["warmup_ladder"]),
+                                         hearing=lambda: self._warmup_heard()["on"], on_speed=self._warmup_sped,
+                                         until_stopped=self.settings["warmup_what"] != "routine",
+                                         on_drill=self._warmup_drilled)
+                        hearing = self._onset_listener(session.heard, device=str(self.settings["listen_device"]),
+                                                       expected=session.expected,
+                                                       lowest=0.85 * 440.0 * 2 ** ((lowest - 69) / 12))
+                    except Exception:
+                        keyboard.close()
+                        raise
+                    session.start()
+                    hearing.start()
+                    self._warmup, self._warmup_song, self._warmup_hearing = session, sid, hearing
+                    self._warmup_run += 1
+            return self.warmup_info(sid)
+        with self._lock:
+            session = self._warmup
+            if session is None:
+                pass
+            elif body.get("stop"):
+                with self._keys_lock:
+                    self._warmup = None
+                    session.stop()
+                    self._stop_hearing()
+            elif body.get("pause"):
+                session.pause()
+            elif body.get("resume"):
+                session.resume()
+            elif "go" in body:
+                session.go(int(_number(body["go"], "drill", 0, len(session.drills) - 1)))
+            elif body.get("your_turn"):
+                session.your_turn()
+            elif "step" in body:
+                speed = session.change_speed(int(_number(body["step"], "step", -1, 1)))
+                speeds = {**self.settings["warmup_speeds"], session.drill.key: speed}
+                self.settings["warmup_speeds"] = self._kept["warmup_speeds"] = speeds
+                self._save()
+        return self.warmup_info(sid)
+
+    def _warmup_sped(self, key: str, speed: int) -> None:
+        """A drill's speed the ladder changed (from the warm-up's thread): kept, saved by a thread of its own (the
+        warm-up's mustn't wait on the page's lock)."""
+        self.settings["warmup_speeds"] = self._kept["warmup_speeds"] = {**self.settings["warmup_speeds"], key: speed}
+        threading.Thread(target=self._save, name="rs-keylights save", daemon=True).start()
+
+    def _warmup_drilled(self, result: dict[str, Any]) -> None:
+        """A drill played (from the warm-up's thread): a line of the progress log (warmups.jsonl, beside the
+        settings), with when."""
+        line = json.dumps({"at": datetime.now().isoformat(timespec="seconds"), **result})
+        try:
+            with self._warmup_log_lock:
+                self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.settings_file.parent / WARMUP_LOG, "a", encoding="utf-8") as log:
+                    log.write(line + "\n")
+        except OSError:  # (a log: never in the way)
+            pass
+
+    def warmup_progress(self, days: int = PROGRESS_DAYS) -> dict[str, Any]:
+        """The progress log, for the page: each drill's speed a day (the fastest it was left at that day; a scale's
+        by its name and tuning), the last days of them, with how much of it was right and in time; the days in a
+        row practised (to today, or yesterday), and today's minutes."""
+        entries: list[dict[str, Any]] = []
+        try:
+            for line in (self.settings_file.parent / WARMUP_LOG).read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                    if isinstance(entry, dict) and isinstance(entry.get("speed"), int) and isinstance(entry.get("at"), str):
+                        entries.append(entry)
+                except ValueError:
+                    continue
+        except OSError:
+            pass
+        today = date.today()
+        first_day = today - timedelta(days=days - 1)
+        groups: dict[str, dict[str, Any]] = {}
+        practised: set[date] = set()
+        today_seconds = 0.0
+        for entry in entries:
+            try:
+                day = datetime.fromisoformat(entry["at"]).date()
+            except ValueError:
+                continue
+            practised.add(day)
+            if day == today:
+                today_seconds += float(entry.get("seconds") or 0)
+            scale = entry.get("drill") == "scale"
+            key = f"scale|{entry.get('name')}|{entry.get('tuning')}" if scale else str(entry.get("drill"))
+            group = groups.setdefault(key, {"key": key, "drill": entry.get("drill"), "name": entry.get("name"),
+                                            "tuning": entry.get("tuning") if scale else None, "days": {},
+                                            "first": entry["start"] if isinstance(entry.get("start"), int)
+                                            else entry["speed"], "since": day.isoformat()})  # (where it began)
+            if not scale:
+                group["name"] = entry.get("name")  # (the latest)
+            had = group["days"].setdefault(day.isoformat(), {"speed": 0, "notes": 0, "ok": 0})
+            had["speed"] = max(had["speed"], entry["speed"])
+            had["notes"] += int(entry.get("notes") or 0)
+            had["ok"] += int(entry.get("ok") or 0)
+        order = {key: i for i, key in enumerate(warmup.DRILL_KEYS)}
+        rows = []
+        for group in sorted(groups.values(), key=lambda g: (order.get(g["drill"], len(order)), g["key"])):
+            shown = sorted(day for day in group["days"] if day >= first_day.isoformat())
+            if not shown:
+                continue
+            points = [[day, group["days"][day]["speed"],
+                       round(100 * group["days"][day]["ok"] / group["days"][day]["notes"])
+                       if group["days"][day]["notes"] else None] for day in shown]
+            rows.append({"key": group["key"], "name": group["name"], "tuning": group["tuning"], "points": points,
+                         "speed": points[-1][1], "first": group["first"], "since": group["since"]})
+        streak, day = 0, today if today in practised else today - timedelta(days=1)
+        while day in practised:
+            streak, day = streak + 1, day - timedelta(days=1)
+        return {"rows": rows, "streak": streak, "today_minutes": round(today_seconds / 60, 1),
+                "today": today.isoformat(), "days": days}
+
+    def _warmup_heard(self) -> dict[str, Any]:
+        """Whether your playing's heard: the guitar's input open (or why not), and how loud it is."""
+        hearing = self._warmup_hearing
+        if hearing is None:
+            return {"on": False, "error": None, "level": 0.0}
+        return {"on": bool(hearing.hearing), "error": hearing.error, "level": round(float(hearing.level), 4)}
+
+    def _stop_hearing(self) -> None:
+        hearing, self._warmup_hearing = self._warmup_hearing, None
+        if hearing is not None:
+            hearing.stop()
+
+    def _warmup_key(self, sid: str | None) -> Key | None:
+        """A song's key as its fingers play it (tuned down, say: as in E standard), for the warm-up's scale."""
+        if not sid:
+            return None
+        try:
+            info = self.song_key(sid)
+            loaded = self._load(sid)
+        except (GuiError, OSError, ValueError):
+            return None
+        if info is None:
+            return None
+        key = Key(info["tonic"], info["mode"])
+        guitar = next((a for r, a in loaded if not r.bass), None)
+        played = shapes(key, guitar) if guitar is not None else None
+        return played[0] if played else key
+
+    def _warmup_song_info(self, sid: str | None) -> dict[str, Any] | None:
+        if not sid:
+            return None
+        try:
+            loaded = self._load(sid)
+        except (GuiError, OSError, ValueError):
+            return None
+        named = next((r for r, _a in loaded if r.artist), loaded[0][0])
+        return {"id": sid, "title": named.title or named.song_key, "tempo": round(named.tempo) or None}
+
     # Following the game
 
     def follow_info(self) -> dict[str, Any]:
@@ -2021,7 +2258,14 @@ class Gui:
     def remote_info(self) -> dict[str, Any]:
         """What a remote (the Launchkey) shows: the song followed, else the one playing, else the one picked on
         the page, with its arrangements as chosen; whether they sound; and the default tones (following, whether
-        Rocksmith is reached too)."""
+        Rocksmith is reached too); and the warm-up, while there's one (it takes the remote)."""
+        info = self._remote_song_info()
+        with self._lock:
+            warming = self._warmup
+            info["warmup"] = {**warming.info(), "hearing": self._warmup_heard()} if warming is not None else None
+        return info
+
+    def _remote_song_info(self) -> dict[str, Any]:
         with self._lock:
             session = self._session
             following = isinstance(session, Following) and session.running
@@ -3068,6 +3312,9 @@ class Gui:
                                    "keys": self.keys_info(), "loop": self.loop_info(None),
                                    "listening": self.listening(), "pedal": self.pedal_info(),
                                    "plays": self._recorder.changed,
+                                   "warmup": {**self._warmup.info(), "run": self._warmup_run,
+                                              "hearing": self._warmup_heard()}
+                                   if self._warmup is not None else None,
                                    "launchkey": self._watch.status if self._watch is not None else None}
             if isinstance(session, Playback):
                 if not session.running:
@@ -3320,6 +3567,10 @@ class Gui:
         self._end_idle_show()
         self._audio_off()
         with self._keys_lock:
+            warming, self._warmup = self._warmup, None
+            if warming is not None:
+                warming.stop()
+            self._stop_hearing()
             if self._session is not None:
                 self._session.stop()
             self._session = None
@@ -3404,6 +3655,37 @@ def _guitar(loaded: list[tuple[ArrangementRef, Arrangement]]) -> dict[str, Any] 
     tuning = (tuple(arrangement.tuning) + (0,) * len(strings))[:len(strings)]
     return {"strings": [pitch + move for pitch, move in zip(strings, tuning)], "capo": max(arrangement.capo, 0),
             "tuning": tuning_name(tuning, arrangement.capo), "bass": ref.bass}
+
+
+def _warmup_choices(settings: dict[str, Any], strict: bool = False) -> dict[str, Any]:
+    """What to practise (the warm-up, or a drill), in which tuning, with which scale, as kept (or asked for: strict,
+    a choice there isn't says so; else it's put back to the default)."""
+    what, tuning, scale = settings.get("warmup_what"), settings.get("warmup_tuning"), settings.get("warmup_scale")
+    if what not in ("routine", *warmup.DRILL_KEYS):
+        if strict:
+            raise GuiError(f"No such drill: {what}")
+        what = "routine"
+    if tuning not in dict(warmup.TUNINGS):
+        if strict:
+            raise GuiError(f"No such tuning: {tuning}")
+        tuning = warmup.TUNINGS[0][0]
+    scale = scale if isinstance(scale, dict) else {}
+    kind, tonic, start = scale.get("kind", "pentatonic"), scale.get("tonic"), scale.get("start")
+    if kind not in ("pentatonic", *warmup.SCALES) or not (tonic is None or isinstance(tonic, int) and
+                                                           not isinstance(tonic, bool) and 0 <= tonic < 12) or \
+            not (start is None or isinstance(start, int) and not isinstance(start, bool) and 0 <= start <= 15):
+        if strict:
+            raise GuiError(f"No such scale: {scale}")
+        kind, tonic, start = "pentatonic", None, None
+    return {"warmup_what": what, "warmup_tuning": tuning, "warmup_scale": {"kind": kind, "tonic": tonic, "start": start}}
+
+
+def _warmup_speeds(value: Any) -> dict[str, int]:
+    """Each warm-up drill's speed, as kept (the rest left out)."""
+    if not isinstance(value, dict):
+        return {}
+    drills = {d.key: d for d in warmup.routine()}
+    return {k: v for k, v in value.items() if k in drills and warmup.kept_speed(drills[k], v) == v}
 
 
 def _favourites(value: Any) -> list[int]:
@@ -3719,6 +4001,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.song(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/drums/part":
                 self._json(200, gui.drum_part(parse_qs(url.query).get("id", [""])[0]))
+            elif url.path == "/api/warmup":
+                self._json(200, gui.warmup_info(parse_qs(url.query).get("id", [""])[0] or None))
+            elif url.path == "/api/warmup/progress":
+                self._json(200, gui.warmup_progress())
             elif url.path == "/api/theory":
                 query = parse_qs(url.query)
                 self._json(200, gui.theory(query.get("id", [""])[0], query.get("part", [None])[0] or None))
@@ -3821,6 +4107,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/stems": lambda: gui.set_stems(body),
             "/api/game-stems": lambda: gui.set_game_stems(body),
             "/api/drums/hit": lambda: gui.hit_drum(body),
+            "/api/warmup": lambda: gui.set_warmup(body),
             "/api/reindex": gui.reindex,
         }
         route = routes.get(url.path)

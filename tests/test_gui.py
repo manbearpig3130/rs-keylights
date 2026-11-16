@@ -38,6 +38,23 @@ class FakeMidiOut:
         pass
 
 
+class FakeHearing:
+    """The warm-up's listener (OnsetListener), without an audio input: a test plays its notes (heard)."""
+
+    made = []
+
+    def __init__(self, heard, device="", clock=None, expected=None, lowest=70.0):
+        self.heard, self.expected, self.device, self.lowest = heard, expected, device, lowest
+        self.hearing, self.error, self.level, self.stopped = False, None, 0.0, False
+        FakeHearing.made.append(self)
+
+    def start(self):
+        self.hearing = True
+
+    def stop(self):
+        self.hearing, self.stopped = False, True
+
+
 class FakeOverlay(ThreadingHTTPServer):
     """RS Companion's overlay API, with the game's state as a test sets it (the menus at first)."""
 
@@ -82,7 +99,7 @@ def server(tmp_path):
     overlay = FakeOverlay()
     Thread(target=overlay.serve_forever, daemon=True).start()
     gui = Gui(index, factory, tmp_path / "gui.json", overlay_port=overlay.server_address[1],
-              list_ports=lambda: ["CASIO USB-MIDI"], other_follow=lambda: False)
+              list_ports=lambda: ["CASIO USB-MIDI"], other_follow=lambda: False, onset_listener=FakeHearing)
     assert gui.play_options["real_pitch"] and gui.follow_settings["real_pitch"]  # (on, as it starts)
     gui.play_options["real_pitch"] = gui.follow_settings["real_pitch"] = False  # (these tests: the lit keys' pitch)
     srv = GuiServer(gui, 0)
@@ -212,7 +229,10 @@ def test_settings_are_kept(server, tmp_path):
         "keys_tone": 1, "keys_volume": 100, "keys_output": None, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187], "pinch": {"up": 19, "velocity": 127, "note_velocity": 70, "scoop": 0.5,
                                                  "scoop_ms": 80.0, "width": 1.05, "rate": 15.0, "grows_ms": 200.0,
-                                                 "vibrato": "always"}, "drum_set": 0}
+                                                 "vibrato": "always"}, "drum_set": 0, "warmup_speeds": {},
+                                                 "warmup_shown": True, "warmup_ladder": True, "warmup_what": "routine",
+                                                 "warmup_tuning": "E standard",
+                                                 "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None}}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
@@ -1557,3 +1577,156 @@ def test_songs_are_split_one_at_a_time_the_others_waiting_their_turn(server, mon
     go.set()
     assert wait_for(lambda: len(started) == 2 and not gui.stems_info(second)["making"], bool)
     assert not gui._split_running
+
+
+def test_a_warm_up_clicks_on_the_keyboard_its_speeds_are_kept_and_a_song_played_stops_it(server, monkeypatch):
+    from rs_keylights import warmup
+    gui, sid = server.gui, first_song(server)
+    preview = call(server, f"/api/warmup?id={urllib.request.quote(sid)}")[1]
+    assert preview["now"] is None and len(preview["drills"]) == 6 and preview["song"]["id"] == sid
+    assert preview["drills"][4]["key"] == "scale" and preview["drills"][4]["name"].endswith("pentatonic")
+    assert all(d["speed"] == warmup.SLOWEST and d["per"] == 1 for d in preview["drills"])  # (the slowest, at first)
+    assert preview["shown"] and 240 < preview["seconds"] < 600  # (at the slowest, each pass played through)
+    assert call(server, "/api/warmup")[1]["drills"][4]["name"] == "A minor pentatonic"  # (no song: A minor)
+    monkeypatch.setattr(warmup, "READY_SECONDS", 0.0)  # (shown at once)
+    _, started = call(server, "/api/warmup", {"start": True, "song": sid})
+    assert started["now"]["drill"] == 0 and started["song"]["id"] == sid
+    state = call(server, "/api/state")[1]["warmup"]
+    assert state["run"] == 1 and state["phase"] in ("ready", "show") and not state["paused"]
+
+    def sent(status):
+        return [m for out in server.outs for m in out.sent if m[0] == status and m[2] > 0]
+
+    assert wait_for(lambda: sent(0x99) and sent(0x9A), bool)  # (a click, and its first note on the guitar)
+    assert sent(0x99)[0][1] == warmup.ACCENT and sent(0x9A)[0][1] == 45
+    call(server, "/api/warmup", {"your_turn": True})
+    assert call(server, "/api/state")[1]["warmup"]["phase"] == "count"
+    _, faster = call(server, "/api/warmup", {"step": 1})
+    assert faster["now"]["speed"] == 44 and gui.settings["warmup_speeds"] == {"chromatic": 44}
+    assert json.loads(gui.settings_file.read_text())["warmup_speeds"] == {"chromatic": 44}  # (kept)
+    assert call(server, "/api/warmup", {"step": 5})[0] == 400
+    call(server, "/api/warmup", {"go": 4})
+    assert call(server, "/api/state")[1]["warmup"]["drill"] == 4
+    assert call(server, "/api/warmup", {"go": 6})[0] == 400
+    call(server, "/api/warmup", {"pause": True})
+    assert call(server, "/api/state")[1]["warmup"]["paused"]
+    _, off = call(server, "/api/warmup", {"shown": False, "ladder": False})
+    assert not off["shown"] and not gui.settings["warmup_shown"] and not gui._warmup.shown
+    assert not off["ladder"] and not gui.settings["warmup_ladder"] and not gui._warmup.ladder
+    hearing = FakeHearing.made[-1]
+    assert call(server, "/api/state")[1]["warmup"]["hearing"] == {"on": True, "error": None, "level": 0.0}
+    assert hearing.device == gui.settings["listen_device"] and hearing.expected() == ()
+    call(server, "/api/play", {"song": sid})  # (a song played: the warm-up stops, and its listening)
+    assert call(server, "/api/state")[1]["warmup"] is None and hearing.stopped
+    call(server, "/api/stop", {})
+    again = Gui(gui.index, settings_file=gui.settings_file, list_ports=list, other_follow=lambda: False)
+    assert again.settings["warmup_speeds"] == {"chromatic": 44} and not again.settings["warmup_shown"]
+    assert not again.settings["warmup_ladder"]
+    assert again.warmup_info()["drills"][0]["speed"] == 44 and not again.warmup_info()["shown"]
+    _, started = call(server, "/api/warmup", {"start": True})
+    assert started["now"]["speed"] == 44 and call(server, "/api/state")[1]["warmup"]["run"] == 2
+    call(server, "/api/warmup", {"stop": True})
+    assert call(server, "/api/state")[1]["warmup"] is None
+
+
+def test_warm_up_speeds_kept_wrong_are_left_out():
+    from rs_keylights.gui import _warmup_speeds
+    assert _warmup_speeds({"chromatic": 80, "spider": "fast", "kazoo": 90, "legato": 5, "scale": True,
+                           "gallops": 81, "skipping": 600}) == {"chromatic": 80}
+    assert _warmup_speeds([1, 2]) == {}
+
+
+def test_a_warm_up_hears_your_playing_and_the_ladder_keeps_the_speed_it_changes(server, monkeypatch):
+    from rs_keylights import warmup
+    gui = server.gui
+    monkeypatch.setattr(warmup, "READY_SECONDS", 0.0)
+    gui.settings["warmup_shown"] = False
+    gui.settings["warmup_speeds"] = gui._kept["warmup_speeds"] = {"chromatic": 952}  # (fast: a round soon)
+    call(server, "/api/warmup", {"start": True})
+    hearing, session = FakeHearing.made[-1], gui._warmup
+
+    def play_along():
+        played = set()
+        while not session.done and gui._warmup is session and session.speed == 952:
+            for due in list(session._due):
+                if id(due) not in played:
+                    played.add(id(due))
+                    hearing.heard(due.time + warmup.CLICK_HEARD, due.pitch)
+            time.sleep(0.005)
+
+    Thread(target=play_along, daemon=True).start()
+    assert wait_for(lambda: gui.settings["warmup_speeds"].get("chromatic"), lambda s: s == 960, 8.0)
+    state = call(server, "/api/state")[1]["warmup"]
+    assert state["round"]["verdict"] == "faster" and state["marks"] and state["marks"][0][2] == "ok"
+    assert wait_for(lambda: json.loads(gui.settings_file.read_text()).get("warmup_speeds"), bool)["chromatic"] == 960
+    assert call(server, "/api/state")[1]["warmup"]["name"] == "Chromatic 1-2-3-4"
+    assert gui.remote_info()["warmup"]["speed"] == 960  # (the Launchkey's too)
+    call(server, "/api/warmup", {"stop": True})
+    logged = [json.loads(line) for line in (gui.settings_file.parent / "warmups.jsonl").read_text().splitlines()]
+    assert len(logged) == 1 and logged[0]["drill"] == "chromatic" and logged[0]["tuning"] == "E standard"
+    assert logged[0]["start"] == 952 and logged[0]["speed"] == 960 and logged[0]["notes"] >= 32
+    assert logged[0]["ok"] == logged[0]["notes"] and logged[0]["seconds"] > 1 and logged[0]["at"][:4] == "2026"
+    progress = call(server, "/api/warmup/progress")[1]
+    assert progress["streak"] == 1 and progress["rows"][0]["speed"] == 960 and progress["rows"][0]["first"] == 952
+
+
+def test_one_drill_or_a_scale_of_your_own_in_a_tuning_of_your_own_is_practised_on_its_own(server):
+    from rs_keylights import warmup
+    gui = server.gui
+    preview = call(server, "/api/warmup")[1]
+    assert preview["what"] == "routine" and preview["tuning"] == "E standard" and len(preview["drills"]) == 6
+    assert "B standard" in preview["choices"]["tunings"] and "natural minor" in preview["choices"]["scales"]
+    assert preview["choices"]["what"][0][0] == "routine" and len(preview["choices"]["what"]) == 7
+    _, chosen = call(server, "/api/warmup", {"what": "scale", "tuning": "B standard",
+                                             "scale": {"kind": "natural minor", "tonic": 11, "start": None}})
+    assert [d["name"] for d in chosen["drills"]] == ["B natural minor"] and chosen["seconds"] is None
+    assert chosen["drills"][0]["strings"] == [35, 40, 45, 50, 54, 59]
+    kept = json.loads(gui.settings_file.read_text())
+    assert kept["warmup_what"] == "scale" and kept["warmup_tuning"] == "B standard"
+    assert kept["warmup_scale"] == {"kind": "natural minor", "tonic": 11, "start": None}
+    for wrong in ({"what": "kazoo"}, {"tuning": "Q standard"}, {"scale": {"kind": "bebop"}},
+                  {"scale": {"kind": "major", "tonic": 12}}, {"scale": {"kind": "major", "start": 30}}):
+        assert call(server, "/api/warmup", wrong)[0] == 400, wrong
+    _, started = call(server, "/api/warmup", {"start": True})
+    hearing = FakeHearing.made[-1]
+    assert started["now"]["until_stopped"] and started["now"]["left"] is None and started["now"]["drills"] == 1
+    assert 50 < hearing.lowest < 61.7  # (B standard's low B, 61.7 Hz, listened for)
+    call(server, "/api/warmup", {"stop": True})
+    again = Gui(gui.index, settings_file=gui.settings_file, list_ports=list, other_follow=lambda: False)
+    assert again.settings["warmup_what"] == "scale" and again.warmup_info()["drills"][0]["name"] == "B natural minor"
+    call(server, "/api/warmup", {"what": "routine", "tuning": "E standard", "scale": {"kind": "pentatonic"}})
+    assert len(call(server, "/api/warmup")[1]["drills"]) == 6
+
+
+def test_the_progress_log_is_each_drills_speed_a_day_and_the_days_in_a_row(server):
+    from datetime import date, timedelta
+    gui = server.gui
+    today = date.today()
+
+    def at(days_ago, hour=9):
+        return f"{(today - timedelta(days=days_ago)).isoformat()}T{hour:02d}:00:00"
+
+    lines = [{"at": at(40), "drill": "spider", "name": "Spider (1-3, 2-4)", "tuning": "E standard", "start": 40,
+              "speed": 40, "notes": 10, "ok": 5, "seconds": 30},  # (too long ago to show)
+             {"at": at(2), "drill": "chromatic", "name": "Chromatic 1-2-3-4", "tuning": "E standard", "start": 40,
+              "speed": 48, "notes": 20, "ok": 15, "seconds": 60},
+             {"at": at(2, 18), "drill": "chromatic", "name": "Chromatic 1-2-3-4", "tuning": "E standard", "start": 48,
+              "speed": 44, "notes": 20, "ok": 5, "seconds": 60},  # (later that day, slower: the day's fastest kept)
+             {"at": at(1), "drill": "chromatic", "name": "Chromatic 1-2-3-4", "tuning": "B standard", "start": 48,
+              "speed": 56, "notes": 0, "ok": 0, "seconds": 90},
+             {"at": at(0), "drill": "scale", "name": "B natural minor", "tuning": "B standard", "start": 40,
+              "speed": 52, "notes": 30, "ok": 27, "seconds": 120},
+             {"at": at(0), "drill": "scale", "name": "A minor pentatonic", "tuning": "E standard", "start": 40,
+              "speed": 40, "notes": 0, "ok": 0, "seconds": 30}]
+    (gui.settings_file.parent / "warmups.jsonl").write_text(
+        "\n".join(json.dumps(line) for line in lines) + "\nnot json\n{}\n")
+    progress = call(server, "/api/warmup/progress")[1]
+    assert progress["streak"] == 3 and progress["today_minutes"] == 2.5 and progress["today"] == today.isoformat()
+    rows = {row["key"]: row for row in progress["rows"]}
+    assert list(rows) == ["chromatic", "scale|A minor pentatonic|E standard", "scale|B natural minor|B standard"]
+    chromatic = rows["chromatic"]  # (any tuning: the same frets)
+    assert chromatic["points"] == [[(today - timedelta(days=2)).isoformat(), 48, 50],
+                                   [(today - timedelta(days=1)).isoformat(), 56, None]]
+    assert chromatic["speed"] == 56 and chromatic["first"] == 40 and chromatic["tuning"] is None  # (from its start)
+    assert rows["scale|B natural minor|B standard"]["points"][0][1:] == [52, 90]
+    assert rows["scale|B natural minor|B standard"]["tuning"] == "B standard"
