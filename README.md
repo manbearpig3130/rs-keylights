@@ -440,7 +440,8 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
 
 - It's paused, moved and looped with the song.
 - It's slowed or sped up without changing pitch.
-- It's decoded from the song's archive in a fraction of a second.
+- It's decoded from the song's archive in a fraction of a second (a split song with its parts: about a second).
+  It stays decoded for a minute after it stops, so playing it again starts at once.
 - It's off each time rs-keylights starts, and it doesn't play while following.
 
 The **Song's audio** card sets its volume and output.

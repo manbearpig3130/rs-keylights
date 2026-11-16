@@ -1435,8 +1435,11 @@ def test_the_songs_own_audio_plays_with_it_where_it_is(server, monkeypatch):
     assert wait_for(lambda: gui._song_audio, bool) and len(decoded) == 1  # (decoded once: kept)
     call(server, "/api/play/options", {"audio_device": "Speakers"})  # (another output: played there at once)
     assert wait_for(lambda: gui._song_audio and streams[-1].kwargs.get("device") == "Speakers", bool)
+    monkeypatch.setattr(gui_module, "AUDIO_KEPT_FOR", 0.05)
     call(server, "/api/stop", {})
     assert gui._song_audio is None and streams[-1].closed
+    assert wait_for(lambda: gui._audio_kept, lambda kept: kept is None) is None  # (stopped a while: its memory back)
+    assert len(decoded) == 1
     assert call(server, "/api/play/options", {"audio_volume": 101})[0] == 400
     assert call(server, "/api/play/options", {"audio_device": 3})[0] == 400
     again = Gui(gui.index, settings_file=gui.settings_file, list_ports=list, other_follow=lambda: False)

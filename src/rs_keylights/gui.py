@@ -338,6 +338,7 @@ def _drum_voicing(output: dict[str, Any] | None) -> dict[str, Any]:
 DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
 SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
+AUDIO_KEPT_FOR = 60.0  # seconds the last song's audio stays decoded once it's stopped (split: half a GB or more)
 DRUM_HIT_LENGTH = 0.15  # seconds a drum struck on the page sounds (its sound decays by itself)
 DRUMS_PLACE_MOST = 4  # for a remote, a song's drum part is an arrangement after its own, in this place at most (its
 # fifth: a song with five arrangements has its drums there, its fifth on the page only)
@@ -1681,7 +1682,8 @@ class Gui:
                                   stream_factory=self._audio_stream, weights=weights, search=samples)
                 with self._lock:
                     if token != self._audio_token:
-                        return  # (another song, or none, since)
+                        self._forget_audio_later()  # (another song, or none, since: kept a while, as if it played)
+                        return
                     audio.start(self.play_options["audio_device"])
                     self._song_audio = audio
             except Exception as exc:  # (no decoder, no sound device: said on the page)
@@ -1777,6 +1779,20 @@ class Gui:
         audio, self._song_audio = self._song_audio, None
         if audio is not None:
             audio.close()
+        if self._audio_kept is not None:
+            self._forget_audio_later()
+
+    def _forget_audio_later(self) -> None:
+        """The last song's audio, kept decoded (played again soon, it's there at once): its memory back in
+        AUDIO_KEPT_FOR, if no audio's started or playing by then."""
+        timer = threading.Timer(AUDIO_KEPT_FOR, self._audio_forgotten, (self._audio_token,))
+        timer.daemon = True
+        timer.start()
+
+    def _audio_forgotten(self, token: int) -> None:
+        with self._lock:
+            if token == self._audio_token and self._song_audio is None:
+                self._audio_kept = None
 
     def pause(self) -> dict[str, Any]:
         with self._lock:

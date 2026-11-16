@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
@@ -129,18 +130,26 @@ def load(ref: ArrangementRef, mix: Any, cache: Path | None = None) -> dict[str, 
     if not made(ref, cache):
         return None
     folder = _folder(ref, cache)
-    out: dict[str, Any] = {}
-    with tempfile.TemporaryDirectory(prefix="rs-keylights-stems-") as work:
-        for stem in SEPARATED:
-            wav = Path(work) / f"{stem}.wav"
-            _run(["afconvert", "-f", "WAVE", "-d", "LEI16", str(folder / f"{stem}.m4a"), str(wav)], dict(os.environ),
-                 f"Reading the {stem}")
-            with wave.open(str(wav)) as w:
-                part = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, w.getnchannels())
-            fitted = np.zeros(mix.shape, dtype=np.int16)
-            n = min(len(part), len(mix))
-            fitted[:n, :part.shape[1]] = part[:n, :mix.shape[1]]
-            out[stem] = fitted
+    env = dict(os.environ)
+
+    def read(stem: str, work: Path) -> Any:
+        wav = work / f"{stem}.wav"
+        _run(["afconvert", "-f", "WAVE", "-d", "LEI16", str(folder / f"{stem}.m4a"), str(wav)], env,
+             f"Reading the {stem}")
+        with wave.open(str(wav)) as w:
+            part = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, w.getnchannels())
+        if part.shape == mix.shape:
+            return part  # (as long as the song, as it should be: not copied; read-only, as it's only read)
+        fitted = np.zeros(mix.shape, dtype=np.int16)
+        n = min(len(part), len(mix))
+        fitted[:n, :part.shape[1]] = part[:n, :mix.shape[1]]
+        return fitted
+
+    with tempfile.TemporaryDirectory(prefix="rs-keylights-stems-") as work, \
+            ThreadPoolExecutor(len(SEPARATED), thread_name_prefix="rs-keylights stems") as pool:
+        # (all at once: afconvert's one core each, about a fifth of the time)
+        reading = {stem: pool.submit(read, stem, Path(work)) for stem in SEPARATED}
+        out = {stem: part.result() for stem, part in reading.items()}
     os.utime(folder)
     return out
 
