@@ -46,6 +46,20 @@ def test_linked_notes_keep_the_keys_lit():
     # pitches and techniques, ringing as the linked note does
 
 
+def test_a_linked_notes_slide_off_slide_and_bend_are_the_held_notes():
+    # Opeth's Reverie/Harlequin Forest, rhythm at 95 s: a double stop held, then linked notes that slide off down
+    held = schedule([Note(95.132, 0.149, (50, 57)), Note(95.281, 0.149, (50,), CHILD, slide_off=-4),
+                     Note(95.281, 0.149, (57,), CHILD, slide_off=-4), Note(95.58, 0.0, (38, 45, 50))], shift=0)
+    assert len(held) == 2 and held[0].slide_off == -4 and round(held[0].off, 3) == 95.43
+    lights, extras = techniques(held)
+    steps = [e for e in extras if e.on < 95.58]
+    assert len(steps) == 4 and steps[0].on >= 95.281 and steps[-1].pitches == (46, 53)  # (slid off at its end)
+    slid = schedule([Note(1.0, 0.5, (60,)), Note(1.5, 0.5, (60,), CHILD, slide=2, bends=((1.8, 1.0),))], shift=0)
+    assert slid[0].slide == 2 and slid[0].slide_at == 1.5 and slid[0].bends == ((1.8, 1.0),)
+    glide = techniques(slid)[1]
+    assert [e.pitches for e in glide] == [(61,), (62,)] and glide[0].on > 1.5  # (from the linked note's start)
+
+
 def test_at_most_four_keys_and_the_shift_but_every_pitch_kept():
     lights = schedule([Note(0.0, 0, (35, 42, 47, 50, 54, 59))])
     assert lights[0].keys == (47, 54, 59, 62)

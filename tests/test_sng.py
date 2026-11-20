@@ -37,9 +37,9 @@ def test_each_phrase_uses_its_hardest_level():
     assert [(n.time, n.pitches[0] - 40) for n in load(song).notes] == [(1.0, 2), (1.5, 3), (5.0, 1)]
 
 
-def test_skips_fret_hand_mutes_and_ignored_notes_and_bends_are_read_past():
+def test_skips_fret_hand_mutes_keeps_ignored_notes_and_bends_are_read_past():
     song = Song(levels={0: [N(1.0, mask=FRET_HAND_MUTE), N(2.0, mask=IGNORE), N(3.0, fret=5, bends=2), N(4.0)]})
-    assert [n.time for n in load(song).notes] == [3.0, 4.0]
+    assert [n.time for n in load(song).notes] == [2.0, 3.0, 4.0]  # (ignored: shown in the game, just not scored)
 
 
 def test_capo_applies_to_open_strings():

@@ -72,6 +72,7 @@ class Light:
     strum: tuple[float, ...] = ()  # seconds after on each pitch sounds, strummed (as the pitches are; none: at once)
     level: float = 1.0  # how loud, of how it's played (a slide off's steps fading)
     up: bool = False  # strummed (or picked) up: softer
+    slide_at: float | None = None  # when its slide starts: a linked note's start, its slide its (None: on)
 
 
 def together(notes: Sequence[Note]) -> list[Note]:
@@ -194,10 +195,14 @@ def schedule(notes: Sequence[Note], keys: KeyRange = KeyRange(), shift: int | No
         lit = tuple(sorted({keys.fit(p + shift) for p in note.pitches}))[: keys.max_lit]
         end = note.time + max(note.sustain, MIN_LIGHT)
         if lights and note.mask & CHILD and lights[-1].keys == lit:
-            # A linked note continues the one before it: keep the keys lit, and its sound ringing as long
+            # A linked note continues the one before it: keep the keys lit, and its sound ringing as long; and what
+            # it does (often the reason it's charted: held, then slid off or along, bent or shaken)
             last = lights[-1]
             longer = tuple(max(a, b) for a, b in zip(last.rings, ends)) if len(last.rings) == len(ends) else last.rings
-            lights[-1] = replace(last, off=max(last.off, end), rings=longer)
+            lights[-1] = replace(last, off=max(last.off, end), rings=longer, slide=note.slide or last.slide,
+                                 slide_at=note.time if note.slide else last.slide_at,
+                                 slide_off=note.slide_off or last.slide_off, bends=last.bends + note.bends,
+                                 vibrato=last.vibrato or note.vibrato)
             continue
         if lights:
             last = lights[-1]
@@ -229,8 +234,9 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
         if light.slide:
             linked = i + 1 < len(lights) and bool(lights[i + 1].mask & CHILD) and \
                 lights[i + 1].pitches == tuple(p + light.slide for p in light.pitches)
-            span, steps = max(end - light.on, GLIDE_LEAST), abs(light.slide)
-            times = [light.on + span * k / (steps + 1) for k in range(1, steps + 1 - linked)]
+            start = light.on if light.slide_at is None else light.slide_at  # (a linked note's: from its start)
+            span, steps = max(end - start, GLIDE_LEAST), abs(light.slide)
+            times = [start + span * k / (steps + 1) for k in range(1, steps + 1 - linked)]
             offsets = [k * (1 if light.slide > 0 else -1) for k in range(1, len(times) + 1)]
         elif light.slide_off:
             semitones, steps = abs(light.slide_off), min(abs(light.slide_off), SLIDE_OFF_STEPS)

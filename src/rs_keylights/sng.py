@@ -39,7 +39,7 @@ BEND = 0x1000
 TAP = 0x4000
 PINCH_HARMONIC = 0x8000
 VIBRATO = 0x10000
-IGNORE = 0x40000
+IGNORE = 0x40000  # shown and played but not scored (harmonic chords the game can't judge...): played here too
 UNPITCHED_SLIDE = 0x400000
 ACCENT = 0x4000000
 CHILD = 0x10000000  # linked to the note before it (a sustain that continues)
@@ -318,7 +318,7 @@ def parse(data: bytes, bass: bool = False) -> Arrangement:
     for index, (phrase, start) in enumerate(iterations):
         level = min(phrase_levels[phrase], hardest) if 0 <= phrase < len(phrase_levels) else hardest
         for record in levels.get(level, ()):
-            if record[5] != index or record[0] & IGNORE:
+            if record[5] != index:
                 continue
             note = played_as(record)
             if note is not None:
