@@ -752,7 +752,7 @@
           <span id="keysOutputStatus" class="muted small"></span></span>
         <label>Tone</label><span id="keysTone"></span>
         <label for="keysVolume">Volume</label>
-        <span class="part-volume"><input type="range" id="keysVolume" min="0" max="127"><output id="keysVolumeShown"></output></span></div>
+        <span class="part-volume"><input type="range" id="keysVolume" min="0" max="100"><output id="keysVolumeShown"></output></span></div>
     </div>
 
     <div class="card" id="keyboardCard">
@@ -3528,16 +3528,16 @@ function drumsBlock(s) {
   if (d.made) {
     const volume = document.createElement("label");
     volume.className = "part-volume";
-    volume.title = "Its volume (100%: as it starts), this song's";
+    volume.title = "Its volume, this song's";
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
-    slider.max = "127";
-    slider.value = String(d.volume);
+    slider.max = "100";
+    slider.value = String(percentOf(d.volume));
     const shown = document.createElement("output");
     shown.textContent = `${slider.value}%`;
     slider.addEventListener("input", () => { shown.textContent = `${slider.value}%`; });
-    slider.addEventListener("change", () => send({volume: Number(slider.value)}));
+    slider.addEventListener("change", () => send({volume: volumeOf(Number(slider.value))}));
     const mute = document.createElement("button");
     mute.type = "button";
     mute.className = "part-mute" + (d.play ? "" : " on");
@@ -3600,17 +3600,17 @@ function partBlock(o) {
   const volume = document.createElement("label");  // (the Launchkey's mixer: Track ▷, then its knob)
   volume.className = "part-volume";
   volume.title = `Its volume on the ${KB()}: the same for the arrangement in its place in every song, playing ` +
-    "or following (100%: as it starts)";
+    "or following (79%: as it starts)";
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = "0";
-  slider.max = "127";
+  slider.max = "100";
   slider.dataset.slot = String(o.slot);
-  slider.value = String((state.volumes || [])[o.slot] ?? 100);
+  slider.value = String(percentOf((state.volumes || [])[o.slot] ?? 100));
   const shown = document.createElement("output");
   shown.textContent = `${slider.value}%`;
   slider.addEventListener("input", () => { shown.textContent = `${slider.value}%`; });
-  slider.addEventListener("change", () => act(() => api("/api/volumes", {volumes: {[o.slot]: Number(slider.value)}})));
+  slider.addEventListener("change", () => act(() => api("/api/volumes", {volumes: {[o.slot]: volumeOf(Number(slider.value))}})));
   const mute = document.createElement("button");  // (the Launchkey: its pad on top)
   mute.type = "button";
   mute.className = "part-mute" + (o.play ? "" : " on");
@@ -3908,7 +3908,7 @@ function showState(st) {
   showKeys(st.keys);
   for (const slider of document.querySelectorAll("#parts .part-volume input[data-slot]")) {  // (the Launchkey's mixer
     // too; the drums' slider is the song's own)
-    const volume = String((st.volumes || [])[slider.dataset.slot] ?? 100);
+    const volume = String(percentOf((st.volumes || [])[slider.dataset.slot] ?? 100));
     if (slider !== document.activeElement && slider.value !== volume) {
       slider.value = volume;
       slider.nextElementSibling.textContent = `${volume}%`;
@@ -4182,7 +4182,7 @@ function showKeys(keys) {
   shownKeys = JSON.stringify(keys);
   $("keysSound").checked = keys.sound;
   $("keysLights").checked = keys.lights;
-  if (document.activeElement !== $("keysVolume")) $("keysVolume").value = String(keys.volume ?? 100);
+  if (document.activeElement !== $("keysVolume")) $("keysVolume").value = String(percentOf(keys.volume ?? 100));
   $("keysVolumeShown").textContent = `${$("keysVolume").value}%`;
   if (!keysSelect) {
     keysSelect = document.createElement("select");
@@ -4214,7 +4214,11 @@ $("keysOutput").addEventListener("change", keysOutputChange);
 $("keysChannel").addEventListener("change", keysOutputChange);
 
 $("keysVolume").addEventListener("input", () => { $("keysVolumeShown").textContent = `${$("keysVolume").value}%`; });
-$("keysVolume").addEventListener("change", () => changeKeys({volume: Number($("keysVolume").value)}));
+$("keysVolume").addEventListener("change", () => changeKeys({volume: volumeOf(Number($("keysVolume").value))}));
+
+// A volume (MIDI's 0 to 127) as the page shows it, and the Launchkey and the game's TONE MIXER: percent; and back
+function percentOf(volume) { return Math.round(volume * 100 / 127); }
+function volumeOf(percent) { return Math.min(Math.max(Math.round(percent * 127 / 100), 0), 127); }
 
 function changeKeys(change) {
   act(async () => showKeys(await api("/api/keys", change)));

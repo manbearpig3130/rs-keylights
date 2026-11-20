@@ -386,8 +386,7 @@ The Launchkey's octave buttons, a sustain pedal, the modulation strip and its ow
 | Knob 3 | move through the song (stopped: where it starts) |
 | Knob 4 | a section at a time |
 | Knob 5 | speed, 1% a step, 25% to 200% |
-| Pad 1, top | **A**: the loop's start where the song is (twice: clear the loop) |
-| Pad 2, top | **B**: the loop's end, and loop |
+| Pad 1, top | the loop: its start (**A**) where the song is, then its end (**B**), looping; a third press clears it |
 | Pad 3, top | loop on or off |
 | Pad 4, top | loop the section it's in |
 | Pad 6, top | lyrics on the screen (knob 6 and the pitch strip go through the lines; Record goes to the one shown) |
@@ -400,8 +399,9 @@ Loop points land on the nearest beat. Reaching the end, the song goes back to a 
 - Knob 5 is Riff Repeater's speed (up to 200%).
 - The bottom-left pad is its Accelerator.
 - Paused, knob 3 steps through the song as the pause screen's ← → do, and knob 4 a phrase at a time.
-- The A-B loop becomes a phrase of its own in Riff Repeater (riffloop mod). Pick it in Riff Repeater, between the
-  usual ones, and it loops just that range.
+- The A-B loop becomes a phrase of its own in Riff Repeater (riffloop mod). Its end set with pad 1, Riff Repeater
+  opens with it picked: press Start, and it loops just that range. (Set another way, pick it in Riff Repeater,
+  between the usual ones.)
 
 ### The mixer
 
@@ -445,6 +445,16 @@ about once a second.
 | Pitch strip, knob 8 (in Learn a Song's list) | move through the game's song list (knob 8: a letter at a time); the page's library follows |
 
 A song clicked in the page's library is highlighted in the game's list too.
+
+### In the game's pause menu (riffloop mod)
+
+Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens three screens:
+
+| Screen | Does |
+|---|---|
+| TONE MIXER | a slider for each arrangement, the drum part and the Launchkey keys, 0 to 100%. ← → move the highlighted one 5%. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it |
+| PARTS | each part playing or muted: Return turns it over |
+| TONES | each arrangement's tone and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
 
 ### Everything else
 

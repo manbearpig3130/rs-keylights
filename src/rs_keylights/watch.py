@@ -34,11 +34,12 @@ from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, tone
 #   of tones; else it's all the volumes. Palm-mute and low-note tones start with the same tone as the rest (and
 #   the default, when there is one), a group by itself. Turned to them, what they do shows for a while.
 # - Playing the song (the down arrow, lit): knobs 1 and 2 move the A-B loop's start and end a beat at a time
-#   (above the pads setting them; pad 1 tapped twice clears it), knob 3 moves through the song (or, while nothing
+#   (pad 1 sets them: its start, then its end, then none), knob 3 moves through the song (or, while nothing
 #   plays, where the song picked starts), knob 4 goes a section at a time (above the pad looping it), knob 5 sets
 #   its speed; knob 8 all the volumes. Following, with Rocksmith paused, knob 3 steps through its song as its pause
-#   screen's left and right arrows do, knob 4 a phrase at a time (its PageDown and PageUp). The pads on top set the loop: its start and end
-#   where the song is, on or off, or the section it's in; below them, a pad for each kind of section (verse,
+#   screen's left and right arrows do, knob 4 a phrase at a time (its PageDown and PageUp). The pads on top set the loop: pad 1 its start where
+#   the song is, then its end (following: Riff Repeater opens on it), then none; pad 3 on or off; pad 4 the section
+#   it's in; below them, a pad for each kind of section (verse,
 #   chorus...; the one it's in bright): a tap goes to the next one. They take the screen from the library. Pad 6
 #   on top shows the lyrics instead of the song (again: the song), knob 6 and the pitch strip going through
 #   them (Record: the song from the line shown; Track back: as they're sung, again the song); what the knobs and
@@ -106,10 +107,14 @@ SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.01  # knob 4 a section at a time 
 # or on, a phrase back or on (its PageDown and PageUp); at most GAME_STEPS a turn, and none while GAME_BEHIND keys
 # are still to be typed (turned fast, the game doesn't fall behind)
 GAME_SMALL_STEPS, GAME_PHRASES, GAME_STEPS, GAME_BEHIND = ("left", "right"), ("pagedown", "pageup"), 8, 4
+GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game: the mixer up here too
+GAME_TONES_SCREEN = "RSKeylights_Tones"  # its TONES: a tone stepped there shown here as a knob's turn shows it
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Parts", GAME_TONES_SCREEN)  # (and its PARTS and TONES):
+# what's done there, done here at once
 GAME_KEY_TIME = 2 / 60  # seconds the game takes to type a key (pressed a frame, let go the next)
-DOUBLE_TAP = 0.4  # seconds: pad 1 (the loop's start) tapped twice in this, the loop's cleared
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
-LOOP_PADS = ("a", "b", "on", "section")  # the pads on top: the loop's start and end here, on or off, the section
+LOOP_PADS = ("ab", "", "on", "section")  # the pads on top: the loop's start, then its end, then none (pad 1); pad 2
+# none; on or off; the section
 LYRICS_PAD, LYRICS_KNOB = 5, 5  # pad 6 on top: the lyrics on the screen (or the song); knob 6 goes through them
 CHORDS_KNOB = 6  # knob 7: whose chords show (auto, or an arrangement's)
 LYRICS_ON, LYRICS_OFF = 53, 55  # its pad: magenta, bright while they show
@@ -126,7 +131,8 @@ SECTION_COLOURS = {"intro": (100, 100, 100), "outro": (100, 100, 100), "verse": 
                    "solo": (127, 0, 0), "riff": (0, 127, 20), "interlude": (0, 110, 70), "breakdown": (127, 0, 70)}
 OTHER_SECTION, SECTION_DIM = (70, 70, 110), 0.12  # (the others: grey-blue), and the kinds it's not in
 LOOP_SET, LOOP_UNSET, LOOP_ON, LOOP_OFF, LOOPED, NOT_LOOPED = 9, 11, 21, 23, 37, 39  # the loop's pads: palette colours
-VOLUME_STEP = 1  # the mixer's knobs: a step, of a volume (0 to 127, 100 as it starts)
+VOLUME_STEP = 1  # the mixer's knobs: a step, in percent (a volume, 0 to 127, shown as 0 to 100%, as the game's
+# TONE MIXER has it)
 FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("pinch_tone", "harmonics"))  # the tones knobs 1 to 6
 # step through, the up arrow (again) going from one to the next
 STRIP_MIDDLE = 8192  # the pitch strip springs back here when let go (and a slide can pass through it)
@@ -365,8 +371,10 @@ class Watch:
         # _say has them
         self._note_until = 0.0  # until then
         self._loop_turned = "a"  # the loop's end last turned (knob 1 or 2)
-        self._tapped_a = -math.inf  # when pad 1 (the loop's start) was last tapped
         self._game_busy_until = -math.inf  # following: until when the game's typing the keys sent it
+        self._mixer_by_game = False  # the mixer up because the game's TONE MIXER is (closed with it)
+        self._game_tones_seen: dict[str, int] | None = None  # while the game's TONES shows: each part's tone, and
+        # its keys', as last seen
         self._followed_at: float | None = None  # where the game was last (following: its chord stays while it pauses)
         self.lyrics_view = False  # the lyrics on the screen instead of the song (pad 6 on top, playing the song)
         self._lyrics_home = False  # Track back was the last pressed, the lyrics showing: again, the song
@@ -425,6 +433,8 @@ class Watch:
             self._next_info, used = 0.0, True
         if used:  # the page shows it as it happens
             self.gui.remote_dialling({"speed": self._speed_to, "position": self._moving_to})
+        if (self._info or {}).get("game_screen") in GAME_MIXER_SCREENS:  # (each time round, not each refresh)
+            self.gui.game_mixer_step()
         if now >= self._next_info:
             self._next_info = now + INFO_EVERY
             self._refresh()
@@ -551,8 +561,44 @@ class Watch:
             elif seen and seen[0] and song.get("key") and self.gui.follow_settings.get("show_key", True):
                 self.gui.show_key()  # on the keys as the song starts in the game
         self._info = info
+        self._game_mixer(info, self._clock())
+        self._game_tones(info, self._clock())
         self._tone_news(info, self._clock())
         self._draw()
+
+    def _game_mixer(self, info: dict[str, Any], now: float) -> None:
+        """Following, RS-Keylights' TONE MIXER open in the game (the riffloop mod's, from its pause menu): the mixer
+        up here too, on the arrangements' volumes, until it closes there."""
+        on = info.get("mode") == "follow" and info.get("game_screen") == GAME_MIXER_SCREEN
+        if on and not self._mixer_by_game:
+            self._mixer_by_game = True
+            self._mix_page_to("parts", info, now)
+        elif not on and self._mixer_by_game:
+            self._mixer_by_game = False
+            self._close_mixer()
+
+    def _game_tones(self, info: dict[str, Any], now: float) -> None:
+        """Following, RS-Keylights' TONES open in the game: a tone stepped there (Left/Right) shown here as a knob's
+        turn shows it, the part's tone (or, with the knobs on another of its tones, said) or its keys'."""
+        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        seen = None
+        if info.get("mode") == "follow" and info.get("game_screen") == GAME_TONES_SCREEN:
+            seen = {a["id"]: self._tone_of(a, "tone") for a in arrangements if a["kind"] != "drums"}
+            seen["keys"] = int((info.get("keys") or {}).get("tone") or TONE_NUMBERS[0])
+        was, self._game_tones_seen = self._game_tones_seen, seen
+        changed = [key for key, number in (seen or {}).items() if was is not None and was.get(key, number) != number]
+        if not changed:
+            return
+        if changed[-1] == "keys":
+            self._show_for_a_while("keys", now)
+            return
+        column = next(i for i, a in enumerate(arrangements) if a["id"] == changed[-1])
+        if FIELDS[self.field][0] == "tone":
+            self._part_turned = column
+            self._show_for_a_while("parts", now)
+        else:  # (the parts' picture shows the tone the knobs are on: this one said instead)
+            found = tone(seen[changed[-1]])
+            self._say(now, lines=(f"{arrangements[column]['name']} tone:", f"{found.number:03d} {found.name}"))
 
     def _tone_news(self, info: dict[str, Any], now: float) -> None:
         """A tone change the song just passed (not jumped to), said: the arrangement whose chords show's."""
@@ -838,7 +884,6 @@ class Watch:
         here = _section_at(sections, self._where(info))
         a, b, on = loop.get("a"), loop.get("b"), bool(loop.get("on"))
         picture[(0, 0)] = ("palette", LOOP_SET if a is not None else LOOP_UNSET, False)
-        picture[(0, 1)] = ("palette", LOOP_SET if b is not None else LOOP_UNSET, False)
         picture[(0, 2)] = ("palette", LOOP_ON if on else LOOP_OFF, on)
         if sections:
             looped = on and here is not None and (a, b) == (here["start"], here["end"])
@@ -972,7 +1017,8 @@ class Watch:
         else shows what they do."""
         if isinstance(event, Turn) and event.encoder in (SEEK_KNOB, SPEED_KNOB, SECTION_KNOB, *LOOP_KNOBS, LYRICS_KNOB,
                                                          CHORDS_KNOB) or \
-                isinstance(event, Pad) and (event.row == 0 and (event.column < len(LOOP_PADS) or event.column == LYRICS_PAD)
+                isinstance(event, Pad) and (event.row == 0 and (event.column < len(LOOP_PADS) and LOOP_PADS[event.column]
+                                                                or event.column == LYRICS_PAD)
                                             or event.row == 1 and event.column < SECTION_PADS):
             self._stop_browsing()  # (the song's line before the library)
             if not (isinstance(event, Turn) and event.encoder == LYRICS_KNOB):
@@ -991,7 +1037,7 @@ class Watch:
             self._turn_chords(event.steps, info, now)
         elif isinstance(event, Pad) and event.row == 0 and event.column == LYRICS_PAD:
             self._toggle_lyrics(info, now)
-        elif isinstance(event, Pad) and event.row == 0 and event.column < len(LOOP_PADS):
+        elif isinstance(event, Pad) and event.row == 0 and event.column < len(LOOP_PADS) and LOOP_PADS[event.column]:
             self._loop_pad(LOOP_PADS[event.column], info, now)
         elif isinstance(event, Pad) and event.row == 1 and info.get("mode") == "follow":
             if event.column == ACCELERATOR_PAD:
@@ -1302,18 +1348,21 @@ class Watch:
         self._show_for_a_while("section", now)
 
     def _loop_pad(self, which: str, info: dict[str, Any], now: float) -> None:
-        """The loop's pads: its start where the song is ("a"), its end ("b", looping), on or off, or the section
-        it's in (looping it already: off). What it is now is said (following, and the game can't loop it, why)."""
+        """The loop's pads: pad 1 ("ab") its start where the song is, then its end (looping; following, Riff
+        Repeater opening on it, for its Start), then none; on or off; or the section it's in (looping it already:
+        off). What it is now is said (following, and the game can't loop it, why)."""
         loop = info.get("loop") or {}
-        body = {"a": {"a": "here"}, "b": {"b": "here", "on": True}, "on": {"on": not loop.get("on")},
+        if which == "ab":
+            which = "a" if loop.get("a") is None else "b" if loop.get("b") is None else "clear"
+        body = {"a": {"a": "here"}, "b": {"b": "here", "on": True, "riff": True},
+                "clear": {"a": None, "b": None, "on": False}, "on": {"on": not loop.get("on")},
                 "section": {"section": True}}[which]
-        cleared = which == "a" and now - self._tapped_a < DOUBLE_TAP  # (tapped twice: none)
-        self._tapped_a = -math.inf if cleared else now if which == "a" else self._tapped_a
-        if cleared:
-            body = {"a": None, "b": None, "on": False}
+        cleared = which == "clear"
         now_set: dict[str, Any] = {}
         if not self._try(lambda: now_set.update(self.gui.set_loop(body))):
             return
+        if isinstance(self._info, dict):  # (a second press before the next look: as it is now)
+            self._info["loop"] = {**(self._info.get("loop") or {}), **{k: now_set.get(k) for k in ("a", "b", "on")}}
         a, b, on = now_set.get("a"), now_set.get("b"), bool(now_set.get("on"))
         if cleared:
             said = "Loop cleared"
@@ -1326,7 +1375,8 @@ class Watch:
             said = f"Loop {_exact(a)}-{_exact(b)}: {'on' if on else 'off'}"
         game = now_set.get("game") if on else None  # (following: the game's)
         if game is not None:
-            self._say(now, lines=(said, _riff_trouble(game) or "Pick it in Riff Repeater"))
+            self._say(now, lines=(said, _riff_trouble(game) or ("Riff Repeater: Start" if which == "b"
+                                                                 else "Pick it in Riff Repeater")))
         else:
             self._say(now, line=said)
 
@@ -1521,13 +1571,13 @@ class Watch:
             music = self._music_of(info)
             game = [] if music is None else [music]
             names = [a["name"] for a in arrangements_now] + ["Music"] * len(game) + ["Keys"]
-            volumes = ([self._volume_of(slot, info) for slot in range(len(arrangements_now))] + game +
-                       [self._keys_volume(info)])
+            volumes = ([_shown(self._volume_of(slot, info)) for slot in range(len(arrangements_now))] + game +
+                       [_shown(self._keys_volume(info))])  # (percent, as the game's music and TONE MIXER have them)
             keys = info.get("keys") or {}
             quiet = [not a["play"] for a in arrangements_now] + [False] * len(game) + [not keys.get("sound", True)]
             lights = [min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
                       for a in arrangements_now] + [0.0] * len(game) + [1.0 if keys.get("lights") else 0.0]
-            tops = [127] * len(arrangements_now) + [100] * len(game) + [127]
+            tops = [100] * len(names)
             turned = (None if self._mix_slider == CONTROLS else len(names) - 1 if self._mix_slider == KEYS_COLUMN
                       else (len(arrangements_now) if game else None) if self._mix_slider == GUITAR_COLUMN
                       else min(self._mix_slider, len(names) - 1))  # (its keys' slider: the last)
@@ -1616,7 +1666,7 @@ class Watch:
             shows, lines = "chords", (*lines[:3], self._chords_said(song))
         elif song is not None and (making := self._drums_making(song)) is not None:  # (its drum part being made: how
             # far, in the key's notes' place)
-            lines = (*lines[:3], f"Making drums {making}%")
+            lines = (*lines[:3], f"Drums {making}%")
         time = f"{_time(position)} / {_time(length)}" if done is not None and position is not None and length else None
         at = self._song_at(info) if song is not None else None
         chord, tag = self._chord(song, at) if song is not None else (None, None)
@@ -1665,7 +1715,7 @@ class Watch:
         elif shown == "chords":  # (knob 7)
             said = self._chords_said(song)
         elif (making := self._drums_making(song)) is not None and said != "● = go here":  # (in the section's place)
-            said = f"Making drums {making}%"
+            said = f"Drums {making}%"
         handle, marks = shown in ("position", "section"), self._loop_marks(info)
         before, line = lyrics[i - 1].text if i > 0 else "", lyrics[i].text
         after = lyrics[i + 1].text if i + 1 < len(lyrics) else ""
@@ -1978,7 +2028,7 @@ class Watch:
                 return
             drummed = None
         if drummed is not None and encoder in (drummed, CONTROLS):  # (the drum part's own volume)
-            volume = min(max(self._volume_of(drummed, info) + steps * VOLUME_STEP, 0), 127)
+            volume = _stepped_volume(self._volume_of(drummed, info), steps)
             self._pending[("volume", "drums")] = volume
             self.gui.change_part("drums", {"volume": volume})
             if encoder == drummed:
@@ -1992,13 +2042,13 @@ class Watch:
         for slot in slots:
             if slot == drummed:
                 continue
-            volume = min(max(self._volume_of(slot, info) + steps * VOLUME_STEP, 0), 127)
+            volume = _stepped_volume(self._volume_of(slot, info), steps)
             self._pending[("volume", str(slot))] = volume
             changes[slot] = volume
         if changes:
             self.gui.set_volumes(changes)
         if encoder in (KEYS_COLUMN, CONTROLS):
-            volume = min(max(self._keys_volume(info) + steps * VOLUME_STEP, 0), 127)
+            volume = _stepped_volume(self._keys_volume(info), steps)
             self._pending[("volume", "keys")] = volume
             self.gui.set_keys({"volume": volume})
         if encoder in (CONTROLS, KEYS_COLUMN) or changes:
@@ -2184,6 +2234,16 @@ def _sign(info: dict[str, Any]) -> str | None:
     if info.get("mode") == "follow":
         return info.get("state")
     return "stopped" if info.get("mode") != "play" else "paused" if info.get("paused") else "playing"
+
+
+def _shown(volume: int) -> int:
+    """A volume (0 to 127) as the mixer shows it, and the game's TONE MIXER: percent."""
+    return round(volume * 100 / 127)
+
+
+def _stepped_volume(volume: int, steps: int) -> int:
+    """A volume a knob's steps on: VOLUME_STEP percent a step, as it's shown (0 to 100%)."""
+    return min(max(round((_shown(volume) + steps * VOLUME_STEP) * 127 / 100), 0), 127)
 
 
 def _riff_trouble(game: dict[str, Any] | None) -> str | None:

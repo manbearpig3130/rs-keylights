@@ -18,6 +18,7 @@ from rs_keylights.sng import PINCH_HARMONIC
 from rs_keylights.songtones import KINDS as TONE_KINDS
 from rs_keylights.keyboard import Keyboard
 from rs_keylights.tones import tone
+from rs_keylights.watch import TONE_NUMBERS as TONE_ORDER
 from rs_keylights.library import SongIndex
 
 
@@ -1184,6 +1185,9 @@ def test_following_the_loop_goes_to_the_games_riff_repeater(server, no_real_game
     assert loop["b"] == loop["a"] + 2.0 and game.sent == [("off",), ("off",)]  # (not on yet: its own phrases)
     call(server, "/api/loop", {"on": True})
     assert game.sent[-1] == ("loop", loop["a"], loop["b"])  # Riff Repeater loops it
+    call(server, "/api/loop", {"on": True, "riff": True})  # (Launchkey's pad 1, B: its menu opened on it too)
+    assert game.sent[-2:] == [("loop", loop["a"], loop["b"]), ("riff",)] and game.screen == "LearnASong_RiffRepeater"
+    game.screen = "LearnASong_Game"
     assert server.gui.remote_info()["loop"]["on"]  # (the Launchkey shows it)
     game.range = None  # the game started again: its mod has no range,
     time.sleep(0.06)
@@ -1196,6 +1200,69 @@ def test_following_the_loop_goes_to_the_games_riff_repeater(server, no_real_game
     call(server, "/api/stop", {})  # following stopped: Riff Repeater's own phrases again
     call(server, "/api/state")
     assert game.sent[-1] == ("off",)
+
+
+def test_following_the_games_tone_mixer_is_sent_the_volumes_and_sets_them(server):
+    gui, game = server.gui, server.gui._riff_loop
+    call(server, "/api/follow", {})
+    gui.remote_info()
+    assert game.kmix_rows[-1] == ("keys", round(gui.settings["keys_volume"] * 100 / 127, 1), False, "LAUNCHKEY KEYS")
+    sent = len(game.sent)
+    gui.remote_info()
+    assert not [s for s in game.sent[sent:] if s[0] == "kmix"]  # (unchanged: not sent again)
+    game.screen, game.kmix_moved = "RSKeylights_Mixer", {"keys": 50.0}  # its TONE MIXER open, a slider moved there
+    gui._game_time = (-math.inf, None)
+    info = gui.remote_info()
+    assert gui.settings["keys_volume"] == 64 and info["game_screen"] == "RSKeylights_Mixer"
+    gui.remote_info()
+    assert game.kmix_rows[-1] == ("keys", 50.4, False, "LAUNCHKEY KEYS")  # (and the mod's told the volume as it's now)
+    game.kmix_moved = {"keys": "mute"}  # Return on its row: muted (the mod shows it at once: nothing sent back)
+    gui._game_time = (-math.inf, None)
+    gui.remote_info()
+    assert not gui.settings["keys_sound"] and gui._game_mixer_sent[-1] == ("keys", 50.4, True, "LAUNCHKEY KEYS")
+    game.kmix_moved = {"keys": "mute"}  # again, asked between looks (the Launchkey's loop, each time round): back on
+    gui.game_mixer_step()
+    assert gui.settings["keys_sound"] and gui._game_mixer_sent[-1] == ("keys", 50.4, False, "LAUNCHKEY KEYS")
+
+
+def test_following_the_games_tones_page_is_sent_the_tones_and_steps_them(server, no_real_game_loop):
+    game = no_real_game_loop[-1]
+    server.overlay.state = {"memoryReadout": {"songTimer": 21.1, "songID": "song", "arrangementID": "L"}, "currentState": 4}
+    call(server, "/api/follow", {})
+    wait_for(lambda: call(server, "/api/follow")[1], lambda i: i["song"])
+    gui = server.gui
+    gui.remote_info()
+    keys = gui.keys_info()
+    first = gui.remote_info()["song"]["arrangements"][0]
+    played = gui._part_tone(first)
+    assert game.ktone_rows[0] == ("a0", str(first["name"]).upper(), f"{played:03d} {tone(played).name}")
+    assert game.ktone_rows[-1] == ("keys", "LAUNCHKEY KEYS", keys["name"])
+    game.screen, game.kmix_moved = "RSKeylights_Tones", {"a0": "tone:1", "keys": "tone:-1"}  # Right, and Left
+    gui.game_mixer_step()
+    stepped = TONE_ORDER[(TONE_ORDER.index(played) + 1) % len(TONE_ORDER)]
+    assert gui.remote_info()["song"]["arrangements"][0]["tones"]["tone"] == stepped  # (its own now: kept)
+    assert gui.keys_info()["tone"] == TONE_ORDER[TONE_ORDER.index(keys["tone"]) - 1]
+    gui.remote_info()
+    assert game.ktone_rows[0][2] == f"{stepped:03d} {tone(stepped).name}"  # (and the mod's told)
+
+
+def test_following_a_part_muted_in_the_games_tone_mixer_doesnt_hold_up_the_rest(server, no_real_game_loop):
+    game = no_real_game_loop[-1]
+    server.overlay.state = {"memoryReadout": {"songTimer": 21.1, "songID": "song", "arrangementID": "L"}, "currentState": 4}
+    call(server, "/api/follow", {})
+    wait_for(lambda: call(server, "/api/follow")[1], lambda i: i["song"])
+    gui = server.gui
+    gui.remote_info()
+    played = gui.remote_info()["song"]["arrangements"][0]["play"]
+    assert next(r for r in game.kmix_rows if r[0] == "a0")[2] == (not played)
+    game.screen, game.kmix_moved = "RSKeylights_Mixer", {"a0": "mute"}  # Return on its row, in the game
+    gui._game_time = (-math.inf, None)
+    looked = threading.Thread(target=gui.remote_info, daemon=True)
+    looked.start()
+    looked.join(10)
+    assert not looked.is_alive()  # (the part changed looks at the state again, which sends the rows: no deadlock)
+    assert gui.remote_info()["song"]["arrangements"][0]["play"] == (not played)
+    assert next(r for r in gui._game_mixer_sent if r[0] == "a0")[2] == played
 
 
 def test_following_the_games_music_volume_is_read_and_set_through_its_mod(server):

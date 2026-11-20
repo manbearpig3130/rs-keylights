@@ -4,6 +4,7 @@ import os
 import socket
 import threading
 from dataclasses import dataclass
+from typing import Sequence
 
 # Rocksmith's Riff Repeater looping a range of our own (the A-B loop, following the game), through RS Re-ARMed's
 # riffloop mod (rearmed-sidekicks), which makes it phrases of their own in the song for Riff Repeater to pick (and
@@ -153,6 +154,53 @@ class RiffLoop:
     def resume(self) -> GameLoop | None:
         """The song going on, as Escape does on its pause screen (on that screen only)."""
         return self._send("resume")
+
+    def riff(self) -> GameLoop | None:
+        """Riff Repeater's settings opened over the song, as the game's own Riff Repeater key opens them (on a song's
+        screen only; a range set: once it's phrases of its own and picked, so its menu opens on them, for its Start)."""
+        return self._send("riff")
+
+    def kmix(self, rows: Sequence[tuple[str, float, bool, str]]) -> GameLoop | None:
+        """RS-Keylights' TONE MIXER in the game (the mod's menu, from Learn a Song's pause menu): its rows, each an
+        id, a percent (0 to 100), whether it's muted and a label, a slider each; sent as they change (the mod's
+        sliders and labels follow)."""
+        def label(text: str) -> str:
+            return "".join(c for c in text if c not in ",;\n").strip()[:30] or "?"
+        return self._send("kmix " + ";".join(f"{i},{value:.1f},{int(muted)},{label(text)}"
+                                             for i, value, muted, text in rows))
+
+    def ktones(self, rows: Sequence[tuple[str, str, str]]) -> GameLoop | None:
+        """Its TONES page: its rows, each an id, a label and the tone it plays (as shown); sent as they change."""
+        def text(value: str) -> str:
+            return "".join(c for c in value if c not in ",;\n").strip()[:40] or "?"
+        return self._send("ktones " + ";".join(f"{i},{text(label)},{text(value)}" for i, label, value in rows))
+
+    def kmixed(self) -> dict[str, float | str] | None:
+        """What was done in the TONE MIXER, PARTS or TONES since it was last asked: {id: percent} for a slider
+        moved, {id: "mute"} for Return on a PARTS row (its mute to turn over), {id: "tone:N"} for Left/Right on a
+        TONES row (its tone N steps on, the presses added up); None: no answer."""
+        words = (self._ask("kmixed") or "").split()
+        if not words or words[0] != "kmixed":
+            return None
+        moved: dict[str, float | str] = {}
+        for word in words[1:]:
+            key, _, value = word.partition("=")
+            if value == "mute":
+                moved[key] = "mute"
+                continue
+            if value.startswith("tone:"):
+                try:
+                    steps = int(value[5:])
+                except ValueError:
+                    continue
+                was = moved.get(key)
+                moved[key] = f"tone:{steps + (int(was[5:]) if isinstance(was, str) and was.startswith('tone:') else 0)}"
+                continue
+            try:
+                moved[key] = float(value)
+            except ValueError:
+                continue
+        return moved
 
     def key(self, name: str) -> GameLoop | None:
         """A key typed in the game, as on the computer's keyboard: KEYS' (its menus' up and down, Escape, Enter...)."""

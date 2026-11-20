@@ -16,7 +16,7 @@ def test_commands_go_to_the_mod_and_its_state_comes_back():
     heard = []
 
     def answer():
-        for _ in range(2):
+        for _ in range(3):
             data, sender = mod.recvfrom(256)
             heard.append(data.decode())
             mod.sendto(b"riffloop hook=1 riff=1 loop=33.250,37.500 calls=1", sender)
@@ -25,7 +25,50 @@ def test_commands_go_to_the_mod_and_its_state_comes_back():
     game = RiffLoop(mod.getsockname()[1])
     assert game.loop(33.25, 37.5) == GameLoop(True, True, (33.25, 37.5))
     game.off()
-    assert heard == ["loop 33.250 37.500", "off"]
+    game.riff()
+    assert heard == ["loop 33.250 37.500", "off", "riff"]
+    mod.close()
+
+
+def test_the_tone_mixers_rows_go_to_the_mod_and_its_moves_come_back():
+    mod = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mod.bind(("127.0.0.1", 0))
+    heard = []
+
+    def answer():
+        data, sender = mod.recvfrom(1024)
+        heard.append(data.decode())
+        mod.sendto(b"riffloop hook=1 riff=0 loop=-", sender)
+        data, sender = mod.recvfrom(1024)
+        heard.append(data.decode())
+        mod.sendto(b"kmixed a0=55.5 keys=70.0 bad a1=mute", sender)
+
+    Thread(target=answer, daemon=True).start()
+    game = RiffLoop(mod.getsockname()[1])
+    game.kmix([("a0", 63.0, True, "LEAD; one, two"), ("keys", 80.0, False, "LAUNCHKEY KEYS")])
+    assert game.kmixed() == {"a0": 55.5, "keys": 70.0, "a1": "mute"}  # (a slider moved; Return on a row: its mute)
+    assert heard == ["kmix a0,63.0,1,LEAD one two;keys,80.0,0,LAUNCHKEY KEYS", "kmixed"]  # (its labels: no , or ;)
+    mod.close()
+
+
+def test_the_tones_rows_go_to_the_mod_and_its_steps_come_back_added_up():
+    mod = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mod.bind(("127.0.0.1", 0))
+    heard = []
+
+    def answer():
+        data, sender = mod.recvfrom(1024)
+        heard.append(data.decode())
+        mod.sendto(b"riffloop hook=1 riff=0 loop=-", sender)
+        data, sender = mod.recvfrom(1024)
+        heard.append(data.decode())
+        mod.sendto(b"kmixed a0=tone:1 keys=tone:-1 a0=tone:1 a1=tone:x", sender)
+
+    Thread(target=answer, daemon=True).start()
+    game = RiffLoop(mod.getsockname()[1])
+    game.ktones([("a0", "LEAD", "079 Overdriven Guitar"), ("keys", "LAUNCHKEY KEYS", "001 Piano, bright;")])
+    assert game.kmixed() == {"a0": "tone:2", "keys": "tone:-1"}  # (Left/Right on a row: pressed twice, two steps)
+    assert heard == ["ktones a0,LEAD,079 Overdriven Guitar;keys,LAUNCHKEY KEYS,001 Piano bright", "kmixed"]
     mod.close()
 
 

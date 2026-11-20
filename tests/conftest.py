@@ -82,6 +82,8 @@ class FakeRiffLoop:
         self.music_level = 80.0  # (the game's Music volume; None: a mod without it)
         self.game_time = None  # (the game's own song time and screen, as its time command says; None: no answer)
         self.note_counts = None  # (the player's note counts, as its notes command says; None: no answer)
+        self.kmix_rows, self.kmix_moved = None, {}  # (its TONE MIXER's rows, as sent; its sliders moved in the game)
+        self.ktone_rows = None  # (its TONES' rows, as sent)
 
     def loop(self, a, b):
         self.sent.append(("loop", a, b))
@@ -112,6 +114,26 @@ class FakeRiffLoop:
         self.sent.append(("pause",))
         if self.screen and self.screen.endswith("_Game"):
             self.screen = self.screen.replace("_Game", "_Pause")
+        return self.status()
+
+    def kmix(self, rows):
+        self.sent.append(("kmix", tuple(rows)))
+        self.kmix_rows = tuple(rows)
+        return self.status()
+
+    def ktones(self, rows):
+        self.sent.append(("ktones", tuple(rows)))
+        self.ktone_rows = tuple(rows)
+        return self.status()
+
+    def kmixed(self):
+        moved, self.kmix_moved = self.kmix_moved, {}
+        return moved
+
+    def riff(self):
+        self.sent.append(("riff",))
+        if self.screen and self.screen.endswith("_Game"):
+            self.screen = self.screen.replace("_Game", "_RiffRepeater")
         return self.status()
 
     def songs(self):

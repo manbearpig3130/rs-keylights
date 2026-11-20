@@ -51,7 +51,7 @@ from .songkey import Key, find_key, scale_show, shapes, tuning_name
 from .sound import GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Squeal, Voice, Voices, squeal_from
 from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, Tone, tone
 from .warmup import Warmup
-from .watch import Watch
+from .watch import BUILT_IN, TONE_NUMBERS as TONE_ORDER, Watch
 
 # A page in the browser for what the commands do: the song library, parts and their tones, playback
 # with a time slider, following the game, and the keyboard's settings. The server answers on 127.0.0.1,
@@ -68,6 +68,10 @@ PART_FIELDS = (*TONE_FIELDS, "follow_tones")  # and whether its tone follows the
 SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over a default for them)
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
+GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game (from Learn a Song's pause menu)
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Parts", "RSKeylights_Tones")  # (and its PARTS: each part playing
+# or muted; and TONES: each part's tone)
+GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
 GAME_KEYS_AT_ONCE = 300  # the song list's keys asked for so many at a time
@@ -429,6 +433,16 @@ def _changed_options(options: dict[str, Any], change: dict[str, Any]) -> dict[st
     return out
 
 
+def _percent(volume: int) -> float:
+    """A volume (0 to 127) as the game's sliders have it: percent, to a tenth."""
+    return round(volume * 100 / 127, 1)
+
+
+def _volume_of(percent: float) -> int:
+    """A game slider's percent as a volume (0 to 127)."""
+    return min(max(round(percent * 127 / 100), 0), 127)
+
+
 def _volumes(volumes: Any) -> list[int]:
     """Volumes kept by place (SLOTS of them, 0 to 127), checked."""
     out = [int(_number(v, "volume", 0, 127)) for v in list(volumes)[:SLOTS]]
@@ -487,6 +501,13 @@ class Gui:
         self._recorder.start()
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
+        self._game_mixer_sent: tuple[tuple[str, float, bool, str], ...] | None = None  # the TONE MIXER's rows sent
+        # last
+        self._game_mixer_ids: dict[str, str] = {}  # its rows' parts (an arrangement's ID, "drums"), by row
+        self._game_tones_sent: tuple[tuple[str, str, str], ...] | None = None  # its TONES' rows sent last
+        self._game_tones: dict[str, int] = {}  # the tone each TONES row's part plays (stepped there: as it's now)
+        self._game_mixer_lock = threading.RLock()  # (the Launchkey's loop and the page's both ask; held again as a
+        # part's changed: change_parts looks at the state, which sends the rows)
         self._game_time: tuple[float, float | None] = (-math.inf, None)  # (when asked, the game's time then)
         self._game_said: GameLoop | None = None  # (and all the mod said then)
         # Following, Learn a Song's song list (the game's, through the mod): its highlight as last asked (when), its
@@ -2294,6 +2315,7 @@ class Gui:
                     length = None
             state = self.game_state()  # (its song playing or paused: None, neither, or not known)
             said = self._game_said
+            self._game_mixer(followed, said)
             if said is not None and said.speed is not None:  # (Riff Repeater's speed as the game has it: its own
                 # slider's moves too)
                 self._riff_settings = {**self._riff_settings, "speed": round(said.speed)}
@@ -2302,7 +2324,7 @@ class Gui:
             return {"mode": "follow", "sound": not self.play_options["silent"], "real_pitch": info["real_pitch"], **defaults,
                     "song": followed and {**followed, **self._beats_of(followed["id"])}, "position": None, "length": length,
                     "paused": state == "paused",
-                    "state": state, "connected": connected,
+                    "state": state, "connected": connected, "game_screen": said.screen if said is not None else None,
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "music": self.game_music(), "volumes": list(self.settings["volumes"]),
@@ -2488,6 +2510,87 @@ class Gui:
             return exact if exact is not None else session.follower.position(time.monotonic())
         return None
 
+    def _game_mixer(self, followed: dict[str, Any] | None, said: GameLoop | None) -> None:
+        """Following, RS-Keylights' TONE MIXER, PARTS and TONES in the game (the riffloop mod's menus, from Learn a
+        Song's pause menu): while one shows, what's done there done here first (a slider moved, a row's mute turned
+        over: Return on it, a tone stepped: Left/Right; the Launchkey's mixer and the page follow); then their rows
+        sent as they change here (the song's arrangements, by their place, its drums, and the Launchkey keys')."""
+        with self._game_mixer_lock:
+            if said is not None and said.screen in GAME_MIXER_SCREENS and self._game_mixer_apply():
+                return  # (the parts' state here as it was: the next look sends the rows as they are now)
+            parts = (followed or {}).get("arrangements") or []
+            arrangements = [a for a in parts if a.get("kind") != "drums"][:GAME_MIXER_SLIDERS]
+            drummed = next((a for a in parts if a.get("kind") == "drums" and a.get("made", True)), None)
+            with self._lock:
+                volumes, keys = list(self.settings["volumes"]), int(self.settings["keys_volume"])
+                keys_sound = bool(self.settings["keys_sound"])
+            rows = tuple((f"a{i}", _percent(volumes[i] if i < len(volumes) else NORMAL_VOLUME), not a.get("play", True),
+                          str(a["name"]).upper()) for i, a in enumerate(arrangements))
+            ids = {f"a{i}": a["id"] for i, a in enumerate(arrangements)}
+            if drummed is not None:  # (its own volume and mute, the song's)
+                rows += (("drums", _percent(int(drummed.get("volume", DRUMS_VOLUME))), not drummed.get("play", True),
+                          "DRUMS"),)
+                ids["drums"] = "drums"
+            rows += (("keys", _percent(keys), not keys_sound, "LAUNCHKEY KEYS"),)
+            self._game_mixer_ids = ids
+            if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
+                self._game_mixer_sent = rows
+            tones = {f"a{i}": self._part_tone(a) for i, a in enumerate(arrangements)}
+            tones["keys"] = int(self.keys_info()["tone"])
+            self._game_tones = tones
+            labels = {f"a{i}": str(a["name"]).upper() for i, a in enumerate(arrangements)} | {"keys": "LAUNCHKEY KEYS"}
+            tone_rows = tuple((key, labels[key], f"{number:03d} {tone(number).name}") for key, number in tones.items())
+            if tone_rows != self._game_tones_sent and self._riff_loop.ktones(tone_rows) is not None:
+                self._game_tones_sent = tone_rows
+
+    def _part_tone(self, arrangement: dict[str, Any]) -> int:
+        """The tone an arrangement plays with (following): its own, its kind's default, or the built-in one."""
+        own = (arrangement.get("tones") or {}).get("tone") or (self.follow_settings.get(arrangement["kind"]) or {}).get("tone")
+        return int(own) if own else BUILT_IN.get(arrangement["kind"], BUILT_IN["lead"])
+
+    def game_mixer_step(self) -> None:
+        """While the game's TONE MIXER, PARTS or TONES shows (the Launchkey's loop asks each time round): what's done
+        there done here at once."""
+        with self._game_mixer_lock:
+            self._game_mixer_apply()
+
+    def _game_mixer_apply(self) -> bool:
+        """(Holding _game_mixer_lock.) What was done in the game's TONE MIXER, PARTS or TONES since last asked, done
+        here: a slider moved, a mute turned over (from the mute sent last: the mod shows it turned at once), a tone
+        stepped (from the one sent last). Whether anything was."""
+        moved = self._riff_loop.kmixed() or {}
+        sent = {row[0]: row for row in self._game_mixer_sent or ()}
+        slots: dict[int, int] = {}
+        for key, value in moved.items():
+            part = self._game_mixer_ids.get(key)
+            if value == "mute" and key in sent:
+                muted = sent[key][2]  # (as the game showed it before: now the other way)
+                if key == "keys":
+                    self.set_keys({"sound": muted})
+                elif part is not None:
+                    self.change_part(part, {"play": muted})
+                sent[key] = (*sent[key][:2], not muted, sent[key][3])
+            elif isinstance(value, float) and key == "keys":
+                self.set_keys({"volume": _volume_of(value)})
+            elif isinstance(value, float) and key == "drums" and part is not None:
+                self.change_part("drums", {"volume": _volume_of(value)})
+            elif isinstance(value, float) and key[:1] == "a" and part is not None:
+                slots[int(key[1:])] = _volume_of(value)
+            elif isinstance(value, str) and value.startswith("tone:") and key in self._game_tones:
+                was = self._game_tones[key]
+                at = TONE_ORDER.index(was) if was in TONE_ORDER else 0
+                number = TONE_ORDER[(at + int(value[5:])) % len(TONE_ORDER)]  # (as the Launchkey's knobs step)
+                self._game_tones[key] = number
+                if key == "keys":
+                    self.set_keys({"tone": number})
+                elif part is not None:
+                    self.change_part(part, {"tone": number})
+        if slots:
+            self.set_volumes(slots)
+        if moved and self._game_mixer_sent is not None:
+            self._game_mixer_sent = tuple(sent.get(row[0], row) for row in self._game_mixer_sent)
+        return bool(moved)
+
     def game_time(self) -> float | None:
         """Following, where the game's song is, exactly, as its riffloop mod sees it (asked at most every
         GAME_TIME_EVERY); None without the mod (or before it's seen the song play)."""
@@ -2610,7 +2713,8 @@ class Gui:
         """The A-B loop of the song playing (else the active one), its ends on the song's beats: "a" and "b" each a
         time (seconds), "here" (where the song is) or None (none); "move_a" and "move_b" beats to move one by (from
         where the song is, without it), "move_a_bars" and "move_b_bars" bars (to the bar lines); "section" loops the section the song is in (or, looping it already, stops);
-        and "on". The end without the start: the start is its section's. The start moved to or past the end, the
+        and "on"; following, "riff" opens the game's Riff Repeater on it too (the riffloop mod: its menu with the loop
+        picked, for its Start). The end without the start: the start is its section's. The start moved to or past the end, the
         end goes (moved by beats, it stops a beat before). Playing, the song goes back to a little before the
         start each time it reaches the end. Its ends, and whether it's on."""
         sid = self._loop_song()
@@ -2678,6 +2782,8 @@ class Gui:
             on = self._loop_for(sid)
             self._riff_said = self._riff_loop.loop(*on) if on else self._riff_loop.off()
             self._riff_song = sid if on else None
+            if on and body.get("riff") and self._riff_said is not None:  # (its menu, on the loop: for its Start)
+                self._riff_loop.riff()
         return self.loop_info(sid)
 
     def loop_info(self, sid: str | None) -> dict[str, Any]:

@@ -119,6 +119,9 @@ class FakeGui:
         self.kept = [*getattr(self, "kept", []), slot]
         return "dist: automatic" if back else f"dist: {slot:03d} kept"
 
+    def game_mixer_step(self):  # (the game's TONE MIXER or PARTS showing: asked each time round)
+        self.mixer_steps = getattr(self, "mixer_steps", 0) + 1
+
     def set_loop(self, body):  # (on beats every half second)
         self.loop_calls.append(dict(body))
         here = self.info["position"] or 0.0
@@ -769,23 +772,23 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     # keys' (the rhythm and bass muted: not played)
     lights = [1.0, 0.0, 0.0, 1.0]  # their lit keys: the lead's 4, and its keys lighting first
 
-    def mixer(volumes, turned, **shown):
-        return mixer_picture(names, volumes, turned, lights=lights, **shown).data()
+    def mixer(volumes, turned, **shown):  # (in percent: a volume of 100, of 127, 79%)
+        return mixer_picture(names, volumes, turned, lights=lights, tops=[100] * len(names), **shown).data()
 
-    assert screens(launchkey)[-1] == mixer([100] * 4, None, quiet=quiet)
-    launchkey.queued = [Turn(1, -6)]  # knob 2: the second arrangement's (in every song), 6 steps down
+    assert screens(launchkey)[-1] == mixer([79] * 4, None, quiet=quiet)
+    launchkey.queued = [Turn(1, -6)]  # knob 2: the second arrangement's (in every song), 6 steps (6%) down
     clock.now = 1.0
     watch.step()
-    assert gui.volume_changes[-1] == {1: 94}
-    assert screens(launchkey)[-1] == mixer([100, 94, 100, 100], 1, quiet=quiet)
+    assert gui.volume_changes[-1] == {1: 93}
+    assert screens(launchkey)[-1] == mixer([79, 73, 79, 79], 1, quiet=quiet)
     launchkey.queued = [Turn(6, 10)]  # knob 7: its keys'
     clock.now = 1.5
     watch.step()
-    assert gui.keys["volume"] == 110 and screens(launchkey)[-1] == mixer([100, 94, 100, 110], 3, quiet=quiet)
-    launchkey.queued = [Turn(CONTROLS, 30)]  # knob 8: all of them together (none louder than 127)
+    assert gui.keys["volume"] == 113 and screens(launchkey)[-1] == mixer([79, 73, 79, 89], 3, quiet=quiet)
+    launchkey.queued = [Turn(CONTROLS, 30)]  # knob 8: all of them together (none louder than 127: 100%)
     clock.now = 2.0
     watch.step()
-    assert gui.volume_changes[-1] == {0: 127, 1: 124, 2: 127, 3: 127, 4: 127, 5: 127, 6: 127, 7: 127}
+    assert gui.volume_changes[-1] == {0: 127, 1: 127, 2: 127, 3: 127, 4: 127, 5: 127, 6: 127, 7: 127}
     assert gui.keys["volume"] == 127
     assert pads(launchkey)[(0, 1)] == (5, False)  # the rhythm's pad on top: muted, red
     launchkey.queued = [Pad(0, 1)]  # tapped: it plays (as outside the mixer), its colour back (nothing said: its
@@ -793,7 +796,7 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     clock.now = 2.5
     watch.step()
     assert gui.changes[-1] == ("R", {"play": True}) and pads(launchkey)[(0, 1)] == (21, False)
-    volumes, quiet = [127, 124, 127, 127], [False, False, True, False]
+    volumes, quiet = [100, 100, 100, 100], [False, False, True, False]
     assert note(watch) is None and screens(launchkey)[-1] == mixer(volumes, 1, quiet=quiet)
     launchkey.queued = [Pad(0, KEYS_COLUMN)]  # its keys' pad: muted, red, greyed
     clock.now = 2.7
@@ -819,7 +822,7 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     launchkey.queued = [Turn(CONTROLS, -2)]  # knob 8 alone: all the volumes, the mixer up for a while
     clock.now = 13.0
     watch.step()
-    assert watch.mix_knobs and gui.keys["volume"] == 125
+    assert watch.mix_knobs and gui.keys["volume"] == 124
     clock.now = 13.0 + PICTURE_SHOWN
     watch.step()
     assert not watch.mix_knobs  # gone again
@@ -827,7 +830,7 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     # up a while longer, and gone (opened by knob 8)
     clock.now = 20.0
     watch.step()
-    assert watch.mix_knobs and gui.volume_changes[-1] == {0: 125}
+    assert watch.mix_knobs and gui.volume_changes[-1] == {0: 124}
     clock.now = 20.0 + PICTURE_SHOWN
     watch.step()
     assert not watch.mix_knobs
@@ -840,11 +843,11 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     watch.step()
     lights = [0.0, 0.0, 0.0, 1.0]  # (the lead's: from 4 round to none)
     assert watch.mix_knobs and note(watch) is None and gui.changes[-1] == ("L", {"lights": 0})
-    assert screens(launchkey)[-1] == mixer([125, 123, 126, 126], None, quiet=[False, False, True, True])
+    assert screens(launchkey)[-1] == mixer([98, 99, 99, 99], None, quiet=[False, False, True, True])
     launchkey.queued = [Turn(0, 1)]
     clock.now = 30.5
     watch.step()
-    assert screens(launchkey)[-1] == mixer([126, 123, 126, 126], 0, quiet=[False, False, True, True])
+    assert screens(launchkey)[-1] == mixer([99, 99, 99, 99], 0, quiet=[False, False, True, True])
     launchkey.queued = [Button(104)]  # (Rocksmith's Escape: follow it first) said over it too
     clock.now = 31.0
     watch.step()
@@ -1039,9 +1042,9 @@ def test_playing_the_song_the_pads_on_top_and_knobs_4_and_5_set_its_loop():
     clock.now = 0.5
     watch.step()
     assert gui.loop_calls == [{"a": "here"}] and note(watch) == ("Loop from 1:05.0", None)
-    assert pads(launchkey)[(0, 0)] == (9, False) and pads(launchkey)[(0, 1)] == (11, False)
+    assert pads(launchkey)[(0, 0)] == (9, False) and pads(launchkey)[(0, 1)] == (0, False)  # (pad 2: nothing)
     gui.info["position"] = 72.5
-    launchkey.queued = [Pad(0, 1)]  # its end: looping
+    launchkey.queued = [Pad(0, 0)]  # pad 1 again: its end, looping
     clock.now = 1.0
     watch.step()
     assert note(watch) == ("Loop 1:05.0-1:12.5: on", None) and pads(launchkey)[(0, 2)] == (21, True)
@@ -1069,11 +1072,12 @@ def test_following_the_loop_is_riff_repeaters_and_the_sections_the_games():
     watch, gui, launchkey, clock = watching()
     gui.info["song"], gui.info["position"] = gui.song, 21.0
     watch.step()
-    launchkey.queued = [Button(52), Pad(0, 0), Pad(0, 1)]  # ▼, then A and B where the game is
+    launchkey.queued = [Button(52), Pad(0, 0), Pad(0, 0)]  # ▼, then pad 1 twice: A and B where the game is
     clock.now = 0.5
     watch.step()
-    assert gui.loop_calls == [{"a": "here"}, {"b": "here", "on": True}]  # (the gui sends it to the game)
-    assert note(watch) == (None, ("Loop 0:21.0-0:21.0: on", "Pick it in Riff Repeater"))
+    assert gui.loop_calls == [{"a": "here"}, {"b": "here", "on": True, "riff": True}]  # (the gui sends it to the
+    # game, its Riff Repeater opening on it)
+    assert note(watch) == (None, ("Loop 0:21.0-0:21.0: on", "Riff Repeater: Start"))
     assert pads(launchkey)[(0, 2)][1] and pads(launchkey)[(1, 1)] == (0, 0, 0)  # on, pulsing; no section pads
     assert pads(launchkey)[(1, 0)] == (23, False)  # (but the Accelerator's)
     gui.game = {"answered": False, "hook": False, "riff": False}  # (the game without the mod)
@@ -1136,27 +1140,27 @@ def test_in_the_mixer_the_pitch_strip_moves_the_slider_last_used():
     launchkey.queued = [Button(105), pitch(64, 1.0), pitch(70, 1.01), pitch(75, 1.02)]  # all of them: 11 up
     clock.now = 1.1
     watch.step()
-    assert gui.volume_changes[-1][0] == 111 and gui.keys["volume"] == 111 and gui.browsed == 0.0  # (not the library)
+    assert gui.volume_changes[-1][0] == 114 and gui.keys["volume"] == 114 and gui.browsed == 0.0  # (not the library)
     launchkey.queued = [Strip("pitch", 8192, 1.2), pitch(20, 1.3), pitch(18, 1.31)]  # let go, put down again: from
     # there, 2 down
     clock.now = 1.4
     watch.step()
-    assert gui.volume_changes[-1][0] == 109
+    assert gui.volume_changes[-1][0] == 112
     launchkey.queued = [Strip("pitch", 8192, 1.5), Pad(0, 1), pitch(20, 2.0), pitch(25, 2.01)]  # the rhythm's pad:
     # its slider
     clock.now = 2.1
     watch.step()
-    assert gui.volume_changes[-1] == {1: 114} and watch.mix_knobs
+    assert gui.volume_changes[-1] == {1: 118} and watch.mix_knobs
     launchkey.queued = [Strip("pitch", 8192, 2.2), Turn(KEYS_COLUMN, 1), pitch(25, 2.5), pitch(23, 2.51)]  # knob 7:
     # its keys'
     clock.now = 2.6
     watch.step()
-    assert gui.keys["volume"] == 108 and gui.volume_changes[-1] == {1: 114}
+    assert gui.keys["volume"] == 110 and gui.volume_changes[-1] == {1: 118}
     launchkey.queued = [Strip("pitch", 8192, 2.7), Pad(0, CONTROLS), pitch(23, 3.0), pitch(26, 3.01)]  # Mute: all
     # of them again
     clock.now = 3.1
     watch.step()
-    assert gui.volume_changes[-1][0] == 112 and gui.keys["volume"] == 111
+    assert gui.volume_changes[-1][0] == 116 and gui.keys["volume"] == 114
 
 
 def test_the_song_screen_shows_the_chord_played_from_the_arrangement_lighting_the_most_keys():
@@ -1277,7 +1281,52 @@ def test_following_with_the_game_paused_knobs_3_and_4_step_through_its_song_as_i
     assert gui.game_keys[14:] == ["right"] * 3
 
 
-def test_pad_1_tapped_twice_clears_the_loop():
+def test_the_games_tone_mixer_brings_up_the_mixer_until_it_closes():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.info["position"] = gui.song, 21.0
+    watch.step()
+    assert not watch.mix_knobs
+    gui.info["game_screen"] = "RSKeylights_Mixer"  # opened in the game
+    clock.now = 0.5
+    watch.step()
+    assert watch.mix_knobs and watch.mix_page == "parts"
+    clock.now = 5.0
+    watch.step()
+    assert watch.mix_knobs and gui.mixer_steps >= 1  # (kept up while it shows; what's done there asked each time round)
+    gui.info["game_screen"] = "RSKeylights"  # closed there
+    clock.now = 5.5
+    watch.step()
+    assert not watch.mix_knobs
+
+
+def test_a_tone_stepped_in_the_games_tones_shows_here_as_a_knobs_turn_does():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.info["position"] = gui.song, 21.0
+    gui.info["game_screen"] = "RSKeylights_Tones"  # opened in the game: as it was, nothing shown
+    watch.step()
+    assert watch._picture_of is None
+    gui.song["arrangements"][2]["tones"] = {"tone": 306}  # the bass's stepped there
+    clock.now = 0.5
+    watch.step()
+    assert watch._picture_of == "parts" and watch._part_turned == 2
+    gui.keys["tone"] = 2  # its keys'
+    clock.now = 1.0
+    watch.step()
+    assert watch._picture_of == "keys"
+    watch.field = 1  # the knobs on palm-mute tones: the lead's main tone said instead
+    watch._picture_of = None
+    gui.info["lead"] = {"tone": 297, "mute_tone": 295}
+    clock.now = 1.5
+    watch.step()
+    assert watch._picture_of is None and note(watch)[1] == ("Lead tone:", "297 " + tone(297).name)
+    gui.info["game_screen"] = "RSKeylights"  # closed there: a change isn't its
+    gui.song["arrangements"][2]["tones"] = {"tone": 307}
+    clock.now = 2.0
+    watch.step()
+    assert watch._part_turned == 2 and watch._picture_of is None
+
+
+def test_pad_1_sets_the_loops_start_then_its_end_then_none():
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song
     watch.step()
@@ -1285,22 +1334,23 @@ def test_pad_1_tapped_twice_clears_the_loop():
     clock.now = 0.5
     watch.step()
     gui.info["position"] = 40.0
-    launchkey.queued = [Pad(0, 1)]  # B: looping
+    launchkey.queued = [Pad(0, 0)]  # again: B, looping
     clock.now = 1.0
     watch.step()
     assert gui.loop["on"] and gui.loop["a"] == 30.0 and gui.loop["b"] == 40.0
-    launchkey.queued = [Pad(0, 0)]  # A again, a while later: moved
+    assert gui.loop_calls[-1] == {"b": "here", "on": True, "riff": True}  # (following, Riff Repeater would open)
+    launchkey.queued = [Pad(0, 0)]  # a third time: none
     clock.now = 2.0
     watch.step()
-    assert gui.loop_calls[-1] == {"a": "here"}
-    launchkey.queued = [Pad(0, 0)]  # and again at once: cleared
-    clock.now = 2.2
-    watch.step()
     assert gui.loop_calls[-1] == {"a": None, "b": None, "on": False} and note(watch) == ("Loop cleared", None)
-    launchkey.queued = [Pad(0, 0)]  # a third time: A again
+    launchkey.queued = [Pad(0, 0)]  # and again: A
     clock.now = 2.4
     watch.step()
     assert gui.loop_calls[-1] == {"a": "here"}
+    launchkey.queued = [Pad(0, 1)]  # pad 2: nothing now
+    clock.now = 3.0
+    watch.step()
+    assert len(gui.loop_calls) == 4
 
 
 LYRICS = lyric_lines([Syllable("Hey", 20.0, 20.5), Syllable("lit-", 20.5, 21.0), Syllable("tle", 21.0, 21.5),
@@ -1613,13 +1663,13 @@ def test_following_knob_6_in_the_mixer_is_the_games_music_volume():
     names, quiet, lights = ["Lead", "Rhythm", "Bass", "Music", "Keys"], [False, True, True, False, False], [1, 0, 0, 0, 1]
 
     def mixer(volumes, turned):
-        return mixer_picture(names, volumes, turned, quiet=quiet, lights=lights, tops=[127, 127, 127, 100, 127]).data()
+        return mixer_picture(names, volumes, turned, quiet=quiet, lights=lights, tops=[100] * 5).data()
 
-    assert screens(launchkey)[-1] == mixer([100, 100, 100, 76, 100], None)
+    assert screens(launchkey)[-1] == mixer([79, 79, 79, 76, 79], None)
     launchkey.queued = [Turn(GUITAR_COLUMN, -3), Turn(GUITAR_COLUMN, -3)]  # knob 6: from where the game has it
     clock.now = 1.0
     watch.step()
-    assert gui.music == 70 and gui.pedal_calls == [] and screens(launchkey)[-1] == mixer([100, 100, 100, 70, 100], 3)
+    assert gui.music == 70 and gui.pedal_calls == [] and screens(launchkey)[-1] == mixer([79, 79, 79, 70, 79], 3)
     launchkey.queued = [Turn(GUITAR_COLUMN, 60)]  # (100 at most)
     clock.now = 1.5
     watch.step()
@@ -1627,7 +1677,7 @@ def test_following_knob_6_in_the_mixer_is_the_games_music_volume():
     launchkey.queued = [Turn(CONTROLS, -5)]  # knob 8: the keyboard's volumes, not the game's
     clock.now = 2.0
     watch.step()
-    assert gui.music == 100 and gui.keys["volume"] == 95
+    assert gui.music == 100 and gui.keys["volume"] == 94
     gui.music = None  # (a mod without it: no slider, and knob 6 says why)
     launchkey.queued = [Turn(GUITAR_COLUMN, 1)]
     clock.now = 2.5
@@ -1640,7 +1690,8 @@ def test_following_knob_6_in_the_mixer_is_the_games_music_volume():
     clock.now = 0.5
     watch.step()
     assert gui.music == 76 and screens(launchkey)[-1] == mixer_picture(
-        names[:3] + ["Keys"], [100] * 4, None, quiet=[False, True, True, False], lights=[1, 0, 0, 1]).data()
+        names[:3] + ["Keys"], [79] * 4, None, quiet=[False, True, True, False], lights=[1, 0, 0, 1],
+        tops=[100] * 4).data()
 
 
 def test_knob_8_while_the_loop_shows_moves_its_end_a_bar_at_a_time():
@@ -1721,11 +1772,11 @@ def test_a_songs_drum_part_is_one_more_arrangement_its_pad_mutes_it_and_the_mixe
     launchkey.queued = [Button(105), Turn(3, -10)]  # the mixer: its knob, its own volume (not a place's)
     clock.now = 2.0
     watch.step()
-    assert gui.changes[-1] == ("drums", {"volume": 80}) and gui.volume_changes == []
+    assert gui.changes[-1] == ("drums", {"volume": 77}) and gui.volume_changes == []
     launchkey.queued = [Turn(CONTROLS, 2)]  # knob 8: all of them, its too
     clock.now = 2.5
     watch.step()
-    assert gui.changes[-1] == ("drums", {"volume": 82}) and 3 not in gui.volume_changes[-1]
+    assert gui.changes[-1] == ("drums", {"volume": 80}) and 3 not in gui.volume_changes[-1]
 
 
 def test_a_songs_drums_not_made_yet_are_a_dim_pad_that_makes_them():
@@ -1835,11 +1886,11 @@ def test_a_drum_part_being_made_shows_how_far_on_the_songs_screen():
     gui.song["arrangements"].append(drums)
     gui.info["song"] = gui.song
     watch.step()
-    assert "Making drums 42%" in watch._screen(clock.now)[0][0]  # (in the key's notes' place)
+    assert "Drums 42%" in watch._screen(clock.now)[0][0]  # (in the key's notes' place: short, to fit)
     drums.update(making=False, made=True, progress=None)  # (made: the key's notes again)
     clock.now = 0.5
     watch.step()
-    assert not any("Making drums" in str(x) for x in watch._screen(clock.now)[0][0])
+    assert not any("Drums 4" in str(x) for x in watch._screen(clock.now)[0][0])
 
 
 def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
@@ -1912,7 +1963,7 @@ def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
     launchkey.queued = [Button(105), Turn(CONTROLS, 1)]  # closed; knob 8 alone: the arrangements' volumes, as ever
     clock.now = 6.5
     watch.step()
-    assert watch.mix_knobs and watch.mix_page == "parts" and gui.keys["volume"] == 101
+    assert watch.mix_knobs and watch.mix_page == "parts" and gui.keys["volume"] == 102
     launchkey.queued = [Button(52)]  # (up for a while, not kept: the arrow's the knobs' on playing the song, as ever)
     clock.now = 7.0
     watch.step()

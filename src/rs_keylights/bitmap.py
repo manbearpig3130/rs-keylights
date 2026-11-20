@@ -521,7 +521,8 @@ def song_bar(done: float, sign: str | None) -> int:
 def mixer_picture(names: list[str], volumes: list[int], turned: int | None, muted: bool = False,
                   quiet: list[bool] | None = None, lights: list[float] | None = None,
                   tops: list[int] | None = None) -> Bitmap:
-    """The mixer: a slider for each arrangement's volume (0 to 127, 100 as it starts, marked), its volume above it
+    """The mixer: a slider for each arrangement's volume (percent; on a slider full at more than 100, 100 marked),
+    its volume above it
     (none: a crossed-out speaker) and its name under it, the one last turned underlined (None: all of them were).
     Each one quiet (muted by itself) is greyed, with the speaker over it; muted (the sound off), the speaker is in
     the corner, as on every screen. Its lit keys (lights: 0 to 1, of the 4) are rails either side of it, joined
