@@ -61,6 +61,11 @@ Then start the page:
 .venv/bin/rs-keylights gui
 ```
 
+Or run `tools/dock-app.sh` once to make `~/Applications/rs-keylights.app` and put it in the Dock after RS Re-ARMed.
+Clicking it starts the page (with `--lan`; give other arguments to the script to change that), and quitting it gives
+the Launchkey back. Its output goes to `~/Library/Logs/rs-keylights.log`. macOS asks once for the microphone, which
+the Guitar card and warm-ups use.
+
 ## The page
 
 `rs-keylights gui` serves a page at `http://127.0.0.1:8040/` and opens it in the browser. Everything below is on
