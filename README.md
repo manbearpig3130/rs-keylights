@@ -513,6 +513,10 @@ When two drums land on one fixed Circuit drum at once, the first of kick, snare,
    late.
 6. Hits within 12 ms of a 16th are put on it.
 
+The separator and the transcriber run at macOS's background priority, on the efficiency cores, so a drum part can be
+made while the game plays: about 45 s for a 5-minute song. The transcriber works on 10 s of the song at a time, which
+gives the same result in 1.2 GB of memory, where ADTOF's own way takes 6 GB.
+
 The model hears only those 5 kinds of drum, so a part has 8 at most. Hi-hats are all closed: open ones can't be told
 from cymbal wash.
 

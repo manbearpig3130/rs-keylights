@@ -165,7 +165,7 @@ def mix_weights(levels: dict[str, float]) -> dict[str, float]:
 def _run(args: list[str], env: dict[str, str], what: str, along: Callable[[float], None] | None = None) -> None:
     with tempfile.TemporaryFile("w+") as out:
         started = time.monotonic()
-        tool = subprocess.Popen(args, env=env, stdout=out, stderr=subprocess.STDOUT, text=True)
+        tool = subprocess.Popen(drums.in_background(args), env=env, stdout=out, stderr=subprocess.STDOUT, text=True)
         while True:
             try:
                 code = tool.wait(drums.PROGRESS_EVERY)

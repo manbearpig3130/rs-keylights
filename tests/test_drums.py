@@ -104,6 +104,12 @@ def test_one_made_before_drum_parts_were_aligned_is_aligned_once_it_has_the_beat
     assert json.loads(path.read_text())["aligned"] is True and drums.kept(ref) == align(hits, beats)  # (kept so)
 
 
+def test_its_heavy_tools_run_at_the_background_priority(tmp_path, monkeypatch):
+    assert drums.in_background(["tool", "a"]) == ["/usr/sbin/taskpolicy", "-c", "background", "tool", "a"]
+    monkeypatch.setattr(drums, "TASKPOLICY", tmp_path / "none")
+    assert drums.in_background(["tool", "a"]) == ["tool", "a"]  # (without it: as it is)
+
+
 def test_making_one_says_what_its_tools_lack(tmp_path):
     ref = ArrangementRef("ID", str(tmp_path / "song_m.psarc"), "songs/bin/macos/song_lead.sng", "SongKey", "Lead")
     with pytest.raises(drums.DrumsError, match="tools/drums-setup.sh"):

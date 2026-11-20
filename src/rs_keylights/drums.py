@@ -345,6 +345,14 @@ def song_audio(ref: ArrangementRef, game_dir: Path) -> bytes:
 DECODED, SEPARATED, TRANSCRIBED = 0.03, 0.68, 0.98
 TRANSCRIBING = 0.04  # seconds a second of song, about
 PROGRESS_EVERY = 0.25  # seconds between looks at how far a step is
+TASKPOLICY = Path("/usr/sbin/taskpolicy")
+
+
+def in_background(args: list[str]) -> list[str]:
+    """A heavy tool's command (separating, transcribing) run at macOS's background priority: on Apple silicon only on
+    the efficiency cores, so the game and the keyboard's timing keep the fast ones (and a fanless Mac stays cool).
+    Slower, out of the way."""
+    return [str(TASKPOLICY), "-c", "background", *args] if TASKPOLICY.exists() else args
 
 
 def _ready(pcm: Path) -> float | None:
@@ -384,7 +392,7 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
             """A tool run (along: how far it is, from the time it's taken, as it goes: for progress)."""
             with tempfile.TemporaryFile("w+") as out:
                 started = time.monotonic()
-                tool = subprocess.Popen(args, env=env, stdout=out, stderr=subprocess.STDOUT, text=True)
+                tool = subprocess.Popen(in_background(args), env=env, stdout=out, stderr=subprocess.STDOUT, text=True)
                 while True:
                     try:
                         code = tool.wait(PROGRESS_EVERY)
@@ -416,7 +424,10 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
         if state != 1:
             raise DrumsError("Separating the drums didn't finish")
         rest = np.frombuffer(raw, dtype=np.int16, offset=64, count=total * channels).reshape(-1, channels)
-        drums = np.clip(mix[:len(rest)].astype(np.int32) - rest, -32768, 32767).astype(np.int16)
+        drums = mix[:len(rest)].astype(np.int32)  # (in place from here: less memory while it's made)
+        drums -= rest
+        drums = np.clip(drums, -32768, 32767, out=drums).astype(np.int16)
+        del raw, rest, mix
         with wave.open(str(work / "drums.wav"), "wb") as w:
             w.setnchannels(channels)
             w.setsampwidth(2)
