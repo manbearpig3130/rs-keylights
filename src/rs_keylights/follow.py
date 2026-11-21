@@ -33,6 +33,8 @@ POLL_INTERVAL = 0.1
 TICK = 0.005
 GAME_TIME_EVERY = 0.02  # seconds between asks of the game's own time (riffloop's)
 TRACE_AFTER_JUMP = 2.0  # seconds of the game's time reads traced after it jumps (a pause gone, a seek, a rewind)
+JUST_STRUCK = 0.15  # seconds: starting to play mid-song, notes struck this little before sound; older ones still
+# ringing don't (every part's would come at once: following again, or going on after Rocksmith's resume, 2 s back)
 GAME_TIME_MISSES, GAME_TIME_BACK_OFF = 3, 2.0  # unanswered this many times (no game, or a mod without it): asked
 # again this long after
 # The game's own song time and screen (riffloop's time command: seconds, None without a song's playback seen; and
@@ -433,7 +435,6 @@ class Follower:
         self._next_poll = 0.0
         self._connected: bool | None = None
         self._playing = False
-        self._stopped_player: Player | None = None  # the player stopped last (a pause): going on quietly
 
     def position(self, now: float) -> float | None:
         """The song position, while the song plays: the game's own (riffloop's), while it's read; else as RS
@@ -570,15 +571,12 @@ class Follower:
             if self._playing:
                 self._player.stop()
                 self._playing = False
-                self._stopped_player = self._player  # (going on, it starts from the next note)
                 self._record({"t": now, "stopped": True})
             return
         if not self._playing:
             self._record({"t": now, "playing": round(position, 3), "rate": self._rate(now),
                           "from": "game" if self._game_clock.trusted(now) else "companion"})
-            if self._stopped_player is self._player:  # going on after a stop (a pause, Rocksmith's resume 2 s back):
-                self._player.seek(position + self.offset, sounding=False)  # from the next note, not every note
-                # still ringing there at once
+            self._player.seek(position + self.offset, sounding=JUST_STRUCK)  # (from about where it is)
         self._player.retime(rate=self._rate(now))  # Riff Repeater's speed: the keys flash for it
         self._player.advance(position + self.offset)
         self._playing = True

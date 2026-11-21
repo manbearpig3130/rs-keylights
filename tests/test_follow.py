@@ -290,6 +290,21 @@ def test_going_on_after_rocksmiths_resume_rewind_doesnt_strike_the_notes_still_r
     assert [n for _c, n, _v in keys.played] == [(60,), (64,)]  # (10.0's still ringing there: not again; 11.0's: on time)
 
 
+def test_following_again_mid_song_starts_from_the_next_note_not_whats_still_ringing():
+    from rs_keylights.sound import Voice, Voices
+    from rs_keylights.tones import tone
+
+    client, index, keys = FakeClient(), FakeIndex([REF]), FakeSoundKeys()
+    game: dict = {"t": 10.5}
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 voices_for=lambda ref, channels: Voices(Voice(11, tone(178))),
+                 game_time=lambda: (game["t"], "LearnASong_Game", "x_lead"))
+    for i in range(40):  # following from 10.5: 10.0's note still ringing (to 11.0), not struck; 11.0's on time
+        game["t"] = round(10.5 + i * 0.02, 4)
+        f.step(i * 0.02)
+    assert [n for _c, n, _v in keys.played] == [(64,)]
+
+
 def test_other_tones_go_on_from_where_the_song_is():
     from rs_keylights.sound import Voice, Voices
     from rs_keylights.tones import tone

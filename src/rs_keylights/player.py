@@ -209,10 +209,10 @@ class Player:
             self._next += 1
         self._position = position
 
-    def seek(self, position: float, sounding: bool = True) -> None:
-        """To a position: the keys lit there, the tones there and (sounding) the notes still sounding there struck
-        again, from there; else none (going on after a stop: Rocksmith's resume goes 2 s back, and every note still
-        ringing there, of every part, would come at once)."""
+    def seek(self, position: float, sounding: float = math.inf) -> None:
+        """To a position: the keys lit there, the tones there and the notes still sounding there struck again, from
+        there: those struck at most `sounding` seconds before it (following, going on from where the song is: older
+        ones, still ringing, of every part, would come at once)."""
         self._all_off()
         self._next = bisect_right(self._times, position)
         for i in range(bisect_right(self._display_ons, position)):
@@ -221,15 +221,14 @@ class Player:
         for ti, t in enumerate(self.tracks):  # (the tone there, and the notes still sounding there)
             if t.voices is not None and t.changes:
                 self._change(ti, bisect_right([change[0] for change in t.changes], position) - 1)
-            if not sounding:
-                continue
             if t.voices is not None:
-                for li in range(bisect_right(self._ons[ti], position - self._longest[ti]),
+                for li in range(bisect_right(self._ons[ti], position - min(self._longest[ti], sounding)),
                                 bisect_right(self._ons[ti], position)):
                     self._start(ti, li, position)
             latest: dict[tuple[int, str], int] = {}  # (and a bend or vibrato going on there: its latest)
             for ci, (at, li, what, _value) in enumerate(self._controls[ti]):
-                if at <= position < self._sound_end(t, self._sounds[ti][li]):
+                if at <= position < self._sound_end(t, self._sounds[ti][li]) and \
+                        self._sounds[ti][li].on >= position - sounding:
                     latest[(li, what)] = ci
             for ci in sorted(latest.values()):
                 self._control(ti, ci)
