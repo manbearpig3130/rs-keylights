@@ -2530,9 +2530,10 @@ class Gui:
             music = said.music if said is not None and said.music is not None else None
             if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 7, apart; its pad, muted)
                 rows += (("music", float(music), music == 0, "MUSIC", -1, "music", 14),)
-            rows += (("sound", max([row[1] for row in stems if not row[5].endswith(":off")] or [0.0]),  # (its 8th:
-                      bool(self.play_options["silent"]), "MASTER", -1, "all", 15),)  # its parts together, as knob
-            # 8; its pad the sound on or off, as on every page)
+            on = [row for row in stems if not row[5].endswith(":off")]
+            rows += (("smaster", max([row[1] for row in on] or [0.0]), bool(on) and all(row[2] for row in on),
+                      "MASTER", -1, "all", 15),)  # (its 8th: its parts together, as knob 8; its pad all of them muted,
+            # or back: the page's master mute, as the Launchkey's there)
             self._game_mixer_ids = ids
             if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
                 self._game_mixer_sent = rows
@@ -2604,8 +2605,13 @@ class Gui:
             elif key == "drums" and drum_part is not None and not drum_part.get("made", True):  # (not made yet: its pad
                 if value == "mute" and not drum_part.get("making"):                         # makes them)
                     self.change_part("drums", {"make": True})
-            elif key in ("all", "sound") and value == "mute":  # (the 8th columns' pad: the sound on or off, as the
-                self.toggle_sound()                             # Launchkey's Mute pad)
+            elif key == "all" and value == "mute":  # (the tone mixer's 8th: the sound on or off, as the Mute pad)
+                self.toggle_sound()
+            elif key == "smaster" and value == "mute":  # (the stem mixer's: its parts, as the Mute pad there)
+                try:
+                    self.toggle_game_stems()
+                except GuiError:
+                    pass
             elif key == "music" and value == "mute" and key in sent:  # (the game's Music muted, or back)
                 try:
                     self.set_game_music({"mute": not sent[key][2]})
@@ -2727,6 +2733,20 @@ class Gui:
         self.game_time()
         said = self._game_said
         return round(said.music) if said is not None and said.music is not None else None
+
+    def toggle_game_stems(self) -> dict[str, Any]:
+        """The game's song's bass and guitar both muted (if either sounds), or both back where they were: the stems
+        page's master mute (as the Mute pad is elsewhere). Their levels then."""
+        info = self.game_stems_info()
+        if info is None:
+            raise GuiError("The game's song parts need rearmed-mods (its Song Stems mod)")
+        if not info["on"]:
+            raise GuiError("Song Stems is off: turn it on in rearmed-mods")
+        mute = any(info[part] > 0 for part in gamestems.PARTS)
+        for part in gamestems.PARTS:
+            if (info[part] > 0) == mute:
+                info = self.set_game_stems({"part": part, "mute": mute})
+        return info
 
     def set_game_mixer_page(self, page: str) -> None:
         """The game's MIXER on a page ("parts" or "stems"), as the Launchkey's mixer went to it (if it's open)."""

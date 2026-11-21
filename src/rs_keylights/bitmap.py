@@ -520,14 +520,14 @@ def song_bar(done: float, sign: str | None) -> int:
 
 def mixer_picture(names: list[str], volumes: list[int], turned: int | None, muted: bool = False,
                   quiet: list[bool] | None = None, lights: list[float] | None = None,
-                  tops: list[int] | None = None) -> Bitmap:
+                  tops: list[int] | None = None, divider: int | None = None) -> Bitmap:
     """The mixer: a slider for each arrangement's volume (percent; on a slider full at more than 100, 100 marked),
     its volume above it
     (none: a crossed-out speaker) and its name under it, the one last turned underlined (None: all of them were).
     Each one quiet (muted by itself) is greyed, with the speaker over it; muted (the sound off), the speaker is in
     the corner, as on every screen. Its lit keys (lights: 0 to 1, of the 4) are rails either side of it, joined
     under it, as high as it's lit (dotted, quiet). tops: what each slider is full at (127; the game's music, 100: no
-    mark at 100 then)."""
+    mark at 100 then). divider: a slider with a thin line before it (dotted, top to bottom), apart from the others."""
     picture = Bitmap()
     column = WIDTH // max(len(names), 3)
     first = (WIDTH - column * len(names)) // 2
@@ -574,6 +574,9 @@ def mixer_picture(names: list[str], volumes: list[int], turned: int | None, mute
         picture.text(left, 54, label)
         if i == turned:
             picture.fill(left, 63, text_width(label), 1)
+    if divider is not None and 0 < divider < len(names):
+        for y in range(0, 64, 2):
+            picture.fill(first + divider * column - 1, y, 1, 1)
     if muted:
         picture.shape(WIDTH - 11, 54, MUTED)
     return picture
