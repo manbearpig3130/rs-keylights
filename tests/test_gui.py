@@ -1252,7 +1252,8 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     assert rows["keys"][3:] == ("KEYS", 1, "keys", 6)  # (the tone mixer's columns 1 to 8, as the Launchkey's knobs)
     assert rows["all"][1] == max(rows[k][1] for k in ("a0", "a1", "drums", "keys")) and rows["all"][5:] == ("all", 7)
     assert rows["music"] == ("music", 80.0, False, "MUSIC", -1, "music", 14)  # (the stem mixer's knob 7)
-    assert rows["sound"] == ("sound", 0.0, False, "MASTER", -1, "sound", 15)  # (and its 8th: the sound on or off)
+    assert rows["sound"] == ("sound", 0.0, False, "MASTER", -1, "all", 15)  # (and its 8th: its parts together, and
+    # the sound on or off)
     assert rows["gbass"] == ("gbass", 0.0, False, "BASS", -1, "stem:bass:off", 9)  # (no Song Stems: off)
     game.kmix_moved = {"a1": "lights", "drums": "lights", "keys": "lights", "all": "mute", "music": 55.0}
     with gui._game_mixer_lock:
@@ -1284,6 +1285,7 @@ def test_the_games_stem_mixer_has_its_songs_bass_and_guitar_as_song_stems_has_th
     rows = {r[0]: r for r in game.kmix_rows}
     assert rows["gguitar"] == ("gguitar", 0.0, True, "GUITAR", -1, "stem:guitar", 10)  # (played: taken out, muted)
     assert rows["gbass"] == ("gbass", 60.0, False, "BASS", -1, "stem:bass:wait", 9)  # (waiting its turn)
+    assert rows["sound"][1] == 60.0 and rows["sound"][5:] == ("all", 15)  # (MASTER: the louder, the Music apart)
     game.kmix_moved = {"gbass": 45.0, "gguitar": "mute"}  # its fader moved; its pad: back where it was
     with gui._game_mixer_lock:
         gui._game_mixer_apply()

@@ -2113,11 +2113,11 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
     clock.now = 2.7
     watch.step()
     assert gui.music == 75 and pads(launchkey)[(0, KEYS_COLUMN)] == (0, 90, 100)
-    launchkey.queued = [Pad(0, CONTROLS), Turn(CONTROLS, 5)]  # Mute, as on every page (lit so); knob 8: nothing
-    clock.now = 2.8
+    launchkey.queued = [Pad(0, CONTROLS), Turn(CONTROLS, -5)]  # Mute, as on every page (lit so); knob 8: the bass
+    clock.now = 2.8                                              # and guitar together, the Music apart
     watch.step()
     assert not gui.sound and pads(launchkey)[(0, CONTROLS)] == (5, False) and gui.music == 75
-    assert note(watch) == (None, ("The game's Music:", "knob 7"))
+    assert (gui.game_stems["bass"], gui.game_stems["guitar"]) == (55, 55)
     calls = len(gui.game_stem_calls)
     launchkey.queued = [Turn(0, 5)]  # the drums' knob: not in the game's song
     clock.now = 3.0

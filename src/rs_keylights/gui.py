@@ -2525,12 +2525,14 @@ class Gui:
                       6),)
             rows += (("all", max([row[1] for row in rows if not row[5].startswith("drums:")] or [0.0]),  # (the
                       bool(self.play_options["silent"]), "ALL", -1, "all", 7),)                       # loudest: knob 8's)
-            rows += self._game_stem_rows(parts)
+            stems = self._game_stem_rows(parts)
+            rows += stems
             music = said.music if said is not None and said.music is not None else None
-            if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 7; its pad, muted)
+            if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 7, apart; its pad, muted)
                 rows += (("music", float(music), music == 0, "MUSIC", -1, "music", 14),)
-            rows += (("sound", 0.0, bool(self.play_options["silent"]), "MASTER", -1, "sound", 15),)  # (its 8th:
-            # the sound on or off, as on every page)
+            rows += (("sound", max([row[1] for row in stems if not row[5].endswith(":off")] or [0.0]),  # (its 8th:
+                      bool(self.play_options["silent"]), "MASTER", -1, "all", 15),)  # its parts together, as knob
+            # 8; its pad the sound on or off, as on every page)
             self._game_mixer_ids = ids
             if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
                 self._game_mixer_sent = rows

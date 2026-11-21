@@ -1981,7 +1981,8 @@ class Watch:
 
     def _turn_game_stem(self, encoder: int, steps: int, info: dict[str, Any], now: float) -> None:
         """Following, a knob of the stems page: 2 and 3 the bass and guitar in the game's song (0 to 100: the Song
-        Stems mod's levels), 7 the game's Music volume (8: nothing; its pad Mute, as ever)."""
+        Stems mod's levels), 8 both together (as the parts page's knob 8: its pad Mute, as ever), 7 the game's Music
+        volume (apart)."""
         if encoder == KEYS_COLUMN:
             def turn() -> None:
                 level = self.gui.set_game_music({"step": steps * VOLUME_STEP})["music"]
@@ -1990,7 +1991,13 @@ class Watch:
                 self._mix_slider = KEYS_COLUMN
             return
         if encoder == CONTROLS:
-            self._say(now, lines=("The game's Music:", "knob 7"))
+            def turn_both() -> None:
+                for stem in GAME_STEMS:
+                    level = min(max(self._game_level(stem, info) + steps * STEM_STEP, 0), 100)
+                    self.gui.set_game_stems({"part": stem, "level": level})
+                    self._pending[("game", stem)] = level
+            if self._try(turn_both):
+                self._mix_slider = CONTROLS
             return
         stem = STEMS[encoder][0] if encoder < len(STEMS) else None
         if stem not in GAME_STEMS:
