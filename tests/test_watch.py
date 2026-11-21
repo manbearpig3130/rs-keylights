@@ -7,7 +7,7 @@ from rs_keylights.bitmap import (arrangements_picture, keys_picture, lyrics_pict
 from rs_keylights.launchkey import PLAY, RECORD, Button, Pad, ScaleMode, Strip, Turn
 from rs_keylights.lyrics import lyric_lines
 from rs_keylights.sng import Chord, Syllable
-from rs_keylights.tones import tone
+from rs_keylights.tones import DRUM_SETS, tone
 from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, NOT_FOLLOWING_KEYS, PAD_WAIT,
                                 PEDAL_WAIT, PICTURE_GAP, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch,
                                 _pedal_tone_said)
@@ -1319,9 +1319,20 @@ def test_a_tone_stepped_in_the_games_tones_shows_here_as_a_knobs_turn_does():
     clock.now = 1.5
     watch.step()
     assert watch._picture_of is None and note(watch)[1] == ("Lead tone:", "297 " + tone(297).name)
+    kits = [program for _name, program in DRUM_SETS]
+    gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
+                                     "lights": 0, "tones": {}, "drum_set": kits[0]})
+    clock.now = 2.0
+    watch.step()
+    gui.song["arrangements"][3]["drum_set"] = kits[1]  # its drum kit stepped there: shown whatever the knobs are on
+    clock.now = 2.5
+    watch.step()
+    assert watch._picture_of == "parts" and watch._part_turned == 3
+    gui.song["arrangements"].pop()
+    watch._picture_of, watch._part_turned = None, 2
     gui.info["game_screen"] = "RSKeylights"  # closed there: a change isn't its
     gui.song["arrangements"][2]["tones"] = {"tone": 307}
-    clock.now = 2.0
+    clock.now = 3.0
     watch.step()
     assert watch._part_turned == 2 and watch._picture_of is None
 

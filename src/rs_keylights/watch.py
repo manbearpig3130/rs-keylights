@@ -109,7 +109,7 @@ SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.01  # knob 4 a section at a time 
 GAME_SMALL_STEPS, GAME_PHRASES, GAME_STEPS, GAME_BEHIND = ("left", "right"), ("pagedown", "pageup"), 8, 4
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game: the mixer up here too
 GAME_TONES_SCREEN = "RSKeylights_Tones"  # its TONES: a tone stepped there shown here as a knob's turn shows it
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Parts", GAME_TONES_SCREEN)  # (and its PARTS and TONES):
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_TONES_SCREEN)  # (and its TONES):
 # what's done there, done here at once
 GAME_KEY_TIME = 2 / 60  # seconds the game takes to type a key (pressed a frame, let go the next)
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
@@ -584,6 +584,7 @@ class Watch:
         seen = None
         if info.get("mode") == "follow" and info.get("game_screen") == GAME_TONES_SCREEN:
             seen = {a["id"]: self._tone_of(a, "tone") for a in arrangements if a["kind"] != "drums"}
+            seen |= {a["id"]: a["drum_set"] for a in arrangements if a["kind"] == "drums" and a.get("drum_set") is not None}
             seen["keys"] = int((info.get("keys") or {}).get("tone") or TONE_NUMBERS[0])
         was, self._game_tones_seen = self._game_tones_seen, seen
         changed = [key for key, number in (seen or {}).items() if was is not None and was.get(key, number) != number]
@@ -593,7 +594,7 @@ class Watch:
             self._show_for_a_while("keys", now)
             return
         column = next(i for i, a in enumerate(arrangements) if a["id"] == changed[-1])
-        if FIELDS[self.field][0] == "tone":
+        if FIELDS[self.field][0] == "tone" or arrangements[column]["kind"] == "drums":  # (the parts' picture: its kit)
             self._part_turned = column
             self._show_for_a_while("parts", now)
         else:  # (the parts' picture shows the tone the knobs are on: this one said instead)

@@ -1246,6 +1246,28 @@ def test_following_the_games_tones_page_is_sent_the_tones_and_steps_them(server,
     assert game.ktone_rows[0][2] == f"{stepped:03d} {tone(stepped).name}"  # (and the mod's told)
 
 
+def test_the_games_tones_page_has_the_keyboards_drum_kit_and_steps_it(server):
+    from rs_keylights.gui import _drum_kit_said
+    from rs_keylights.tones import DRUM_SETS
+    gui, game = server.gui, server.gui._riff_loop
+    changed = []
+    gui.change_part = lambda part, fields, *a, **k: changed.append((part, fields))
+    kits = [program for _name, program in DRUM_SETS]
+    followed = {"arrangements": [
+        {"id": "L", "name": "Lead", "kind": "lead", "play": True, "tones": {}},
+        {"id": "drums", "name": "Drums", "kind": "drums", "play": True, "made": True, "drum_set": kits[-1], "volume": 90}]}
+    gui._game_mixer(followed, None)
+    assert [r[0] for r in game.ktone_rows] == ["a0", "drums", "keys"]
+    assert game.ktone_rows[1] == ("drums", "DRUM KIT", _drum_kit_said(kits[-1]))
+    game.kmix_moved = {"drums": "tone:1"}  # Right on it, in the game: the next kit (round to the first)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert changed[-1] == ("drums", {"kit": kits[0]})
+    followed["arrangements"][1]["drum_set"] = None  # (on another device: no kit of the keyboard's to step)
+    gui._game_mixer(followed, None)
+    assert [r[0] for r in game.ktone_rows] == ["a0", "keys"]
+
+
 def test_following_a_part_muted_in_the_games_tone_mixer_doesnt_hold_up_the_rest(server, no_real_game_loop):
     game = no_real_game_loop[-1]
     server.overlay.state = {"memoryReadout": {"songTimer": 21.1, "songID": "song", "arrangementID": "L"}, "currentState": 4}

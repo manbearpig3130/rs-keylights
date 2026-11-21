@@ -448,13 +448,12 @@ A song clicked in the page's library is highlighted in the game's list too.
 
 ### In the game's pause menu (riffloop mod)
 
-Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens three screens:
+Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens two screens:
 
 | Screen | Does |
 |---|---|
-| TONE MIXER | a slider for each arrangement, the drum part and the Launchkey keys, 0 to 100%. ← → move the highlighted one 5%. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it |
-| PARTS | each part playing or muted: Return turns it over |
-| TONES | each arrangement's tone and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
+| TONE MIXER | a slider for each arrangement, the drum part and the Launchkey keys, 0 to 100%. ← → move the highlighted one 5%, Return mutes or unmutes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it |
+| TONES | each arrangement's tone, the drum kit (on the keyboard) and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
 
 ### Everything else
 

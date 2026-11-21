@@ -69,8 +69,7 @@ SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over 
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game (from Learn a Song's pause menu)
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Parts", "RSKeylights_Tones")  # (and its PARTS: each part playing
-# or muted; and TONES: each part's tone)
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Tones")  # (and its TONES: each part's tone, the drum kit's)
 GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
@@ -2511,10 +2510,10 @@ class Gui:
         return None
 
     def _game_mixer(self, followed: dict[str, Any] | None, said: GameLoop | None) -> None:
-        """Following, RS-Keylights' TONE MIXER, PARTS and TONES in the game (the riffloop mod's menus, from Learn a
-        Song's pause menu): while one shows, what's done there done here first (a slider moved, a row's mute turned
-        over: Return on it, a tone stepped: Left/Right; the Launchkey's mixer and the page follow); then their rows
-        sent as they change here (the song's arrangements, by their place, its drums, and the Launchkey keys')."""
+        """Following, RS-Keylights' TONE MIXER and TONES in the game (the riffloop mod's menus, from Learn a Song's
+        pause menu): while one shows, what's done there done here first (a slider moved, a row's mute turned over:
+        Return on it, a tone stepped: Left/Right; the Launchkey's mixer and the page follow); then their rows sent as
+        they change here (the song's arrangements, by their place, its drums, and the Launchkey keys')."""
         with self._game_mixer_lock:
             if said is not None and said.screen in GAME_MIXER_SCREENS and self._game_mixer_apply():
                 return  # (the parts' state here as it was: the next look sends the rows as they are now)
@@ -2536,10 +2535,14 @@ class Gui:
             if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
                 self._game_mixer_sent = rows
             tones = {f"a{i}": self._part_tone(a) for i, a in enumerate(arrangements)}
+            if drummed is not None and drummed.get("drum_set") is not None:  # (on the keyboard: its kit, a program)
+                tones["drums"] = int(drummed["drum_set"])
             tones["keys"] = int(self.keys_info()["tone"])
             self._game_tones = tones
-            labels = {f"a{i}": str(a["name"]).upper() for i, a in enumerate(arrangements)} | {"keys": "LAUNCHKEY KEYS"}
-            tone_rows = tuple((key, labels[key], f"{number:03d} {tone(number).name}") for key, number in tones.items())
+            labels = ({f"a{i}": str(a["name"]).upper() for i, a in enumerate(arrangements)} |
+                      {"drums": "DRUM KIT", "keys": "LAUNCHKEY KEYS"})
+            tone_rows = tuple((key, labels[key], _drum_kit_said(number) if key == "drums" else
+                               f"{number:03d} {tone(number).name}") for key, number in tones.items())
             if tone_rows != self._game_tones_sent and self._riff_loop.ktones(tone_rows) is not None:
                 self._game_tones_sent = tone_rows
 
@@ -2549,13 +2552,13 @@ class Gui:
         return int(own) if own else BUILT_IN.get(arrangement["kind"], BUILT_IN["lead"])
 
     def game_mixer_step(self) -> None:
-        """While the game's TONE MIXER, PARTS or TONES shows (the Launchkey's loop asks each time round): what's done
-        there done here at once."""
+        """While the game's TONE MIXER or TONES shows (the Launchkey's loop asks each time round): what's done there
+        done here at once."""
         with self._game_mixer_lock:
             self._game_mixer_apply()
 
     def _game_mixer_apply(self) -> bool:
-        """(Holding _game_mixer_lock.) What was done in the game's TONE MIXER, PARTS or TONES since last asked, done
+        """(Holding _game_mixer_lock.) What was done in the game's TONE MIXER or TONES since last asked, done
         here: a slider moved, a mute turned over (from the mute sent last: the mod shows it turned at once), a tone
         stepped (from the one sent last). Whether anything was."""
         moved = self._riff_loop.kmixed() or {}
@@ -2576,6 +2579,12 @@ class Gui:
                 self.change_part("drums", {"volume": _volume_of(value)})
             elif isinstance(value, float) and key[:1] == "a" and part is not None:
                 slots[int(key[1:])] = _volume_of(value)
+            elif isinstance(value, str) and value.startswith("tone:") and key == "drums" and key in self._game_tones:
+                kits = [program for _name, program in DRUM_SETS]  # (as the Launchkey's knob steps them)
+                was = self._game_tones[key]
+                kit = kits[((kits.index(was) if was in kits else 0) + int(value[5:])) % len(kits)]
+                self._game_tones[key] = kit
+                self.change_part("drums", {"kit": kit})
             elif isinstance(value, str) and value.startswith("tone:") and key in self._game_tones:
                 was = self._game_tones[key]
                 at = TONE_ORDER.index(was) if was in TONE_ORDER else 0
@@ -3817,6 +3826,12 @@ def _number(value: Any, what: str, lowest: float, highest: float) -> float:
     if not lowest <= number <= highest:
         raise GuiError(f"The {what} must be {lowest:g} to {highest:g}")
     return number
+
+
+def _drum_kit_said(program: int) -> str:
+    """A keyboard drum kit, as the TONES screen shows it: its tone number and name ("Drum set" and its program)."""
+    found = next((t for t in TONES if t.bank == DRUM_SET_BANK and t.program == program), None)
+    return f"{found.number:03d} {found.name.title()}" if found else f"Drum set {program}"
 
 
 def _tone(value: Any) -> Tone | None:
