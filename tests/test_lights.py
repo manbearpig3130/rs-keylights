@@ -60,6 +60,16 @@ def test_a_linked_notes_slide_off_slide_and_bend_are_the_held_notes():
     assert [e.pitches for e in glide] == [(61,), (62,)] and glide[0].on > 1.5  # (from the linked note's start)
 
 
+def test_a_songs_last_notes_slide_off_is_at_its_charted_end_not_after_it_has_rung():
+    # Opeth's Ghost of Perdition, rhythm, its last note: held, linked, slid off 9 down; nothing after it, so it would
+    # ring 4 s, and its slide off came then (past the song's end)
+    last = schedule([Note(635.839, 0.16, (50,)), Note(635.997, 0.32, (50,), CHILD, slide_off=-9)], shift=0)
+    assert round(last[0].off, 3) == 636.317 and max(last[0].rings) > 639  # (it would ring on: nothing after it)
+    lights, extras = techniques(last)
+    assert 636.16 <= extras[0].on and extras[-1].on < 636.317 and extras[-1].pitches == (41,)
+    assert lights[0].rings == (round(extras[0].on, 6),) or abs(lights[0].rings[0] - extras[0].on) < 1e-9  # (cut)
+
+
 def test_at_most_four_keys_and_the_shift_but_every_pitch_kept():
     lights = schedule([Note(0.0, 0, (35, 42, 47, 50, 54, 59))])
     assert lights[0].keys == (47, 54, 59, 62)
@@ -148,7 +158,7 @@ def test_notes_ring_as_a_guitars_strings_do():
 
 
 def test_techniques_sound_besides_the_lights():
-    slid = Light(1.0, 1.1, (60,), (60,), rings=(1.6,), slide=2)  # up 2 over its 0.6 s
+    slid = Light(1.0, 1.6, (60,), (60,), rings=(1.6,), slide=2)  # up 2 over its 0.6 s
     lights, extras = techniques([slid])
     assert lights[0].rings == (1.2,)  # (it stops as the first step sounds)
     assert [(round(x.on, 2), x.pitches, x.keys, x.extra, bool(x.mask & HAMMER_ON)) for x in extras] == [
@@ -156,8 +166,9 @@ def test_techniques_sound_besides_the_lights():
     assert extras[-1].rings == (1.6,)
     into = Light(1.6, 2.0, (62,), (62,), mask=CHILD, rings=(2.0,))  # linked to the note it slides into: it sounds that
     assert [x.pitches for x in techniques([slid, into])[1]] == [(61,)]
-    off = Light(1.0, 1.1, (60,), (60,), rings=(2.0,), slide_off=-3)  # slid off at its end, quickly
-    assert [round(x.on, 2) for x in techniques([off])[1]] == [1.85, 1.9, 1.95]
+    off = Light(1.0, 1.4, (60,), (60,), rings=(2.0,), slide_off=-3)  # held to 1.4 and slid off there, quickly (not
+    assert [round(x.on, 2) for x in techniques([off])[1]] == [1.25, 1.3, 1.35]  # at 2.0, where it would stop ringing)
+    assert techniques([off])[0][0].rings == (1.25,) and techniques([off])[1][-1].rings == (1.43,)  # (and it ends)
     assert [x.pitches for x in techniques([off])[1]] == [(59,), (58,), (57,)]
     levels = [x.level for x in techniques([off])[1]]
     assert levels == sorted(levels, reverse=True) and round(levels[-1], 2) == SLIDE_OFF_FADE  # (fading)
@@ -279,7 +290,7 @@ def test_a_pinch_harmonic_has_its_squeal_with_it():
     lights, extras = techniques([pinched])
     assert lights == [pinched]  # (the note as it is)
     assert extras == [Light(1.0, 1.2, (), (52,), PINCH_HARMONIC, rings=(1.5,), vibrato=True, extra=True)]
-    sliding = Light(1.0, 1.2, (52,), (52,), PINCH_HARMONIC, rings=(1.6,), slide=2)
+    sliding = Light(1.0, 1.6, (52,), (52,), PINCH_HARMONIC, rings=(1.6,), slide=2)
     _lights, extras = techniques([sliding])
     assert [(x.mask & PINCH_HARMONIC, round(x.rings[0], 3)) for x in extras] == [(PINCH_HARMONIC, 1.2), (0, 1.4), (0, 1.6)]
     # (the squeal until the slide's first step: the steps, the note's)
