@@ -187,6 +187,14 @@ def test_techniques_sound_besides_the_lights():
     assert levels == sorted(levels, reverse=True) and SLIDE_OFF_FADE < levels[-1] < 0.7  # (fading)
     far = techniques([replace(off, slide_off=-12)])[1]  # (a long one: a smear, not a run of twelve)
     assert [x.pitches[0] for x in far] == [58, 56, 54, 52, 50, 48] and len(far) == SLIDE_OFF_STEPS
+    dive = Light(146.323, 147.5, (54, 59), (54, 59), rings=(149.0, 149.0), slide_off=-14)  # (held over a second:
+    steps = techniques([dive])[1]                       # Twilight of the Thunder God's, 19 down to 5, the whole way)
+    assert [x.pitches for x in steps] == [(54 - k, 59 - k) for k in range(1, 15)]  # (a semitone a step)
+    gaps = [b.on - a.on for a, b in zip(steps, steps[1:])]
+    assert round(steps[0].on - dive.on, 3) == round(gaps[0], 3) and max(gaps) - min(gaps) < 1e-6  # (evenly, from
+    assert steps[-1].on < dive.off and steps[-1].level < steps[0].level                         # its start)
+    linked = techniques([replace(dive, on=145.7, slide_at=146.323)])[1]  # (linked: from the slid note's start)
+    assert [round(x.on, 3) for x in linked] == [round(x.on, 3) for x in steps]
     tremolo = Light(1.0, 1.1, (60,), (60,), mask=TREMOLO, rings=(1.4,))
     assert [round(x.on, 3) for x in techniques([tremolo])[1]] == [round(1.0 + TREMOLO_EVERY * k, 3) for k in (1, 2, 3, 4)]
     dead = techniques([], [Note(3.0, 0, (43,), FRET_HAND_MUTE)])[1]

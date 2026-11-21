@@ -27,6 +27,9 @@ SLIDE_OFF_FADE = 0.55  # ...fading towards this much of the note's loudness, as 
 SLIDE_OFF_SHARE = 3  # ...taking at most a third of the note (the rest held: a slide off at its very end)...
 SLIDE_OFF_TAIL = 0.12  # ...and its last step ringing this long past the note's end, as a string does once the hand's
 # off it (unless the next note stops it first)
+SLIDE_OFF_LONG = 0.5  # seconds held at least for a slide off to slide the whole way instead: evenly over the sustain, a
+# semitone a step, as a slide does (a slide down or up the neck, a dozen frets over a second, not a hand coming off at
+# the end), fading as a slide off does
 TREMOLO_EVERY = 0.075  # seconds between a tremolo-picked note's strikes
 DEAD = 0.05  # seconds a dead note (fret-hand muted) sounds
 # Strums (strums): a chord's strings one after another, down (low to high) on the beat and its eighths, up (high to
@@ -76,7 +79,8 @@ class Light:
     strum: tuple[float, ...] = ()  # seconds after on each pitch sounds, strummed (as the pitches are; none: at once)
     level: float = 1.0  # how loud, of how it's played (a slide off's steps fading)
     up: bool = False  # strummed (or picked) up: softer
-    slide_at: float | None = None  # when its slide starts: a linked note's start, its slide its (None: on)
+    slide_at: float | None = None  # when its slide (or slide off) starts: a linked note's start, its slide its (None:
+    # on)
 
 
 def together(notes: Sequence[Note]) -> list[Note]:
@@ -204,7 +208,7 @@ def schedule(notes: Sequence[Note], keys: KeyRange = KeyRange(), shift: int | No
             last = lights[-1]
             longer = tuple(max(a, b) for a, b in zip(last.rings, ends)) if len(last.rings) == len(ends) else last.rings
             lights[-1] = replace(last, off=max(last.off, end), rings=longer, slide=note.slide or last.slide,
-                                 slide_at=note.time if note.slide else last.slide_at,
+                                 slide_at=note.time if note.slide or note.slide_off else last.slide_at,
                                  slide_off=note.slide_off or last.slide_off, bends=last.bends + note.bends,
                                  vibrato=last.vibrato or note.vibrato)
             continue
@@ -223,7 +227,8 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
     """A part's sound with its techniques: its lights (those sliding or tremolo-picked stopping as their first step
     or strike sounds), and what sounds besides them (extra, no keys): a slide's steps, a semitone at a time over its
     sustain (the last left to the note it slides into, if it's linked to it), the last ringing on; a slide off's,
-    quicker, at its sustain's end, fading (SLIDE_OFF_STEPS at most), the note ending with it (both by the charted end,
+    quicker, at its sustain's end, fading (SLIDE_OFF_STEPS at most; held long, SLIDE_OFF_LONG, the whole way, evenly,
+    as a slide), the note ending with it (both by the charted end,
     the light's, not how long it would ring: a song's last note rings 4 s, and its slide off came then);
     a tremolo's strikes; a pinch harmonic's squeal (sounding with its note: Voices puts it above); and dead notes
     (muted: palm-muted, for the palm-mute tone if there is one). Bends and vibrato are the
@@ -250,10 +255,17 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
             times = [start + span * k / (steps + 1) for k in range(1, steps + 1 - linked)]
             offsets = [k * (1 if light.slide > 0 else -1) for k in range(1, len(times) + 1)]
         elif light.slide_off:
-            semitones, steps = abs(light.slide_off), min(abs(light.slide_off), SLIDE_OFF_STEPS)
-            begin = max(held - min(SLIDE_OFF, (held - light.on) / SLIDE_OFF_SHARE), light.on)
-            times = [begin + (held - begin) * k / steps for k in range(steps)]
-            offsets = [round(semitones * k / steps) * (1 if light.slide_off > 0 else -1) for k in range(1, steps + 1)]
+            semitones, sign = abs(light.slide_off), (1 if light.slide_off > 0 else -1)
+            start = light.on if light.slide_at is None else light.slide_at  # (a linked note's: from its start)
+            if held - start >= SLIDE_OFF_LONG:  # (held long: the whole way, evenly)
+                steps = semitones
+                times = [start + (held - start) * k / (steps + 1) for k in range(1, steps + 1)]
+                offsets = [k * sign for k in range(1, steps + 1)]
+            else:  # (at its end, quickly)
+                steps = min(semitones, SLIDE_OFF_STEPS)
+                begin = max(held - min(SLIDE_OFF, (held - light.on) / SLIDE_OFF_SHARE), light.on)
+                times = [begin + (held - begin) * k / steps for k in range(steps)]
+                offsets = [round(semitones * k / steps) * sign for k in range(1, steps + 1)]
             levels = [1.0 - (1.0 - SLIDE_OFF_FADE) * k / (steps + 1) for k in range(1, steps + 1)]
         elif light.mask & TREMOLO:
             count = max(int((end - light.on) / TREMOLO_EVERY) - 1, 0)
