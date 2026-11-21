@@ -246,6 +246,8 @@ class GameClock:
     RATE_SPAN = 0.4  # at least this long of them for a rate of their own
     SNAP = 0.02  # a rate this near 1 is 1
     JUMP = 0.5  # seconds a read is further on than its rate says: a seek
+    STALL = 0.1  # seconds of the same time, then on: a stand (Rocksmith's resume stands a moment after going back),
+    # its rate measured afresh from there rather than across it (else slow for a second: the keys and notes made again)
     SETTLE = 0.4  # seconds of reads after a jump on (going on after a pause, a seek ahead) before it's played from:
     # quiet till then, rather than the notes since in a rush while it finds where and how fast the song goes
     MISMATCH, DISTRUST = 5.0, 3.0  # seconds from RS Companion's timer: not this song's; set aside this long
@@ -281,6 +283,8 @@ class GameClock:
                 self._settling = True
                 self.jumped_at = now
             else:
+                if now - self._changed_at > self.STALL:  # (on after a stand: its rate from here)
+                    self._samples.clear()
                 self._going_back = False
         self._last, self._changed_at = (timer, now), now
         self._samples.append((timer, now))
@@ -429,6 +433,7 @@ class Follower:
         self._next_poll = 0.0
         self._connected: bool | None = None
         self._playing = False
+        self._stopped_player: Player | None = None  # the player stopped last (a pause): going on quietly
 
     def position(self, now: float) -> float | None:
         """The song position, while the song plays: the game's own (riffloop's), while it's read; else as RS
@@ -565,11 +570,15 @@ class Follower:
             if self._playing:
                 self._player.stop()
                 self._playing = False
+                self._stopped_player = self._player  # (going on, it starts from the next note)
                 self._record({"t": now, "stopped": True})
             return
         if not self._playing:
             self._record({"t": now, "playing": round(position, 3), "rate": self._rate(now),
                           "from": "game" if self._game_clock.trusted(now) else "companion"})
+            if self._stopped_player is self._player:  # going on after a stop (a pause, Rocksmith's resume 2 s back):
+                self._player.seek(position + self.offset, sounding=False)  # from the next note, not every note
+                # still ringing there at once
         self._player.retime(rate=self._rate(now))  # Riff Repeater's speed: the keys flash for it
         self._player.advance(position + self.offset)
         self._playing = True

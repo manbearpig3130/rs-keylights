@@ -265,6 +265,31 @@ def test_with_sound_each_song_gets_its_voices_and_the_trace_records_the_polls():
     assert {"t": 1.0, "stopped": True} in trace
 
 
+def test_going_on_after_rocksmiths_resume_rewind_doesnt_strike_the_notes_still_ringing_there():
+    from rs_keylights.sound import Voice, Voices
+    from rs_keylights.tones import tone
+
+    client, index, keys = FakeClient(), FakeIndex([REF]), FakeSoundKeys()
+    game: dict = {"t": 9.9, "screen": "LearnASong_Game"}
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 voices_for=lambda ref, channels: Voices(Voice(11, tone(178))),
+                 game_time=lambda: (game["t"], game["screen"], "x_lead"))
+    for i in range(30):  # 9.9 to 10.48: 10.0's note struck, ringing to 11.0
+        game["t"] = round(9.9 + i * 0.02, 4)
+        f.step(i * 0.02)
+    assert [n for _c, n, _v in keys.played] == [(60,)]
+    game["screen"] = "LearnASong_Pause"  # paused...
+    for i in range(30, 200):
+        f.step(i * 0.02)
+    game.update(screen="LearnASong_Game", t=10.2)  # ...and on: Rocksmith 0.3 s back, standing a moment (a trace's)
+    for i in range(200, 212):
+        f.step(i * 0.02)
+    for i in range(212, 260):  # then on, from 10.4 to 11.34
+        game["t"] = round(10.4 + (i - 212) * 0.02, 4)
+        f.step(i * 0.02)
+    assert [n for _c, n, _v in keys.played] == [(60,), (64,)]  # (10.0's still ringing there: not again; 11.0's: on time)
+
+
 def test_other_tones_go_on_from_where_the_song_is():
     from rs_keylights.sound import Voice, Voices
     from rs_keylights.tones import tone

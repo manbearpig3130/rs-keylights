@@ -162,9 +162,22 @@ def test_retime_makes_the_keys_timeline_again_and_goes_on_from_where_it_is():
     player = Player([Track(fast)], keys)
     assert len(player.display) == 4  # too fast to see each: every other one
     player.advance(0.12)
+    before = len(keys.events)
     player.retime(rate=0.5)  # half speed: every one flashes
     assert len(player.display) == 8 and player.position == 0.12
-    assert keys.events[-2:] == [("all off",), ("on", (60,))]  # re-lit where it is (the note at 0.1)
+    assert keys.lit == {60} and ("all off",) not in keys.events[before:]  # (still lit where it is: the note at 0.1)
+
+
+def test_a_speed_change_leaves_what_sounds_as_it_is():
+    keys = FakeKeys()
+    player = Player([Track(LIGHTS, FakeVoices())], keys)
+    player.advance(1.2)  # mid-note: sounding
+    before = len(keys.events)
+    for rate in (0.83, 0.9, 0.95, 1.0):  # (a speed being measured, after Rocksmith's resume: it was struck again each step)
+        player.retime(rate=rate)
+    assert not [e for e in keys.events[before:] if e[0] in ("play", "stop", "all off")]
+    player.advance(1.45)
+    assert ("stop", 11, (60,)) in keys.events[before:]  # (and stops when it ends)
 
 
 def test_each_note_sounds_as_long_as_it_rings():

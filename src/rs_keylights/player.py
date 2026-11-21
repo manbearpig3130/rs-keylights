@@ -164,7 +164,8 @@ class Player:
 
     def retime(self, rate: float | None = None, lead: float | None = None, min_period: float | None = None) -> None:
         """Another playback speed, lead or fastest flash: the keys' timeline is made again, going on from
-        where it is."""
+        where it is: the keys lit there changed, what sounds left as it is (the sounds' timeline doesn't change; a
+        seek struck every note still ringing again, at each step of a speed being measured)."""
         rate = self.rate if rate is None else rate
         lead = self.lead if lead is None else lead
         min_period = self.min_period if min_period is None else min_period
@@ -172,9 +173,15 @@ class Player:
             return
         self.rate, self.lead, self.min_period = rate, lead, min_period
         position = self._position
+        lit = set(self.keys_at(position)) if position is not None else set()
         self._build()
         if position is not None:
-            self.seek(position)
+            now = set(self.keys_at(position))
+            if lit - now:
+                self.keys.unlight(tuple(sorted(lit - now)))
+            if now - lit:
+                self.keys.light(tuple(sorted(now - lit)))
+            self._next = bisect_right(self._times, position)
 
     @property
     def position(self) -> float | None:
@@ -202,7 +209,10 @@ class Player:
             self._next += 1
         self._position = position
 
-    def seek(self, position: float) -> None:
+    def seek(self, position: float, sounding: bool = True) -> None:
+        """To a position: the keys lit there, the tones there and (sounding) the notes still sounding there struck
+        again, from there; else none (going on after a stop: Rocksmith's resume goes 2 s back, and every note still
+        ringing there, of every part, would come at once)."""
         self._all_off()
         self._next = bisect_right(self._times, position)
         for i in range(bisect_right(self._display_ons, position)):
@@ -211,6 +221,8 @@ class Player:
         for ti, t in enumerate(self.tracks):  # (the tone there, and the notes still sounding there)
             if t.voices is not None and t.changes:
                 self._change(ti, bisect_right([change[0] for change in t.changes], position) - 1)
+            if not sounding:
+                continue
             if t.voices is not None:
                 for li in range(bisect_right(self._ons[ti], position - self._longest[ti]),
                                 bisect_right(self._ons[ti], position)):
