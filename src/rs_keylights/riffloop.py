@@ -177,24 +177,28 @@ class RiffLoop:
         it (shown if it's open)."""
         return self._send(f"kpage {page}")
 
-    def ktones(self, rows: Sequence[tuple[str, str, str]]) -> GameLoop | None:
-        """Its TONES page: its rows, each an id, a label and the tone it plays (as shown); sent as they change."""
-        def text(value: str) -> str:
-            return "".join(c for c in value if c not in ",;\n").strip()[:40] or "?"
-        return self._send("ktones " + ";".join(f"{i},{text(label)},{text(value)}" for i, label, value in rows))
+    def ktones(self, rows: Sequence[tuple[Any, ...]]) -> GameLoop | None:
+        """Its TONES page: its rows, each an id, a label and the tone it plays (as shown: "NUMBER|GROUP|NAME"), and
+        (laid out as the Launchkey's) its kind, whether it follows the song's tone changes (1, 0; -1 none), its
+        column and the knobs' page (0 tone, 1 palm mutes, 2 harmonics); sent as they change."""
+        def text(value: str, most: int = 40) -> str:
+            return "".join(c for c in str(value) if c not in ",;\n").strip()[:most] or "?"
+        return self._send("ktones " + ";".join(
+            f"{row[0]},{text(row[1])},{text(row[2], 47)}" +
+            (f",{text(row[3], 11)},{int(row[4])},{int(row[5])},{int(row[6])}" if len(row) > 6 else "") for row in rows))
 
     def kmixed(self) -> dict[str, float | str] | None:
         """What was done in the MIXER or TONES since it was last asked: {id: percent} for a fader moved,
-        {id: "mute"} or {id: "lights"} for a pad pressed (to turn over), {"page": "parts" or "stems"} for the
-        MIXER's page turned (the last), {id: "tone:N"} for Left/Right on a TONES row (its tone N steps on, the
-        presses added up); None: no answer."""
+        {id: "mute"}, {id: "lights"} or {id: "follow"} for a pad pressed (to turn over), {"page": "parts" or
+        "stems"} for the MIXER's page turned (the last), {"field": N} for TONES' page (the last), {id: "tone:N"} for
+        a TONES column's ▲ ▼ (its tone N steps on, the presses added up); None: no answer."""
         words = (self._ask("kmixed") or "").split()
         if not words or words[0] != "kmixed":
             return None
         moved: dict[str, float | str] = {}
         for word in words[1:]:
             key, _, value = word.partition("=")
-            if value in ("mute", "lights") or key == "page" and value in ("parts", "stems"):
+            if value in ("mute", "lights", "follow") or key == "page" and value in ("parts", "stems"):
                 moved[key] = value
                 continue
             if value.startswith("tone:"):

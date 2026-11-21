@@ -350,9 +350,9 @@ While a warm-up runs, it has the Launchkey instead (see [On the Launchkey](#on-t
 
 | Control | Does |
 |---|---|
-| Pads 1–5, top | an arrangement each (orange lead, green rhythm, blue bass; dim when muted; the one you play in the game pulses). Tap to mute or unmute. |
+| Pads 1–5, top | an arrangement each (orange lead, green rhythm, blue bass; dim when muted; the one you play in the game pulses; dimmed while Mute has the sound off). Tap to mute or unmute. |
 | Drum part's pad, top | after the arrangements, white. Tap to mute. Not made yet: dim, and a tap makes it. |
-| Pads 1–5, bottom | each arrangement's lit keys, on or off |
+| Pads 1–5, bottom | each arrangement's lit keys, on or off. While its tones show on the screen: whether its tone follows the song's tone changes (bright), or keeps the one chosen (dim), as the page's Follow box; off for an arrangement without tone changes |
 | Drum part's bottom pad | **beat lights**: it flashes on each beat (brighter on a bar's first) and the other lit pads pulse with it |
 | Knobs 1–5 | each arrangement's tone. The drum part's knob goes through the Casio's drum kits. |
 | ▲ again | switches the knobs between tones, palm-mute tones and harmonics tones (squares at the top right of the screen show which) |
@@ -455,7 +455,7 @@ Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens these screen
 |---|---|
 | MIDI MIXER | the Launchkey's mixer page, the keyboard's: a column for each arrangement (up to 6), the drum part, the Launchkey keys and all of them, each with a fader and two pads (mute; lit keys, or the drums' beat lights). ← → pick a column, ↑ ↓ move its fader 5%, Return and Space press its pads, and the mouse drags and clicks. A drum part not made yet has its fader greyed: its pad makes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it. ▲ and ▼ at its top right (or Page Up and Page Down) turn it to its stem mixer page and back, as the Launchkey's ▲ and ▼ by its knobs do, and each follows the other. The stem mixer page is the Launchkey's second page while following: the game's song's bass and guitar (columns 2 and 3, rearmed-mods' Song Stems: the one you're not playing dim, waiting its turn; greyed with Song Stems off), each with a pad to mute it and back (its level kept, greyed, the pad dimmed), the game's Music (column 7, with its own mute pad: red, its level kept, greyed), and MASTER (column 8: the bass and guitar together, as the first page's ALL, the Music apart; its pad both muted, or back, as the Launchkey's right pad on its stems page). On the first page, ALL's pad is the sound on or off, and the columns grey with it |
 | STEM MIXER | the MIDI MIXER, opened on its stem mixer page |
-| TONES | each arrangement's tone, the drum kit (on the keyboard) and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
+| TONES | laid out as the Launchkey's knobs: a column for each arrangement's tone, the drum kit (on the keyboard) and the keys' (7th), on the knobs' page (tone, palm mutes or harmonics: three squares at its top right show which, and its ▲ or Page Up goes to the next, as the Launchkey's ▲ does, each following the other). ← → pick a column, ↑ ↓ (or its ▲ ▼) step its tone, as a knob does, and Space (or its pad below) is whether it follows the song's tone changes. The Launchkey's screen shows the tones while it's open |
 
 ### Everything else
 

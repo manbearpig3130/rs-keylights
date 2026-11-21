@@ -121,6 +121,9 @@ class FakeGui:
         self.kept = [*getattr(self, "kept", []), slot]
         return "dist: automatic" if back else f"dist: {slot:03d} kept"
 
+    def set_tone_field(self, field):  # (the game's TONES to the Launchkey's tones page)
+        self.tone_fields = [*getattr(self, "tone_fields", []), field]
+
     def set_game_mixer_page(self, page):  # (the game's MIXER to the Launchkey mixer's page)
         self.game_pages = [*getattr(self, "game_pages", []), page]
 
@@ -159,6 +162,10 @@ class FakeGui:
         for a in self.song["arrangements"]:  # its tones kept at once, as the page does, and whether it plays
             if a["id"] == arrangement:
                 a["tones"] = {**a["tones"], **{k: v for k, v in fields.items() if k in ("tone", "mute_tone", "volume")}}
+                if "follow_tones" in fields:  # (kept only off, as the page keeps it)
+                    a["tones"] = {k: v for k, v in a["tones"].items() if k != "follow_tones"}
+                    if fields["follow_tones"] is False:
+                        a["tones"]["follow_tones"] = False
                 a["play"], a["lights"] = fields.get("play", a["play"]), fields.get("lights", a["lights"])
                 if a["kind"] == "drums" and "volume" in fields:  # (a drum part's volume: its own, as the page has it)
                     a["volume"] = fields["volume"]
@@ -982,14 +989,16 @@ def test_a_toggle_is_said_at_the_bottom_left_of_whatever_the_screen_shows():
     clock.now = 1.0
     watch.step()
     assert gui.following and screens(launchkey)[-1] == with_note(tone_shown, ("Following: on",)).data()
-    launchkey.queued = [Pad(1, 0)]  # the lead's lit keys: said over it too
+    keys = gui.keys["lights"]
+    launchkey.queued = [Pad(1, KEYS_COLUMN)]  # the keys' lighting first: said over it too
     clock.now = 1.5
     watch.step()
-    assert screens(launchkey)[-1] == with_note(tone_shown, ("Lead: lights off",)).data()
+    said = (f"Keys light first: {'off' if keys else 'on'}",)
+    assert screens(launchkey)[-1] == with_note(tone_shown, said).data()
     clock.now = 0.5 + PICTURE_SHOWN  # the tone gone, still said, over the song
     watch.step()
     assert screens(launchkey)[-1] == with_note(song_picture(*TWILIGHT, done=30 / 260, sign="playing",
-                                                            beside="0:30 / 4:20"), ("Lead: lights off",)).data()
+                                                            beside="0:30 / 4:20"), said).data()
 
 
 def test_playing_the_song_knob_3_and_the_pads_below_go_through_its_sections():
@@ -1304,6 +1313,47 @@ def test_the_games_tone_mixer_brings_up_the_mixer_until_it_closes():
     assert not watch.mix_knobs
 
 
+def test_the_tones_on_the_screen_the_pads_below_follow_the_songs_tone_changes_or_not():
+    watch, gui, launchkey, clock = watching("play")
+    gui.song["arrangements"][0]["tone_changes_known"] = True  # (the lead has tone changes; the others none)
+    gui.info["song"] = gui.song
+    watch.step()
+    lit = pads(launchkey)[(1, 0)]  # (its lit keys, as ever)
+    launchkey.queued = [Turn(0, 1)]  # knob 1: the tones on the screen
+    clock.now = 0.5
+    watch.step()
+    assert pads(launchkey)[(1, 0)] == (127, 45, 0) and pads(launchkey)[(1, 1)] == (0, 0, 0)  # (following; none)
+    launchkey.queued = [Pad(1, 0)]  # its tone kept: dim
+    clock.now = 1.0
+    watch.step()
+    assert gui.changes[-1] == ("L", {"follow_tones": False}) and pads(launchkey)[(1, 0)] == (19, 7, 0)
+    assert gui.song["arrangements"][0]["lights"] == 4  # (its lit keys as they were)
+    changes = len(gui.changes)
+    launchkey.queued = [Pad(1, 1)]  # (none to follow: said, nothing changed)
+    clock.now = 1.5
+    watch.step()
+    assert len(gui.changes) == changes and note(watch) == (None, ("Rhythm", "has no tone changes"))
+    launchkey.queued = [Pad(1, 0)]  # (following again)
+    clock.now = 2.0
+    watch.step()
+    assert gui.changes[-1] == ("L", {"follow_tones": None}) and pads(launchkey)[(1, 0)] == (127, 45, 0)
+    clock.now = 2.0 + PICTURE_SHOWN  # the tones gone: its lit keys again
+    watch.step()
+    assert pads(launchkey)[(1, 0)] == lit
+
+
+def test_master_mute_dims_the_arrangements_pads_outside_the_mixer_too():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    assert pads(launchkey)[(0, 0)] == (9, False)
+    launchkey.queued = [Pad(0, CONTROLS)]  # Mute
+    clock.now = 0.5
+    watch.step()
+    assert not gui.sound and pads(launchkey)[(0, 0)] == (25, 9, 0)  # (sounding: dimmed)
+    assert pads(launchkey)[(0, 1)] == (0, 10, 2)  # (muted by itself: as dim as ever)
+
+
 def test_the_mixers_6th_column_is_a_6th_arrangements_the_guitars_outside_it():
     watch, gui, launchkey, clock = watching("play")
     extra = [{"id": f"X{k}", "name": f"Alt {k}", "kind": "lead", "playing": False, "play": True, "lights": 0,
@@ -1370,42 +1420,53 @@ def test_something_done_in_the_games_mixer_is_looked_at_again_at_once():
     assert looks  # (its rows sent back, and the Launchkey shown it, now: not a quarter of a second on)
 
 
-def test_a_tone_stepped_in_the_games_tones_shows_here_as_a_knobs_turn_does():
+def test_the_games_tones_keeps_the_tones_up_here_on_its_page_and_a_tone_stepped_there_shows():
     watch, gui, launchkey, clock = watching()
     gui.info["song"], gui.info["position"] = gui.song, 21.0
-    gui.info["game_screen"] = "RSKeylights_Tones"  # opened in the game: as it was, nothing shown
+    gui.info["tone_field"] = {"turns": 0, "field": 0}
+    gui.info["game_screen"] = "RSKeylights_Tones"  # opened in the game: the tones up here, kept, on this page
     watch.step()
-    assert watch._picture_of is None
-    gui.song["arrangements"][2]["tones"] = {"tone": 306}  # the bass's stepped there
+    assert watch._picture_of == "parts" and watch._picture_until == math.inf and gui.tone_fields == [0]
+    gui.song["arrangements"][2]["tones"] = {"tone": 306}  # the bass's stepped there: its, shown
     clock.now = 0.5
     watch.step()
-    assert watch._picture_of == "parts" and watch._part_turned == 2
-    gui.keys["tone"] = 2  # its keys'
+    assert watch._picture_of == "parts" and watch._part_turned == 2 and watch._picture_until == math.inf
+    gui.keys["tone"] = 2  # its keys': theirs a while, then the tones again
     clock.now = 1.0
     watch.step()
     assert watch._picture_of == "keys"
-    watch.field = 1  # the knobs on palm-mute tones: the lead's main tone said instead
-    watch._picture_of = None
-    gui.info["lead"] = {"tone": 297, "mute_tone": 295}
-    clock.now = 1.5
+    clock.now = 1.0 + PICTURE_SHOWN + 0.1
     watch.step()
-    assert watch._picture_of is None and note(watch)[1] == ("Lead tone:", "297 " + tone(297).name)
+    clock.now += 0.3
+    watch.step()
+    assert watch._picture_of == "parts"
+    gui.info["tone_field"] = {"turns": 1, "field": 1}  # its up arrow there: palm mutes here too
+    clock.now += 0.3
+    watch.step()
+    assert watch.field == 1 and watch._picture_of == "parts"
+    launchkey.queued = [Button(51)]  # the up arrow here: harmonics there too
+    clock.now += 0.3
+    watch.step()
+    assert watch.field == 2 and gui.tone_fields[-1] == 2
+    gui.song["arrangements"][0]["tones"] = {"pinch_tone": 300}  # the lead's harmonics stepped there: its, shown
+    clock.now += 0.3
+    watch.step()
+    assert watch._part_turned == 0 and watch._picture_of == "parts"
     kits = [program for _name, program in DRUM_SETS]
     gui.song["arrangements"].append({"id": "drums", "name": "Drums", "kind": "drums", "playing": False, "play": True,
                                      "lights": 0, "tones": {}, "drum_set": kits[0]})
-    clock.now = 2.0
+    clock.now += 0.3
     watch.step()
-    gui.song["arrangements"][3]["drum_set"] = kits[1]  # its drum kit stepped there: shown whatever the knobs are on
-    clock.now = 2.5
+    gui.song["arrangements"][3]["drum_set"] = kits[1]  # its drum kit stepped there: shown whatever the page
+    clock.now += 0.3
     watch.step()
     assert watch._picture_of == "parts" and watch._part_turned == 3
-    gui.song["arrangements"].pop()
-    watch._picture_of, watch._part_turned = None, 2
-    gui.info["game_screen"] = "RSKeylights"  # closed there: a change isn't its
+    gui.info["game_screen"] = "RSKeylights"  # closed there: the tones gone with it, and a change isn't its
     gui.song["arrangements"][2]["tones"] = {"tone": 307}
-    clock.now = 3.0
+    watch._part_turned = 2
+    clock.now += 0.3
     watch.step()
-    assert watch._part_turned == 2 and watch._picture_of is None
+    assert watch._picture_of is None and watch._part_turned == 2
 
 
 def test_pad_1_sets_the_loops_start_then_its_end_then_none():

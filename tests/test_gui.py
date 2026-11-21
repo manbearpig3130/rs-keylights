@@ -1225,15 +1225,31 @@ def test_following_the_games_tones_page_is_sent_the_tones_and_steps_them(server,
     keys = gui.keys_info()
     first = gui.remote_info()["song"]["arrangements"][0]
     played = gui._part_tone(first)
-    assert game.ktone_rows[0] == ("a0", str(first["name"]).upper(), f"{played:03d} {tone(played).name}")
-    assert game.ktone_rows[-1] == ("keys", "LAUNCHKEY KEYS", keys["name"])
+    row = game.ktone_rows[0]  # (its tone on the knobs' page: number, group, name; its kind, following, column, page)
+    assert row[:2] == ("a0", str(first["name"]).upper()) and row[2].startswith(f"{played:03d}|")
+    assert row[2].endswith(f"|{tone(played).name}") and row[3] == first["kind"] and row[5:] == (0, 0)
+    assert game.ktone_rows[-1][:2] == ("keys", "KEYS") and game.ktone_rows[-1][2].startswith(f"{keys['tone']:03d}|")
+    assert game.ktone_rows[-1][5] == 6  # (the Launchkey keys': its 7th, as knob 7)
     game.screen, game.kmix_moved = "RSKeylights_Tones", {"a0": "tone:1", "keys": "tone:-1"}  # Right, and Left
     gui.game_mixer_step()
     stepped = TONE_ORDER[(TONE_ORDER.index(played) + 1) % len(TONE_ORDER)]
     assert gui.remote_info()["song"]["arrangements"][0]["tones"]["tone"] == stepped  # (its own now: kept)
     assert gui.keys_info()["tone"] == TONE_ORDER[TONE_ORDER.index(keys["tone"]) - 1]
     gui.remote_info()
-    assert game.ktone_rows[0][2] == f"{stepped:03d} {tone(stepped).name}"  # (and the mod's told)
+    assert game.ktone_rows[0][2].startswith(f"{stepped:03d}|")  # (and the mod's told)
+    game.kmix_moved = {"field": 1.0}  # its up arrow: palm mutes (the Launchkey's page too)
+    gui.game_mixer_step()
+    assert gui.remote_info()["tone_field"] == {"turns": 1, "field": 1} and game.ktone_rows[0][6] == 1
+    game.kmix_moved = {"a0": "tone:1"}  # (a step on that page: its palm mutes' tone, from where its knob is)
+    gui.game_mixer_step()
+    assert "mute_tone" in gui.remote_info()["song"]["arrangements"][0]["tones"]
+    assert gui.remote_info()["song"]["arrangements"][0]["tones"]["tone"] == stepped  # (its tone as it was)
+    game.kmix_moved = {"a0": "follow"}  # its pad below: its tone kept, not following the song's tone changes
+    gui.game_mixer_step()
+    assert gui.remote_info()["song"]["arrangements"][0]["tones"]["follow_tones"] is False
+    game.kmix_moved = {"a0": "follow"}  # (and following them again)
+    gui.game_mixer_step()
+    assert "follow_tones" not in gui.remote_info()["song"]["arrangements"][0]["tones"]
 
 
 def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_as_the_launchkeys(server):
@@ -1359,8 +1375,7 @@ def test_the_games_new_mixer_has_a_drum_part_to_make_as_the_launchkeys_pad_makes
 
 
 def test_the_games_tones_page_has_the_keyboards_drum_kit_and_steps_it(server):
-    from rs_keylights.gui import _drum_kit_said
-    from rs_keylights.tones import DRUM_SETS
+    from rs_keylights.tones import DRUM_SET_BANK, DRUM_SETS, TONES
     gui, game = server.gui, server.gui._riff_loop
     changed = []
     gui.change_part = lambda part, fields, *a, **k: changed.append((part, fields))
@@ -1370,7 +1385,8 @@ def test_the_games_tones_page_has_the_keyboards_drum_kit_and_steps_it(server):
         {"id": "drums", "name": "Drums", "kind": "drums", "play": True, "made": True, "drum_set": kits[-1], "volume": 90}]}
     gui._game_mixer(followed, None)
     assert [r[0] for r in game.ktone_rows] == ["a0", "drums", "keys"]
-    assert game.ktone_rows[1] == ("drums", "DRUM KIT", _drum_kit_said(kits[-1]))
+    kit = next(t for t in TONES if t.bank == DRUM_SET_BANK and t.program == kits[-1])
+    assert game.ktone_rows[1] == ("drums", "DRUMS", f"{kit.number:03d}|Drum kit|{kit.name.title()}", "drums", -1, 1, 0)
     game.kmix_moved = {"drums": "tone:1"}  # Right on it, in the game: the next kit (round to the first)
     with gui._game_mixer_lock:
         gui._game_mixer_apply()

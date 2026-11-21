@@ -51,7 +51,8 @@ from .songkey import Key, find_key, scale_show, shapes, tuning_name
 from .sound import GUITAR_TONE, KEYBOARD_CHANNELS, PINCH_TONE, SoundChoice, Squeal, Voice, Voices, squeal_from
 from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, Tone, tone
 from .warmup import Warmup
-from .watch import BUILT_IN, TONE_NUMBERS as TONE_ORDER, Watch
+from .watch import (BUILT_IN, DEFAULT as DEFAULT_TONE, FIELDS as TONE_PAGES, TONE_NUMBERS as TONE_ORDER, Watch, knob_tone,
+                    stepped_tone, tone_choices, tone_shown)
 
 # A page in the browser for what the commands do: the song library, parts and their tones, playback
 # with a time slider, following the game, and the keyboard's settings. The server answers on 127.0.0.1,
@@ -498,6 +499,8 @@ class Gui:
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
         self._game_mixer_sent: tuple[tuple[str, float, bool, str], ...] | None = None  # the MIXER's rows sent
+        self._tone_field = {"turns": 0, "field": 0}  # the knobs' tones' page (tone, palm mutes, harmonics: the
+        # Launchkey's up arrow's, and the game's TONES'), and the turns its TONES made (the Launchkey follows each)
         self._game_mixer_page = {"turns": 0, "page": None}  # the page the MIXER was turned to there last (each turn
         # counted: the Launchkey's mixer follows each)
         # last
@@ -2276,10 +2279,12 @@ class Gui:
                 chords = self._chords(followed["id"], lambda ref: ref.persistent_id)
                 changes = self._tone_changes(followed["id"], lambda ref: ref.persistent_id,
                                              lambda ref: self.follow_settings["arrangements"].get(ref.persistent_id, {}))
+                every = self._tone_changes(followed["id"], lambda ref: ref.persistent_id, lambda ref: {})
                 notes = self._notes(followed["id"], lambda ref: ref.persistent_id)
                 followed = {**followed, "lyrics": self._lyrics(followed["id"]),
                             "arrangements": self._with_drums(followed["id"], [
                                 {**a, "chords": chords.get(a["id"], ()), "tone_changes": changes.get(a["id"], ()),
+                                 "tone_changes_known": bool(every.get(a["id"])),
                                  "notes": notes.get(a["id"], ()), "output": self._output_of(a["kind"])}
                                 for a in followed["arrangements"]])}
             self._riff_sync(followed["id"] if followed else None)
@@ -2301,7 +2306,7 @@ class Gui:
                     "song": followed and {**followed, **self._beats_of(followed["id"])}, "position": None, "length": length,
                     "paused": state == "paused",
                     "state": state, "connected": connected, "game_screen": said.screen if said is not None else None,
-                    "game_mixer_page": dict(self._game_mixer_page),
+                    "game_mixer_page": dict(self._game_mixer_page), "tone_field": dict(self._tone_field),
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "music": self.game_music(), "music_muted": self.game_music_muted(),
@@ -2321,6 +2326,7 @@ class Gui:
                 chords = self._chords(sid, lambda ref: ref.part)
                 changes = self._tone_changes(sid, lambda ref: ref.part,
                                              lambda ref: self.song_settings.get(sid, {}).get("parts", {}).get(ref.part, {}))
+                every = self._tone_changes(sid, lambda ref: ref.part, lambda ref: {})
                 notes = self._notes(sid, lambda ref: ref.part)
                 song = {"id": sid, "title": details["title"], "key": details["key"], "played": None,
                         "sections": details["sections"], "lyrics": self._lyrics(sid), **self._beats_of(sid),
@@ -2328,6 +2334,7 @@ class Gui:
                             {"id": p["part"], "name": p["name"], "kind": p["kind"], "playing": False,
                              "play": p["play"], "lights": p["lights"], "tones": p["tones"],
                              "chords": chords.get(p["part"], ()), "tone_changes": changes.get(p["part"], ()),
+                             "tone_changes_known": bool(every.get(p["part"])),
                              "notes": notes.get(p["part"], ()), "output": self._output_of(p["kind"])}
                             for p in details["parts"]])}
                 position, length = details["start"], details["length"]
@@ -2542,12 +2549,38 @@ class Gui:
                 tones["drums"] = int(drummed["drum_set"])
             tones["keys"] = int(self.keys_info()["tone"])
             self._game_tones = tones
-            labels = ({f"a{i}": str(a["name"]).upper() for i, a in enumerate(arrangements)} |
-                      {"drums": "DRUM KIT", "keys": "LAUNCHKEY KEYS"})
-            tone_rows = tuple((key, labels[key], _drum_kit_said(number) if key == "drums" else
-                               f"{number:03d} {tone(number).name}") for key, number in tones.items())
+            tone_rows = self._game_tone_rows(arrangements, drummed, drum_column)
             if tone_rows != self._game_tones_sent and self._riff_loop.ktones(tone_rows) is not None:
                 self._game_tones_sent = tone_rows
+
+    def _game_tone_rows(self, arrangements: list[dict[str, Any]], drummed: dict[str, Any] | None,
+                        drum_column: int) -> tuple[tuple[Any, ...], ...]:
+        """The game's TONES, laid out as the Launchkey's knobs: each arrangement's tone for the knobs' page (tone,
+        palm mutes, harmonics: its number, "SAME" for the same tone as the rest; its group, its name), whether it
+        follows the song's tone changes (1, 0; -1: it has none), its kind and column; the drum kit, and the
+        Launchkey keys' tone (7th), whatever the page. Each: id, label, "NUMBER|GROUP|NAME", kind, follow, column,
+        the page."""
+        page = self._tone_field["field"]
+        field = TONE_PAGES[page][0]
+        rows: tuple[tuple[Any, ...], ...] = ()
+        for i, a in enumerate(arrangements):
+            number, group, name = tone_shown(a, field, self.follow_settings.get(a["kind"]) or {})
+            follow = int(a["tones"].get("follow_tones") is not False) if a.get("tone_changes_known") else -1
+            rows += ((f"a{i}", str(a["name"]).upper(), f"{'SAME' if number is None else f'{number:03d}'}|{group}|{name}",
+                      str(a.get("kind") or "lead"), follow, i, page),)
+        if drummed is not None and drummed.get("drum_set") is not None and drum_column >= 0:  # (on the keyboard)
+            kit = next((t for t in TONES if t.bank == DRUM_SET_BANK and t.program == int(drummed["drum_set"])), None)
+            said = f"{kit.number:03d}|Drum kit|{kit.name.title()}" if kit else f"---|Drum kit|Set {drummed['drum_set']}"
+            rows += (("drums", "DRUMS", said, "drums", -1, drum_column, page),)
+        keys = tone(int(self.keys_info()["tone"]))
+        rows += (("keys", "KEYS", f"{keys.number:03d}|{keys.group.title().replace('Gm ', 'GM ')}|{keys.name}", "keys",
+                  -1, 6, page),)
+        return rows
+
+    def set_tone_field(self, field: int) -> None:
+        """The knobs' tones' page (0 tone, 1 palm mutes, 2 harmonics), as the Launchkey's up arrow turned it: the
+        game's TONES shows it."""
+        self._tone_field = {**self._tone_field, "field": int(field) % len(TONE_PAGES)}
 
     def _game_stem_rows(self, parts: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
         """The game's MIXER's stem mixer page: the game's song's bass and guitar (rearmed-mods' Song Stems: the part
@@ -2592,8 +2625,19 @@ class Gui:
         for key, value in moved.items():
             part = self._game_mixer_ids.get(key)
             drum_part = getattr(self, "_game_mixer_drums", None)
+            arranged = next((a for a in getattr(self, "_game_mixer_parts", []) if a["id"] == part), None)
             if key == "page":  # (its page turned there: the Launchkey's mixer to it)
                 self._game_mixer_page = {"turns": self._game_mixer_page["turns"] + 1, "page": value}
+            elif key == "field" and isinstance(value, float):  # (TONES' up arrow: its next page, the Launchkey's too)
+                self._tone_field = {"turns": self._tone_field["turns"] + 1, "field": int(value) % len(TONE_PAGES)}
+            elif value == "follow" and arranged is not None:  # (TONES' pad below: following the song's tone changes)
+                self.change_part(part, {"follow_tones": False if arranged["tones"].get("follow_tones") is not False
+                                        else None})
+            elif isinstance(value, str) and value.startswith("tone:") and arranged is not None:  # (its tone on TONES'
+                field = TONE_PAGES[self._tone_field["field"]][0]                                # page, as its knob)
+                kind = self.follow_settings.get(arranged["kind"]) or {}
+                number = stepped_tone(knob_tone(arranged, field, kind), int(value[5:]), False, tone_choices(kind, field))
+                self.change_part(part, {field: None if number == DEFAULT_TONE else number})
             elif key in ("gbass", "gguitar"):  # (the stem mixer's: the game's song's part, as the Launchkey's
                 stem = key[1:]                        # stems page has it)
                 try:
@@ -3935,12 +3979,6 @@ def _number(value: Any, what: str, lowest: float, highest: float) -> float:
     if not lowest <= number <= highest:
         raise GuiError(f"The {what} must be {lowest:g} to {highest:g}")
     return number
-
-
-def _drum_kit_said(program: int) -> str:
-    """A keyboard drum kit, as the TONES screen shows it: its tone number and name ("Drum set" and its program)."""
-    found = next((t for t in TONES if t.bank == DRUM_SET_BANK and t.program == program), None)
-    return f"{found.number:03d} {found.name.title()}" if found else f"Drum set {program}"
 
 
 def _tone(value: Any) -> Tone | None:

@@ -189,7 +189,9 @@ MUSIC_RGB = (0, 90, 100)  # the stems page's knob 7 and its pad: the Music (the 
 GAME_STEM_WAITING = 0.25  # the other one's pad this bright (its level waits for its turn)
 AUDIO_ON, AUDIO_OFF = 21, 5  # the song's audio's pad: green playing, red off
 MUTED_LEVEL = 0.08  # and outside it: its colour, as dim as it goes
-SILENCED_LEVEL = 0.2  # in the mixer, a part (or the keys) sounding but the sound off (Mute): its colour, dimmed
+SILENCED_LEVEL = 0.2  # a part (or the keys) sounding but the sound off (Mute): its colour, dimmed
+FIXED_TONES_LEVEL = 0.15  # the tones on the screen, a pad below: its arrangement's tone kept (not following the song's
+# tone changes), its colour this dim (following: bright; without changes, off)
 LIT, DIM = (3, 127), (1, 20)  # a button's light: palette colour and brightness
 CONTROLS = 7  # the column of the right-hand pads and the last knob
 WHITE_KEYS = (0, 2, 4, 5, 7, 9, 11, 12)  # the scale view: an octave from C, white keys on the bottom pads
@@ -217,6 +219,74 @@ TONE_NUMBERS = [t.number for t in TONES]
 GROUPS = [t.number for i, t in enumerate(TONES) if i == 0 or TONES[i - 1].group != t.group]  # each one's first
 SAME, DEFAULT = 0, -1  # palm mutes and pinch harmonics: the tone the rest has (as the page keeps it: over a default), or
 # none of their own (their kind's default, when it has one); first, a group by themselves
+
+
+# An arrangement's tones, by field (tone, palm mutes, pinch harmonics), as its knob has them: the Launchkey's and the
+# game's TONES (gui) alike. kind: its kind's defaults (following's settings for lead, rhythm or bass).
+def default_tone(kind: dict[str, Any], field: str) -> int | None:
+    """A kind's default tone for a field, if it has one (pinch harmonics: GM GT HARMONICS, unless the kind's is the
+    same tone as the rest)."""
+    value = kind.get(field)
+    if field == "pinch_tone" and value is None:
+        return PINCH_TONE
+    return value or None
+
+
+def played_tone(arrangement: dict[str, Any], field: str, kind: dict[str, Any]) -> int:
+    """The tone an arrangement plays with for a field: its own, its kind's default, or the built-in one (palm mutes
+    and harmonics without one: its tone)."""
+    own = arrangement["tones"].get(field) or kind.get(field)
+    if own:
+        return int(own)
+    if field != "tone":
+        return played_tone(arrangement, "tone", kind)
+    return BUILT_IN.get(arrangement["kind"], BUILT_IN["lead"])
+
+
+def knob_tone(arrangement: dict[str, Any], field: str, kind: dict[str, Any]) -> int:
+    """Where its knob is for a field: its tone; palm mutes and pinch harmonics, SAME for the same tone as the rest,
+    else with none of their own, DEFAULT (or SAME, without one)."""
+    if field == "tone":
+        return played_tone(arrangement, field, kind)
+    own = arrangement["tones"].get(field)
+    if own is not None:
+        return int(own)
+    return DEFAULT if default_tone(kind, field) else SAME
+
+
+def tone_choices(kind: dict[str, Any], field: str) -> list[int]:
+    """What a knob has before the tones: palm mutes and pinch harmonics, the same tone as the rest, and their kind's
+    default if it has one."""
+    if field == "tone":
+        return []
+    return [SAME, DEFAULT] if default_tone(kind, field) else [SAME]
+
+
+def stepped_tone(number: int, steps: int, by_group: bool, choices: list[int] | None = None) -> int:
+    """A tone some steps on: a tone at a time, or a group at a time (each group's first); the choices (SAME, DEFAULT)
+    before them, a group by themselves."""
+    choices = choices or []
+    numbers = [*choices, *TONE_NUMBERS]
+    starts = [0] * bool(choices) + [len(choices) + TONE_NUMBERS.index(first) for first in GROUPS]
+    at = numbers.index(number) if number in numbers else len(choices)
+    if not by_group:
+        return numbers[(at + steps) % len(numbers)]
+    group = max(i for i, start in enumerate(starts) if start <= at)
+    return numbers[starts[(group + steps) % len(starts)]]
+
+
+def tone_shown(arrangement: dict[str, Any], field: str, kind: dict[str, Any],
+               number: int | None = None) -> tuple[int | None, str, str]:
+    """What its tone for a field shows: its number (None: the same tone as the rest), its group (or "Default",
+    "Same tone") and its name. number: where its knob is, if not as its settings have it."""
+    number = knob_tone(arrangement, field, kind) if number is None else number
+    default = default_tone(kind, field)
+    if number == SAME:  # (the tone the rest plays with)
+        return None, "Same tone", tone(played_tone(arrangement, "tone", kind)).name
+    if number == DEFAULT and default:  # (none of its own: its kind's)
+        return default, "Default", tone(default).name
+    found = tone(number)
+    return found.number, found.group.title().replace("Gm ", "GM "), found.name
 
 
 class GuiProtocol(Protocol):
@@ -381,6 +451,8 @@ class Watch:
         self._game_page_seen: dict[str, Any] | None = None  # the game's MIXER's last page turn, as followed here
         self._game_tones_seen: dict[str, int] | None = None  # while the game's TONES shows: each part's tone, and
         # its keys', as last seen
+        self._tone_field_seen: dict[str, Any] | None = None  # the game's TONES' last page turn, as followed here
+        self._tones_by_game = False  # the tones on the screen because the game's TONES is open (kept up till it closes)
         self._followed_at: float | None = None  # where the game was last (following: its chord stays while it pauses)
         self.lyrics_view = False  # the lyrics on the screen instead of the song (pad 6 on top, playing the song)
         self._lyrics_home = False  # Track back was the last pressed, the lyrics showing: again, the song
@@ -446,6 +518,33 @@ class Watch:
             self._refresh()
         self._beat(now)
         self._show_screen(now)
+
+    def _tones_shown(self) -> bool:
+        """The knobs' tones on the screen (a knob turned, the up arrow, or the game's TONES open), on the
+        arrangements: the pads below then whether each one's tone follows the song's tone changes."""
+        return (self.mode == "parts" and not self.mix_knobs and not self.scale_view and self._picture_of == "parts"
+                and self._clock() < self._picture_until)
+
+    def _follows_tones(self, arrangement: dict[str, Any]) -> bool | None:
+        """Whether an arrangement's tone follows its song's tone changes (taps not in the page's state yet too);
+        None: it has none to follow (or they're off, for every song)."""
+        if not arrangement.get("tone_changes_known"):
+            return None
+        pending = self._pending.get((arrangement["id"], "follow"))
+        return pending if pending is not None else arrangement["tones"].get("follow_tones") is not False
+
+    def _toggle_follow(self, arrangement: dict[str, Any], now: float) -> None:
+        """The tones on the screen, an arrangement's pad below: its tone following the song's tone changes, or kept
+        (as the page's Follow box); the screen kept up."""
+        follows = self._follows_tones(arrangement)
+        if self._picture_until != math.inf:
+            self._show_for_a_while("parts", now)
+        if follows is None:
+            self._say(now, lines=(str(arrangement["name"]), "has no tone changes"))
+        elif self._try(lambda: self.gui.change_part(arrangement["id"], {"follow_tones": None if not follows else False})):
+            self._pending[(arrangement["id"], "follow")] = not follows
+            self._say(now, lines=(str(arrangement["name"]), "follows the song's tones" if not follows else
+                                  "keeps its tone"))
 
     def _arrangements_in(self, info: dict[str, Any]) -> list[dict[str, Any]]:
         """The arrangements with a column (knob and pads): 1 to 5, the 6th column the guitar's; in the mixer, 1 to
@@ -596,12 +695,31 @@ class Watch:
             self._close_mixer()
 
     def _game_tones(self, info: dict[str, Any], now: float) -> None:
-        """Following, RS-Keylights' TONES open in the game: a tone stepped there (Left/Right) shown here as a knob's
-        turn shows it, the part's tone (or, with the knobs on another of its tones, said) or its keys'."""
-        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        """Following, RS-Keylights' TONES open in the game: the knobs' tones on the screen while it's open (kept up
+        till it closes; back once something else shown is gone), on its page (its up arrow's turns turned here too,
+        and this one's there); a tone stepped there shown as a knob's turn shows it (the keys': theirs)."""
+        arrangements = self._arrangements_in(info)
+        open_there = info.get("mode") == "follow" and info.get("game_screen") == GAME_TONES_SCREEN
+        turned = info.get("tone_field")
+        if turned != self._tone_field_seen:
+            if self._tone_field_seen is not None and turned and turned.get("turns") != self._tone_field_seen.get("turns"):
+                self.field = int(turned.get("field") or 0) % len(FIELDS)  # (its up arrow there: here too)
+                if arrangements and not open_there:
+                    self._show_for_a_while("parts", now)
+            self._tone_field_seen = turned
+        if open_there and not self._tones_by_game:  # (opened there: on this page)
+            self._tones_by_game = True
+            self._try(lambda: self.gui.set_tone_field(self.field))
+        elif not open_there and self._tones_by_game:  # (closed: the tones gone with it)
+            self._tones_by_game = False
+            if self._picture_of == "parts" and self._picture_until == math.inf:
+                self._picture_of = None
+        if open_there and arrangements and (self._picture_of is None or self._picture_of == "parts"):
+            self._picture_of, self._picture_until = "parts", math.inf  # (kept up while it's open)
         seen = None
-        if info.get("mode") == "follow" and info.get("game_screen") == GAME_TONES_SCREEN:
-            seen = {a["id"]: self._tone_of(a, "tone") for a in arrangements if a["kind"] != "drums"}
+        if open_there:
+            field = FIELDS[self.field][0]
+            seen = {a["id"]: self._knob_tone(a, field) for a in arrangements if a["kind"] != "drums"}
             seen |= {a["id"]: a["drum_set"] for a in arrangements if a["kind"] == "drums" and a.get("drum_set") is not None}
             seen["keys"] = int((info.get("keys") or {}).get("tone") or TONE_NUMBERS[0])
         was, self._game_tones_seen = self._game_tones_seen, seen
@@ -611,13 +729,9 @@ class Watch:
         if changed[-1] == "keys":
             self._show_for_a_while("keys", now)
             return
-        column = next(i for i, a in enumerate(arrangements) if a["id"] == changed[-1])
-        if FIELDS[self.field][0] == "tone" or arrangements[column]["kind"] == "drums":  # (the parts' picture: its kit)
-            self._part_turned = column
+        self._part_turned = next(i for i, a in enumerate(arrangements) if a["id"] == changed[-1])  # (the parts'
+        if self._picture_until != math.inf:                                                     # picture: its)
             self._show_for_a_while("parts", now)
-        else:  # (the parts' picture shows the tone the knobs are on: this one said instead)
-            found = tone(seen[changed[-1]])
-            self._say(now, lines=(f"{arrangements[column]['name']} tone:", f"{found.number:03d} {found.name}"))
 
     def _tone_news(self, info: dict[str, Any], now: float) -> None:
         """A tone change the song just passed (not jumped to), said: the arrangement whose chords show's."""
@@ -686,7 +800,7 @@ class Watch:
         else:
             parts = self.mode == "parts"
             arrangements = self._arrangements_in(info) if song and parts else []
-            silenced = self.mix_knobs and not info.get("sound", True)  # (Mute: those sounding dimmed, as greyed)
+            silenced = not info.get("sound", True)  # (Mute: those sounding dimmed, as the mixer greys them)
             for column in range(MIXER_ARRANGEMENTS if self.mix_knobs else ARRANGEMENT_KNOBS):
                 if column >= len(arrangements):
                     picture[(0, column)], picture[(1, column)] = ("palette", 0, False), ("rgb", 0, 0, 0)
@@ -721,6 +835,12 @@ class Watch:
                 picture[(0, KEYS_COLUMN)] = ("palette", KEYS_ON if keys.get("sound") else MUTED_PAD, False)
             else:
                 picture[(0, KEYS_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in KEYS_RGB))
+            if self._tones_shown():  # (the tones on the screen: below, whether each follows the song's tone changes)
+                for column, a in enumerate(arrangements):
+                    follows = self._follows_tones(a)
+                    _bright, rgb = COLOURS.get(a["kind"], COLOURS["lead"])
+                    level = 0.0 if follows is None else 1.0 if follows else FIXED_TONES_LEVEL
+                    picture[(1, column)] = ("rgb", *(round(c * level) for c in rgb))
             lit = (1.0 if keys.get("lights") else 0.15) if parts else 0.0
             picture[(1, KEYS_COLUMN)] = ("rgb", *(round(c * lit) for c in KEYS_RGB))
             guitar = parts and not self.mix_knobs  # (the guitar: its pedal on a favourite or not, its tone held or not;
@@ -1035,6 +1155,9 @@ class Watch:
         if column >= len(arrangements):
             return
         a = arrangements[column]
+        if isinstance(event, Pad) and event.row == 1 and self._tones_shown():  # (below: following its tone changes)
+            self._toggle_follow(a, now)
+            return
         if isinstance(event, Turn):
             self._turn_tone(column, event.steps, False, info, now)
         elif event.row == 0:
@@ -1202,6 +1325,7 @@ class Watch:
         elif number == ENCODER_BUTTONS[0] and self.mode == "parts":  # again: the next of the arrangements' tones
             # (palm-mute, low-note; the screen shows which)
             self.field = (self.field + 1) % len(FIELDS)
+            self._try(lambda: self.gui.set_tone_field(self.field))  # (the game's TONES on it too)
             if ((self._info or {}).get("song") or {}).get("arrangements"):
                 self._show_for_a_while("parts", now)
             else:
@@ -1657,14 +1781,7 @@ class Watch:
                 return (("parts", title, *shown, knobs, which, muted),
                         lambda: parts_picture(title, *shown, knobs, which, muted))
             number, title, knobs = self._knob_tone(a, field), f"{a['name']} {said}", len(arrangements_now)
-            default = self._default_of(a, field)
-            if number == SAME:  # (the tone the rest plays with)
-                shown = (None, "Same tone", tone(self._tone_of(a, "tone")).name)
-            elif number == DEFAULT and default:  # (none of its own: its kind's)
-                shown = (default, "Default", tone(default).name)
-            else:
-                found = tone(number)
-                shown = (found.number, found.group.title().replace("Gm ", "GM "), found.name)
+            shown = tone_shown(a, field, self._kind_tones(a), number)
             return (("parts", title, *shown, knobs, which, muted),
                     lambda: parts_picture(title, *shown, knobs, which, muted))
         if self._browsed_text is not None and now < self._browse_until:
@@ -2206,16 +2323,11 @@ class Watch:
         self._show_for_a_while("parts", now)
 
     def _stepped(self, number: int, steps: int, by_group: bool, choices: list[int] | None = None) -> int:
-        """A tone some steps on: a tone at a time, or a group at a time (each group's first); the choices (SAME,
-        DEFAULT) before them, a group by themselves."""
-        choices = choices or []
-        numbers = [*choices, *TONE_NUMBERS]
-        starts = [0] * bool(choices) + [len(choices) + TONE_NUMBERS.index(first) for first in GROUPS]
-        at = numbers.index(number) if number in numbers else len(choices)
-        if not by_group:
-            return numbers[(at + steps) % len(numbers)]
-        group = max(i for i, start in enumerate(starts) if start <= at)
-        return numbers[starts[(group + steps) % len(starts)]]
+        return stepped_tone(number, steps, by_group, choices)
+
+    def _kind_tones(self, arrangement: dict[str, Any]) -> dict[str, Any]:
+        """An arrangement's kind's default tones (lead, rhythm or bass: following's settings), as the page has them."""
+        return ((self._info or {}).get(arrangement["kind"]) or {})
 
     def _drum_set(self, arrangement: dict[str, Any]) -> int | None:
         """The keyboard's drum kit the drum part plays on (its program; turns not in the page's state yet too)."""
@@ -2228,32 +2340,16 @@ class Watch:
         return pending if pending is not None else (arrangement.get("output") or {}).get("program")
 
     def _choices(self, arrangement: dict[str, Any], field: str) -> list[int]:
-        """What a knob has before the tones: palm mutes and pinch harmonics, the same tone as the rest, and their
-        kind's default if it has one."""
-        if field == "tone":
-            return []
-        return [SAME, DEFAULT] if self._default_of(arrangement, field) else [SAME]
+        return tone_choices(self._kind_tones(arrangement), field)
 
     def _default_of(self, arrangement: dict[str, Any], field: str) -> int | None:
-        """An arrangement's kind's default tone for a field (lead, rhythm or bass parts), if it has one (pinch
-        harmonics: GM GT HARMONICS, unless the kind's is the same tone as the rest)."""
-        value = ((self._info or {}).get(arrangement["kind"]) or {}).get(field)
-        if field == "pinch_tone" and value is None:
-            return PINCH_TONE
-        return value or None
+        return default_tone(self._kind_tones(arrangement), field)
 
     def _knob_tone(self, arrangement: dict[str, Any], field: str) -> int:
         """Where an arrangement's knob is for a field (turns not applied yet too): its tone; palm mutes and pinch
         harmonics, SAME for the same tone as the rest, else with none of their own, DEFAULT (or SAME, without one)."""
         pending = self._pending.get((arrangement["id"], field))
-        if pending is not None:
-            return pending
-        if field == "tone":
-            return self._tone_of(arrangement, field)
-        own = arrangement["tones"].get(field)
-        if own is not None:
-            return int(own)
-        return DEFAULT if self._default_of(arrangement, field) else SAME
+        return pending if pending is not None else knob_tone(arrangement, field, self._kind_tones(arrangement))
 
     def _lights_of(self, arrangement: dict[str, Any]) -> int:
         """Its lit keys, as the pads have them (taps not applied yet too)."""
@@ -2262,13 +2358,7 @@ class Watch:
 
     def _tone_of(self, arrangement: dict[str, Any], field: str) -> int:
         """The tone an arrangement plays with: its own, its kind's default, or the built-in one."""
-        defaults = self._info[arrangement["kind"]] if self._info else {}
-        own = arrangement["tones"].get(field) or defaults.get(field)
-        if own:
-            return own
-        if field != "tone":  # no palm-mute tone yet: start from the tone it plays with
-            return self._tone_of(arrangement, "tone")
-        return BUILT_IN.get(arrangement["kind"], BUILT_IN["lead"])
+        return played_tone(arrangement, field, self._kind_tones(arrangement))
 
 
 def _time(seconds: float) -> str:
