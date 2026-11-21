@@ -1200,7 +1200,7 @@ def test_following_the_games_tone_mixer_is_sent_the_volumes_and_sets_them(server
     sent = len(game.sent)
     gui.remote_info()
     assert not [s for s in game.sent[sent:] if s[0] == "kmix"]  # (unchanged: not sent again)
-    game.screen, game.kmix_moved = "RSKeylights_Mixer", {"keys": 50.0}  # its TONE MIXER open, a slider moved there
+    game.screen, game.kmix_moved = "RSKeylights_Mixer", {"keys": 50.0}  # its MIXER open, a fader moved there
     gui._game_time = (-math.inf, None)
     info = gui.remote_info()
     assert gui.settings["keys_volume"] == 64 and info["game_screen"] == "RSKeylights_Mixer"

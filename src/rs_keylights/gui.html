@@ -4199,7 +4199,7 @@ $("keysChannel").addEventListener("change", keysOutputChange);
 $("keysVolume").addEventListener("input", () => { $("keysVolumeShown").textContent = `${$("keysVolume").value}%`; });
 $("keysVolume").addEventListener("change", () => changeKeys({volume: volumeOf(Number($("keysVolume").value))}));
 
-// A volume (MIDI's 0 to 127) as the page shows it, and the Launchkey and the game's TONE MIXER: percent; and back
+// A volume (MIDI's 0 to 127) as the page shows it, and the Launchkey and the game's MIXER: percent; and back
 function percentOf(volume) { return Math.round(volume * 100 / 127); }
 function volumeOf(percent) { return Math.min(Math.max(Math.round(percent * 127 / 100), 0), 127); }
 

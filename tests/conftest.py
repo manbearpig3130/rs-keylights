@@ -82,7 +82,7 @@ class FakeRiffLoop:
         self.music_level = 80.0  # (the game's Music volume; None: a mod without it)
         self.game_time = None  # (the game's own song time and screen, as its time command says; None: no answer)
         self.note_counts = None  # (the player's note counts, as its notes command says; None: no answer)
-        self.kmix_rows, self.kmix_moved = None, {}  # (its TONE MIXER's rows, as sent; its sliders moved in the game)
+        self.kmix_rows, self.kmix_moved = None, {}  # (its MIXER's rows, as sent; what was done there in the game)
         self.ktone_rows = None  # (its TONES' rows, as sent)
 
     def loop(self, a, b):

@@ -107,9 +107,9 @@ SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.01  # knob 4 a section at a time 
 # or on, a phrase back or on (its PageDown and PageUp); at most GAME_STEPS a turn, and none while GAME_BEHIND keys
 # are still to be typed (turned fast, the game doesn't fall behind)
 GAME_SMALL_STEPS, GAME_PHRASES, GAME_STEPS, GAME_BEHIND = ("left", "right"), ("pagedown", "pageup"), 8, 4
-GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game: the mixer up here too
+GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game: the mixer up here too
 GAME_TONES_SCREEN = "RSKeylights_Tones"  # its TONES: a tone stepped there shown here as a knob's turn shows it
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Mixer2", GAME_TONES_SCREEN)  # (the new mixer, and TONES):
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_TONES_SCREEN)  # (and TONES):
 # what's done there, done here at once
 GAME_KEY_TIME = 2 / 60  # seconds the game takes to type a key (pressed a frame, let go the next)
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
@@ -132,7 +132,7 @@ SECTION_COLOURS = {"intro": (100, 100, 100), "outro": (100, 100, 100), "verse": 
 OTHER_SECTION, SECTION_DIM = (70, 70, 110), 0.12  # (the others: grey-blue), and the kinds it's not in
 LOOP_SET, LOOP_UNSET, LOOP_ON, LOOP_OFF, LOOPED, NOT_LOOPED = 9, 11, 21, 23, 37, 39  # the loop's pads: palette colours
 VOLUME_STEP = 1  # the mixer's knobs: a step, in percent (a volume, 0 to 127, shown as 0 to 100%, as the game's
-# TONE MIXER has it)
+# MIXER has it)
 FIELDS = (("tone", "tone"), ("mute_tone", "palm mutes"), ("pinch_tone", "harmonics"))  # the tones knobs 1 to 6
 # step through, the up arrow (again) going from one to the next
 STRIP_MIDDLE = 8192  # the pitch strip springs back here when let go (and a slide can pass through it)
@@ -372,7 +372,7 @@ class Watch:
         self._note_until = 0.0  # until then
         self._loop_turned = "a"  # the loop's end last turned (knob 1 or 2)
         self._game_busy_until = -math.inf  # following: until when the game's typing the keys sent it
-        self._mixer_by_game = False  # the mixer up because the game's TONE MIXER is (closed with it)
+        self._mixer_by_game = False  # the mixer up because the game's MIXER is (closed with it)
         self._game_tones_seen: dict[str, int] | None = None  # while the game's TONES shows: each part's tone, and
         # its keys', as last seen
         self._followed_at: float | None = None  # where the game was last (following: its chord stays while it pauses)
@@ -433,8 +433,8 @@ class Watch:
             self._next_info, used = 0.0, True
         if used:  # the page shows it as it happens
             self.gui.remote_dialling({"speed": self._speed_to, "position": self._moving_to})
-        if (self._info or {}).get("game_screen") in GAME_MIXER_SCREENS:  # (each time round, not each refresh)
-            self.gui.game_mixer_step()
+        if (self._info or {}).get("game_screen") in GAME_MIXER_SCREENS and self.gui.game_mixer_step():  # (each
+            self._next_info = 0.0  # time round, not each refresh; something done there: shown here and sent back now)
         if now >= self._next_info:
             self._next_info = now + INFO_EVERY
             self._refresh()
@@ -567,9 +567,9 @@ class Watch:
         self._draw()
 
     def _game_mixer(self, info: dict[str, Any], now: float) -> None:
-        """Following, RS-Keylights' TONE MIXER open in the game (the riffloop mod's, from its pause menu): the mixer
+        """Following, RS-Keylights' MIXER open in the game (the riffloop mod's, from its pause menu): the mixer
         up here too, on the arrangements' volumes, until it closes there."""
-        on = info.get("mode") == "follow" and info.get("game_screen") in (GAME_MIXER_SCREEN, "RSKeylights_Mixer2")
+        on = info.get("mode") == "follow" and info.get("game_screen") == GAME_MIXER_SCREEN
         if on and not self._mixer_by_game:
             self._mixer_by_game = True
             self._mix_page_to("parts", info, now)
@@ -1561,7 +1561,7 @@ class Watch:
             game = [] if music is None else [music]
             names = [a["name"] for a in arrangements_now] + ["Music"] * len(game) + ["Keys"]
             volumes = ([_shown(self._volume_of(slot, info)) for slot in range(len(arrangements_now))] + game +
-                       [_shown(self._keys_volume(info))])  # (percent, as the game's music and TONE MIXER have them)
+                       [_shown(self._keys_volume(info))])  # (percent, as the game's music and MIXER have them)
             keys = info.get("keys") or {}
             quiet = [not a["play"] for a in arrangements_now] + [False] * len(game) + [not keys.get("sound", True)]
             lights = [min(self._lights_of(a), 1)
@@ -2226,7 +2226,7 @@ def _sign(info: dict[str, Any]) -> str | None:
 
 
 def _shown(volume: int) -> int:
-    """A volume (0 to 127) as the mixer shows it, and the game's TONE MIXER: percent."""
+    """A volume (0 to 127) as the mixer shows it, and the game's MIXER: percent."""
     return round(volume * 100 / 127)
 
 

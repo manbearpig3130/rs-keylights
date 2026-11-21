@@ -68,9 +68,9 @@ PART_FIELDS = (*TONE_FIELDS, "follow_tones")  # and whether its tone follows the
 SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over a default for them)
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
-GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game (from Learn a Song's pause menu)
-GAME_MIXER2_SCREEN = "RSKeylights_Mixer2"  # its new mixer (the Launchkey's mixer page, our own movie)
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_MIXER2_SCREEN, "RSKeylights_Tones")  # (and TONES: each part's tone)
+GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game (from Learn a Song's pause menu: the
+# Launchkey's mixer page, its own movie)
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Tones")  # (and TONES: each part's tone)
 GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
@@ -496,7 +496,7 @@ class Gui:
         self._recorder.start()
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
-        self._game_mixer_sent: tuple[tuple[str, float, bool, str], ...] | None = None  # the TONE MIXER's rows sent
+        self._game_mixer_sent: tuple[tuple[str, float, bool, str], ...] | None = None  # the MIXER's rows sent
         # last
         self._game_mixer_ids: dict[str, str] = {}  # its rows' parts (an arrangement's ID, "drums"), by row
         self._game_tones_sent: tuple[tuple[str, str, str], ...] | None = None  # its TONES' rows sent last
@@ -2483,7 +2483,7 @@ class Gui:
         return None
 
     def _game_mixer(self, followed: dict[str, Any] | None, said: GameLoop | None) -> None:
-        """Following, RS-Keylights' TONE MIXER and TONES in the game (the riffloop mod's menus, from Learn a Song's
+        """Following, RS-Keylights' MIXER and TONES in the game (the riffloop mod's menus, from Learn a Song's
         pause menu): while one shows, what's done there done here first (a slider moved, a row's mute turned over:
         Return on it, a tone stepped: Left/Right; the Launchkey's mixer and the page follow); then their rows sent as
         they change here (the song's arrangements, by their place, its drums, and the Launchkey keys')."""
@@ -2544,14 +2544,14 @@ class Gui:
         own = (arrangement.get("tones") or {}).get("tone") or (self.follow_settings.get(arrangement["kind"]) or {}).get("tone")
         return int(own) if own else BUILT_IN.get(arrangement["kind"], BUILT_IN["lead"])
 
-    def game_mixer_step(self) -> None:
-        """While the game's TONE MIXER or TONES shows (the Launchkey's loop asks each time round): what's done there
-        done here at once."""
+    def game_mixer_step(self) -> bool:
+        """While the game's MIXER or TONES shows (the Launchkey's loop asks each time round): what's done there
+        done here at once. Whether anything was (the rows to be sent again, as they are now: at once)."""
         with self._game_mixer_lock:
-            self._game_mixer_apply()
+            return self._game_mixer_apply()
 
     def _game_mixer_apply(self) -> bool:
-        """(Holding _game_mixer_lock.) What was done in the game's TONE MIXER or TONES since last asked, done
+        """(Holding _game_mixer_lock.) What was done in the game's MIXER or TONES since last asked, done
         here: a slider moved, a mute turned over (from the mute sent last: the mod shows it turned at once), a tone
         stepped (from the one sent last). Whether anything was."""
         moved = self._riff_loop.kmixed() or {}

@@ -450,7 +450,7 @@ Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens two screens:
 
 | Screen | Does |
 |---|---|
-| TONE MIXER | a slider for each arrangement, the drum part and the Launchkey keys, 0 to 100%. ← → move the highlighted one 5%, Return mutes or unmutes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it |
+| MIXER | the Launchkey's mixer page: a column for each arrangement (up to 5), the drum part, the game's Music, the Launchkey keys and all of them, each with a fader and two pads (mute; lit keys, or the drums' beat lights). ← → pick a column, ↑ ↓ move its fader 5%, Return and Space press its pads, and the mouse drags and clicks. A drum part not made yet has its fader greyed: its pad makes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it |
 | TONES | each arrangement's tone, the drum kit (on the keyboard) and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
 
 ### Everything else

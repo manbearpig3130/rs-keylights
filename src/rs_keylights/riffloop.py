@@ -177,7 +177,7 @@ class RiffLoop:
         return self._send("ktones " + ";".join(f"{i},{text(label)},{text(value)}" for i, label, value in rows))
 
     def kmixed(self) -> dict[str, float | str] | None:
-        """What was done in the TONE MIXER or TONES since it was last asked: {id: percent} for a slider moved,
+        """What was done in the MIXER or TONES since it was last asked: {id: percent} for a slider moved,
         {id: "mute"} for Return on a slider (its mute to turn over), {id: "tone:N"} for Left/Right on a
         TONES row (its tone N steps on, the presses added up); None: no answer."""
         words = (self._ask("kmixed") or "").split()

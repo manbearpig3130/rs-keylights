@@ -119,8 +119,9 @@ class FakeGui:
         self.kept = [*getattr(self, "kept", []), slot]
         return "dist: automatic" if back else f"dist: {slot:03d} kept"
 
-    def game_mixer_step(self):  # (the game's TONE MIXER or PARTS showing: asked each time round)
+    def game_mixer_step(self):  # (the game's MIXER or TONES showing: asked each time round)
         self.mixer_steps = getattr(self, "mixer_steps", 0) + 1
+        return False
 
     def set_loop(self, body):  # (on beats every half second)
         self.loop_calls.append(dict(body))
@@ -1289,6 +1290,22 @@ def test_the_games_tone_mixer_brings_up_the_mixer_until_it_closes():
     clock.now = 5.5
     watch.step()
     assert not watch.mix_knobs
+
+
+def test_something_done_in_the_games_mixer_is_looked_at_again_at_once():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.info["position"] = gui.song, 21.0
+    gui.info["game_screen"] = "RSKeylights_Mixer"
+    watch.step()
+    looks, real = [], gui.remote_info
+    gui.remote_info = lambda: looks.append(1) or real()
+    clock.now = 0.05  # (before the next look's time)
+    watch.step()
+    assert not looks
+    gui.game_mixer_step = lambda: True  # a pad pressed there
+    clock.now = 0.1
+    watch.step()
+    assert looks  # (its rows sent back, and the Launchkey shown it, now: not a quarter of a second on)
 
 
 def test_a_tone_stepped_in_the_games_tones_shows_here_as_a_knobs_turn_does():
