@@ -226,7 +226,12 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
     player's, as controls."""
     out: list[Light] = []
     extras: list[Light] = []
+    slid_into = {i + 1 for i, light in enumerate(lights[:-1]) if light.slide and lights[i + 1].mask & CHILD and
+                 lights[i + 1].pitches == tuple(p + light.slide for p in light.pitches)}  # (a slide's own end: legato,
+    # as a finger sliding into it, not picked again; a fret's slide has no step between, just that)
     for i, light in enumerate(lights):
+        if i in slid_into:
+            light = replace(light, mask=light.mask | HAMMER_ON)
         ends = light.rings or (light.off,) * len(light.pitches)
         end = max(ends, default=light.off)
         held = min(end, light.off)  # (the sustain's end: where a slide gets to, and a slide off ends)

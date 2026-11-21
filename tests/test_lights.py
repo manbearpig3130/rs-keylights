@@ -60,6 +60,18 @@ def test_a_linked_notes_slide_off_slide_and_bend_are_the_held_notes():
     assert [e.pitches for e in glide] == [(61,), (62,)] and glide[0].on > 1.5  # (from the linked note's start)
 
 
+def test_the_note_a_slide_goes_into_is_slid_into_legato_not_picked_again():
+    # Opeth's Reverie/Harlequin Forest, rhythm at 233 s: a double stop slid 2 frets up into its linked note
+    slid = schedule([Note(233.431, 0.075, (41, 53), slide=2), Note(233.506, 0.3, (43, 55), CHILD)], shift=0)
+    lights, extras = techniques(slid)
+    assert lights[1].pitches == (43, 55) and lights[1].mask & HAMMER_ON  # (its end: legato)
+    assert [e.pitches for e in extras] == [(42, 54)] and extras[0].mask & HAMMER_ON  # (the fret between)
+    fret = techniques(schedule([Note(1.0, 0.1, (60,), slide=1), Note(1.1, 0.3, (61,), CHILD)], shift=0))[0]
+    assert fret[1].mask & HAMMER_ON and not fret[0].mask & HAMMER_ON  # (a fret's slide: picked, then slid)
+    apart = techniques(schedule([Note(1.0, 0.1, (60,), slide=1), Note(1.5, 0.3, (61,))], shift=0))[0]
+    assert not apart[1].mask & HAMMER_ON  # (a note of its own after a slide: picked)
+
+
 def test_a_songs_last_notes_slide_off_is_at_its_charted_end_not_after_it_has_rung():
     # Opeth's Ghost of Perdition, rhythm, its last note: held, linked, slid off 9 down; nothing after it, so it would
     # ring 4 s, and its slide off came then (past the song's end)
