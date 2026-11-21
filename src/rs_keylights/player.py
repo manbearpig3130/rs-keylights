@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import time
 from bisect import bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol, Sequence
 
 from .lights import MIN_PERIOD, KeyLight, Light, merge_keys
@@ -16,6 +16,7 @@ KEY = -1  # the track index of a key's light in the actions
 BEND_STEP = 0.02  # seconds between a bend's pitch bends, as it moves
 BEND_MOVE = 0.15  # seconds a bend takes, at most, to reach each of its points
 VIBRATO_DEPTH = 64  # Modulation, for a note's vibrato
+TOGETHER = 0.03  # seconds: notes struck this close to a bent one are struck with it (they bend with it, as charted)
 # A pinch harmonic's squeal on its note's own channel (none of its own: no pitch of its own, as squeal_bends gives
 # it): Modulation, growing in
 SQUEAL_VIBRATO, SQUEAL_VIBRATO_AFTER, SQUEAL_VIBRATO_GROWS = 90, 0.15, 0.45
@@ -142,7 +143,7 @@ class Player:
             if was_ti == ti:
                 return made
             return (*made[:4], [(a[0], a[1], ti, a[3], a[4]) for a in made[4]])  # type: ignore[return-value]
-        sounds = sorted([*t.lights, *t.extras], key=lambda light: light.on)
+        sounds = self._bends_apart(t, sorted([*t.lights, *t.extras], key=lambda light: light.on))
         ons = [light.on for light in sounds]
         longest = max((self._sound_end(t, light) - light.on for light in sounds), default=0.0)
         controls = self._controls_of(t, sounds)
@@ -161,6 +162,35 @@ class Player:
                 self._cache.clear()
             self._cache[id(t)] = (t, (ti, made))
         return made
+
+    def _bends_apart(self, track: Track, sounds: list[Light]) -> list[Light]:
+        """A pitch bend bends its whole channel: a part's other notes on it, still ringing, would bend with a bent
+        note, and one struck while it's held would sound out of tune till it stopped. So, on each channel, a bent note
+        stops as the next note is struck there (its bend let go with it), and those still ringing there stop as it
+        starts to bend (struck with it, TOGETHER: they bend with it, as a bent chord's strings)."""
+        voices = track.voices
+        if voices is None or not voices.techniques or not any(light.bends for light in sounds):
+            return sounds
+        channels = [voices.pick(light)[0] for light in sounds]
+        cuts = [math.inf] * len(sounds)
+        for i, light in enumerate(sounds):
+            moves = [(at, up) for at, up in light.bends if up]
+            if not moves:
+                continue
+            earlier = [at for at, _up in light.bends if at < moves[0][0]]  # (where it moves from: its start, or a
+            bending = max(earlier[-1] if earlier else light.on, moves[0][0] - BEND_MOVE)  # point at none before)
+            end = self._sound_end(track, light)
+            struck = next((other.on for j, other in enumerate(sounds) if j > i and channels[j] == channels[i] and
+                           not other.extra and light.on + TOGETHER < other.on < end), None)
+            if struck is not None:
+                cuts[i] = min(cuts[i], struck)
+            for j in range(i):
+                if channels[j] == channels[i] and sounds[j].on < min(bending, light.on) - TOGETHER + 1e-9 and \
+                        self._sound_end(track, sounds[j]) > bending:
+                    cuts[j] = min(cuts[j], bending)
+        return [light if cut == math.inf else
+                replace(light, off=min(light.off, cut), rings=tuple(min(end, cut) for end in self._ends(track, light)))
+                for light, cut in zip(sounds, cuts)]
 
     def retime(self, rate: float | None = None, lead: float | None = None, min_period: float | None = None) -> None:
         """Another playback speed, lead or fastest flash: the keys' timeline is made again, going on from
@@ -356,7 +386,8 @@ class Player:
         prepare = getattr(voices, "prepare", None)  # (a drum's sound chosen on its device first)
         if prepare is not None:
             prepare(sound, light)
-        for note in set(sounding.values()):
+        already = set(self._sounding[(ti, i)][1].values()) if (ti, i) in self._sounding else set()  # (strummed:
+        for note in set(sounding.values()) - already:  # a unison's second string, its note held once, as _end lets it go)
             self._held[(id(sound), channel, note)] = self._held.get((id(sound), channel, note), 0) + 1
         sound.play(channel, tuple(sorted(set(sounding.values()))), velocity)
         if (ti, i) in self._sounding:  # (strummed: its other pitches sounding already)

@@ -265,6 +265,35 @@ def test_a_part_can_sound_on_another_device_its_lights_on_the_keyboard():
     assert keys.events[-1] == ("all off",) and synth.events[-1] == ("all off",)
 
 
+def test_a_bent_note_stops_as_the_next_on_its_channel_sounds_and_those_ringing_stop_as_it_bends():
+    keys = FakeKeys()  # (a pitch bend bends its whole channel)
+    ringing = Light(0.5, 0.6, (55,), (55,), rings=(3.0,))  # (struck before it, ringing on)
+    bent = Light(1.0, 1.1, (60,), (60,), rings=(2.0,), bends=((1.5, 2.0),))
+    together = Light(1.0, 1.1, (65,), (65,), rings=(2.0,))  # (struck with it: bent with it, as charted)
+    after = Light(1.7, 1.8, (62,), (62,), rings=(2.5,))  # (struck while it'd still be bent)
+    player = Player([Track([ringing, bent, together, after], FakeVoices())], keys)
+    for position in (0.4, 0.55, 1.0, 1.3, 1.4, 1.6, 1.75, 2.6):
+        player.advance(position)
+    events = [e for e in keys.events if e[0] in ("play", "stop", "bend")]
+    first_bend = next(k for k, e in enumerate(events) if e[0] == "bend" and e[2] > 0)
+    assert events.index(("stop", 11, (55,))) < first_bend  # (stopped as it starts to bend, not bent with it)
+    struck = events.index(("play", 11, (62,), 100))
+    assert events[struck - 2:struck] == [("stop", 11, (60,)), ("bend", 11, 0.0)]  # (stopped, let go, then struck)
+    assert ("stop", 11, (65,)) in events[struck:]  # (the one struck with it rings on: bent with it till then)
+
+
+def test_a_strummed_unison_lets_its_note_go_once_its_strings_are_done():
+    keys = FakeKeys()  # (the same note on two strings: held once, else it would never stop again)
+    unison = Light(1.0, 1.1, (65, 65), (65, 65), rings=(1.5, 1.5), strum=(0.0, 0.01))
+    later = Light(2.0, 2.1, (65,), (65,), rings=(2.5,))
+    player = Player([Track([unison, later], FakeVoices(), lit=False)], keys)
+    for position in (0.9, 1.0, 1.02, 1.6, 2.0, 2.6):
+        player.advance(position)
+    assert [e for e in keys.events if e[0] in ("play", "stop")] == [
+        ("play", 11, (65,), 100), ("play", 11, (65,), 100), ("stop", 11, (65,)), ("play", 11, (65,), 100),
+        ("stop", 11, (65,))]
+
+
 def test_a_strummed_chords_strings_sound_one_after_another():
     chord = Light(1.0, 1.5, (40, 47, 52), (40, 47, 52), rings=(2.0, 2.0, 2.0), strum=(0.0, 0.01, 0.02))
 

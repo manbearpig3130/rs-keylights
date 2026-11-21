@@ -140,7 +140,7 @@ Launchkey shows.
 
 | Technique | How it sounds |
 |---|---|
-| Bends | pitch bend, following the chart's bend curve, to its full size |
+| Bends | pitch bend, following the chart's bend curve, to its full size. A pitch bend bends its whole channel, so a bent note stops as the part's next note sounds, and its notes still ringing stop as it starts to bend (those struck with it bend with it) |
 | Slides, slides off | a semitone at a time over the note (slides off fade out) |
 | Vibrato | modulation |
 | Tremolo picking | struck again every 75 ms |
