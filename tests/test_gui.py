@@ -1276,31 +1276,36 @@ def test_the_games_stem_mixer_has_its_songs_bass_and_guitar_as_song_stems_has_th
     gui, game = server.gui, server.gui._riff_loop
     call(server, "/api/follow", {})
     ini = gui.index.game_dir / "RSMods.ini"
-    ini.write_text("[Toggle Switches]\nSongStems = on\n\n[Mod Settings]\nSongStemsGuitarLevel = 0\nSongStemsBassLevel = 60\n")
+    ini.write_text("[Toggle Switches]\nSongStems = on\n\n[Mod Settings]\nSongStemsGuitarLevel = 80\nSongStemsBassLevel = 60\n")
     followed = {"arrangements": [
         {"id": "L", "name": "Lead", "kind": "lead", "play": True, "playing": True, "lights": 1, "tones": {}},
         {"id": "B", "name": "Bass", "kind": "bass", "play": True, "playing": False, "lights": 0, "tones": {}}]}
     gui._game_mixer(followed, game.status())
     rows = {r[0]: r for r in game.kmix_rows}
-    assert rows["gguitar"] == ("gguitar", 0.0, True, "GUITAR", -1, "stem:guitar", 10)  # (played: taken out, muted)
+    assert rows["gguitar"] == ("gguitar", 80.0, False, "GUITAR", -1, "stem:guitar", 10)  # (played: taken out)
     assert rows["gbass"] == ("gbass", 60.0, False, "BASS", -1, "stem:bass:wait", 9)  # (waiting its turn)
-    assert rows["smaster"][1:3] == (60.0, False) and rows["smaster"][5:] == ("all", 15)  # (MASTER: the louder, the
+    assert rows["smaster"][1:3] == (80.0, False) and rows["smaster"][5:] == ("all", 15)  # (MASTER: the louder, the
     # Music apart)
-    game.kmix_moved = {"gbass": 45.0, "gguitar": "mute"}  # its fader moved; its pad: back where it was
+    game.kmix_moved = {"gbass": 45.0, "gguitar": "mute"}  # its fader moved; its pad: muted, its level kept
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
-    assert gui.game_stems_info() == {"on": True, "guitar": 100, "bass": 45}
+    assert gui.game_stems_info() == {"on": True, "guitar": 80, "bass": 45, "muted": {"guitar": True, "bass": False}}
     gui._game_mixer(followed, game.status())
-    game.kmix_moved = {"gguitar": "mute"}  # (and muted again)
+    assert next(r for r in game.kmix_rows if r[0] == "gguitar")[1:3] == (80.0, True)  # (greyed at its level)
+    game.kmix_moved = {"gguitar": 55.0}  # (moved, muted: kept for when it's back)
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
-    assert gui.game_stems_info()["guitar"] == 0
+    gui._game_mixer(followed, game.status())
+    game.kmix_moved = {"gguitar": "mute"}  # (and back: at it)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert gui.game_stems_info() == {"on": True, "guitar": 55, "bass": 45, "muted": {"guitar": False, "bass": False}}
     game.kmix_moved = {"music": "mute"}  # its Music's pad: muted, then back where it was
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
     assert game.sent[-1] == ("music", 0)
     gui._game_mixer(followed, game.status())
-    assert next(r for r in game.kmix_rows if r[0] == "music")[1:3] == (0.0, True)
+    assert next(r for r in game.kmix_rows if r[0] == "music")[1:3] == (80.0, True)  # (greyed at its level)
     game.kmix_moved = {"music": "mute"}
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
@@ -1308,13 +1313,14 @@ def test_the_games_stem_mixer_has_its_songs_bass_and_guitar_as_song_stems_has_th
     game.kmix_moved = {"smaster": "mute"}  # MASTER's pad: both muted (the Music, the sound apart), then both back
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
-    assert gui.game_stems_info() == {"on": True, "guitar": 0, "bass": 0} and not gui.play_options["silent"]
+    assert gui.game_stems_info() == {"on": True, "guitar": 55, "bass": 45, "muted": {"guitar": True, "bass": True}}
+    assert "SongStemsGuitarLevel = 0" in ini.read_text() and not gui.play_options["silent"]
     gui._game_mixer(followed, game.status())
     assert next(r for r in game.kmix_rows if r[0] == "smaster")[2]  # (muted: all of them)
     game.kmix_moved = {"smaster": "mute"}
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
-    assert gui.game_stems_info() == {"on": True, "guitar": 100, "bass": 45}
+    assert gui.game_stems_info() == {"on": True, "guitar": 55, "bass": 45, "muted": {"guitar": False, "bass": False}}
 
 
 def test_the_games_mixer_pages_turned_there_are_said_and_the_launchkeys_go_there(server):
@@ -1399,9 +1405,11 @@ def test_following_the_games_music_volume_is_read_and_set_through_its_mod(server
         gui.set_game_music({"step": 1})
     call(server, "/api/follow", {})
     assert gui.remote_info()["music"] == 80  # (as the game has it)
-    assert call(server, "/api/game/music", {"step": -6})[1] == {"music": 74} and game.sent[-1] == ("music", 74)
+    assert call(server, "/api/game/music", {"step": -6})[1] == {"music": 74, "muted": False}
+    assert game.sent[-1] == ("music", 74)
     assert gui.remote_info()["music"] == 74
-    assert gui.set_game_music({"step": 90}) == {"music": 100} and gui.set_game_music({"level": 35}) == {"music": 35}
+    assert gui.set_game_music({"step": 90}) == {"music": 100, "muted": False}
+    assert gui.set_game_music({"level": 35}) == {"music": 35, "muted": False}
     assert call(server, "/api/game/music", {"level": 101})[0] == 400
     game.music_level = None  # (a mod without it)
     gui._game_time = (-math.inf, None)
@@ -1741,11 +1749,18 @@ def test_the_games_song_parts_are_set_in_its_mods_settings_muted_and_back_where_
     with pytest.raises(GuiError, match="Song Stems is off"):
         gui.set_game_stems({"part": "guitar", "level": 50})
     ini.write_text(ini.read_text().replace("= off", "= on"))
-    assert gui.set_game_stems({"part": "guitar", "level": 70}) == {"on": True, "guitar": 70, "bass": 100}
+    assert gui.set_game_stems({"part": "guitar", "level": 70}) == {"on": True, "guitar": 70, "bass": 100,
+                                                                   "muted": {"guitar": False, "bass": False}}
     assert gui.set_game_stems({"part": "guitar", "step": -5})["guitar"] == 65
-    assert gui.set_game_stems({"part": "guitar", "mute": True})["guitar"] == 0
-    assert gui.set_game_stems({"part": "guitar", "mute": False})["guitar"] == 65  # (back where it was)
-    assert "SongStemsGuitarLevel = 65" in ini.read_text()
+    muted = gui.set_game_stems({"part": "guitar", "mute": True})  # (its level kept here, 0 in the file)
+    assert muted["guitar"] == 65 and muted["muted"]["guitar"] and "SongStemsGuitarLevel = 0" in ini.read_text()
+    assert gui.set_game_stems({"part": "guitar", "level": 40})["muted"]["guitar"]  # (moved, muted: kept, still 0)
+    assert "SongStemsGuitarLevel = 0" in ini.read_text()
+    back = gui.set_game_stems({"part": "guitar", "mute": False})
+    assert back["guitar"] == 40 and not back["muted"]["guitar"] and "SongStemsGuitarLevel = 40" in ini.read_text()
+    gui.set_game_stems({"part": "guitar", "mute": True})
+    ini.write_text(ini.read_text().replace("SongStemsGuitarLevel = 0", "SongStemsGuitarLevel = 30"))  # (the game's
+    assert gui.game_stems_info()["guitar"] == 30 and not gui.game_stems_info()["muted"]["guitar"]   # own key: back)
     with pytest.raises(GuiError, match="guitar or bass"):
         gui.set_game_stems({"part": "drums", "level": 0})
 

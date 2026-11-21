@@ -72,8 +72,7 @@ GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game 
 # Launchkey's mixer page, its own movie)
 GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Stems", "RSKeylights_Tones")  # (its STEM MIXER: the MIXER
 # on its other page; and TONES: each part's tone)
-GAME_MUSIC_BACK = 80  # the game's Music unmuted, its level before not known: as the game starts it
-GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
+GAME_MIXER_SLIDERS = 6  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
 GAME_KEYS_AT_ONCE = 300  # the song list's keys asked for so many at a time
@@ -518,7 +517,7 @@ class Gui:
         self._riff_settings: dict[str, Any] = {"speed": 100, "accelerator": False, "passes": 1}  # (as set here)
         self._game_stems_read: tuple[Any, dict[str, Any] | None] = (None, None)  # (RSMods.ini as last read)
         self._game_stems_was: dict[str, int] = {}  # (a part muted: its level before, to go back to)
-        self._game_music_was = GAME_MUSIC_BACK  # (the game's Music muted: its level before)
+        self._game_music_kept: int | None = None  # (the game's Music muted: at 0 there, its level kept here)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -2305,7 +2304,8 @@ class Gui:
                     "game_mixer_page": dict(self._game_mixer_page),
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
-                    "music": self.game_music(), "volumes": list(self.settings["volumes"]),
+                    "music": self.game_music(), "music_muted": self.game_music_muted(),
+                    "volumes": list(self.settings["volumes"]),
                     "game_stems": self.game_stems_info(),
                     "audio": self.audio_info(followed["id"] if followed else None),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
@@ -2527,9 +2527,9 @@ class Gui:
                       bool(self.play_options["silent"]), "ALL", -1, "all", 7),)                       # loudest: knob 8's)
             stems = self._game_stem_rows(parts)
             rows += stems
-            music = said.music if said is not None and said.music is not None else None
+            music = self.game_music()
             if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 7, apart; its pad, muted)
-                rows += (("music", float(music), music == 0, "MUSIC", -1, "music", 14),)
+                rows += (("music", float(music), self.game_music_muted(), "MUSIC", -1, "music", 14),)
             on = [row for row in stems if not row[5].endswith(":off")]
             rows += (("smaster", max([row[1] for row in on] or [0.0]), bool(on) and all(row[2] for row in on),
                       "MASTER", -1, "all", 15),)  # (its 8th: its parts together, as knob 8; its pad all of them muted,
@@ -2561,7 +2561,8 @@ class Gui:
             on = bool(stems and stems.get("on"))
             level = float(stems[part]) if on and stems else 0.0
             state = "" if on and part == taken else ":wait" if on else ":off"
-            rows += ((f"g{part}", level, on and level == 0, part.upper(), -1, f"stem:{part}{state}", column),)
+            muted = on and bool(stems and stems["muted"][part])  # (its level kept: greyed, as an arrangement muted)
+            rows += ((f"g{part}", level, muted, part.upper(), -1, f"stem:{part}{state}", column),)
         return rows
 
     def _next_lights(self, part: str) -> int:
@@ -2685,8 +2686,10 @@ class Gui:
         return "playing" if said is not None and said.playing else "paused" if said is not None and said.paused else None
 
     def game_stems_info(self) -> dict[str, Any] | None:
-        """The game's song's guitar and bass (rearmed-mods' Song Stems mod, gamestems): the mod on or off ("on") and
-        each part's level (0 to 100); None without rearmed-mods (no RSMods.ini). (Read again only as it changes.)"""
+        """The game's song's guitar and bass (rearmed-mods' Song Stems mod, gamestems): the mod on or off ("on"),
+        each part's level (0 to 100; muted, the level it goes back to) and whether it's muted ("muted": at 0 in the
+        file, its level kept here; set above 0 since, by the game's own key, not muted); None without rearmed-mods
+        (no RSMods.ini). (Read again only as it changes.)"""
         path = gamestems.ini_path(self.index.game_dir)
         try:
             stat = path.stat()
@@ -2695,12 +2698,19 @@ class Gui:
         key = (stat.st_mtime_ns, stat.st_size)
         if self._game_stems_read[0] != key:
             self._game_stems_read = (key, gamestems.read(path))
-        return self._game_stems_read[1]
+        read = self._game_stems_read[1]
+        if read is None:
+            return None
+        for part in [p for p in self._game_stems_was if read.get(p, 0) > 0]:
+            del self._game_stems_was[part]
+        return {**read, **{part: self._game_stems_was[part] for part in self._game_stems_was},
+                "muted": {part: part in self._game_stems_was for part in gamestems.PARTS}}
 
     def set_game_stems(self, body: dict[str, Any]) -> dict[str, Any]:
         """The game's song's guitar or bass ("part") at a level ("level", 0 to 100), stepped up or down ("step"),
         or muted and back ("mute": true at 0, false back where it was): kept in RSMods.ini, heard within a second
-        (the Song Stems mod reading it again). The levels as they are then."""
+        (the Song Stems mod reading it again). Muted, its level is kept here, and set there as it's unmuted (as an
+        arrangement's volume is, muted). The levels as they are then."""
         part = str(body.get("part", ""))
         if part not in gamestems.PARTS:
             raise GuiError(f"No part {part!r} in the game's song (guitar or bass)")
@@ -2709,43 +2719,56 @@ class Gui:
             raise GuiError("The game's song parts need rearmed-mods (its Song Stems mod)")
         if not info["on"]:
             raise GuiError("Song Stems is off: turn it on in rearmed-mods")
-        level = info[part]
+        level, muted = info[part], info["muted"][part]
         if "level" in body:
             level = int(_number(body["level"], "level", 0, 100))
         elif "step" in body:
             level = min(max(level + int(_number(body["step"], "step", -100, 100)), 0), 100)
-        elif "mute" in body:
-            if body["mute"] and level > 0:
+        elif "mute" in body and bool(body["mute"]) != muted:
+            muted = bool(body["mute"])
+            if muted:
                 self._game_stems_was[part] = level
-                level = 0
-            elif not body["mute"] and level == 0:
-                level = self._game_stems_was.pop(part, gamestems.FULL)
-        if level != info[part]:
+            else:
+                del self._game_stems_was[part]
+        if muted:
+            self._game_stems_was[part] = level  # (its level kept, for when it's back)
+        written = 0 if muted else level
+        if written != (self._game_stems_read[1] or {}).get(part):
             try:
-                gamestems.write(gamestems.ini_path(self.index.game_dir), {part: level})
+                gamestems.write(gamestems.ini_path(self.index.game_dir), {part: written})
             except OSError as exc:
                 raise GuiError(f"Couldn't write RSMods.ini: {exc}") from exc
         return self.game_stems_info() or {}
 
     def game_music(self) -> int | None:
         """Following, the game's Music volume (its mixer's: the song, 0 to 100) as the game has it, through its
-        riffloop mod (asked at most every GAME_TIME_EVERY); None without the mod, or one that hasn't it."""
+        riffloop mod (asked at most every GAME_TIME_EVERY); muted here, the level it goes back to; None without the
+        mod, or one that hasn't it."""
         self.game_time()
         said = self._game_said
-        return round(said.music) if said is not None and said.music is not None else None
+        if said is None or said.music is None:
+            return None
+        level = round(said.music)
+        if self._game_music_kept is not None and level > 0:  # (set in the game since: not muted)
+            self._game_music_kept = None
+        return level if self._game_music_kept is None else self._game_music_kept
+
+    def game_music_muted(self) -> bool:
+        """Following, whether the game's Music is muted here (at 0 in the game, its level kept)."""
+        self.game_music()
+        return self._game_music_kept is not None
 
     def toggle_game_stems(self) -> dict[str, Any]:
-        """The game's song's bass and guitar both muted (if either sounds), or both back where they were: the stems
-        page's master mute (as the Mute pad is elsewhere). Their levels then."""
+        """The game's song's bass and guitar both muted (if either isn't), or both back: the stems page's master
+        mute (as the Mute pad is elsewhere). Their levels then (muted, kept)."""
         info = self.game_stems_info()
         if info is None:
             raise GuiError("The game's song parts need rearmed-mods (its Song Stems mod)")
         if not info["on"]:
             raise GuiError("Song Stems is off: turn it on in rearmed-mods")
-        mute = any(info[part] > 0 for part in gamestems.PARTS)
+        mute = not all(info["muted"].values())
         for part in gamestems.PARTS:
-            if (info[part] > 0) == mute:
-                info = self.set_game_stems({"part": part, "mute": mute})
+            info = self.set_game_stems({"part": part, "mute": mute})
         return info
 
     def set_game_mixer_page(self, page: str) -> None:
@@ -2756,12 +2779,14 @@ class Gui:
 
     def set_game_music(self, body: dict[str, Any]) -> dict[str, Any]:
         """Following, the game's Music volume set, through its riffloop mod: "level" (0 to 100), "step" (up or
-        down from where the game has it), or "mute" (true: at 0; false: back where it was). It's the game's own mixer
-        setting, as its mixer menu sets it. The level it's at."""
+        down from where the game has it), or "mute" (true: at 0 in the game, its level kept; false: back to it; muted,
+        a level is kept for then, as an arrangement's volume is). It's the game's own mixer setting, as its mixer menu
+        sets it. The level it's at (muted: kept), and whether it's muted."""
         with self._lock:
             session = self._session
         if not (isinstance(session, Following) and session.running):
             raise GuiError("Follow Rocksmith first: it's its music's volume")
+        muted = self.game_music_muted()
         if "level" in body:
             level = _number(body["level"], "music volume", 0, 100)
         else:
@@ -2772,21 +2797,19 @@ class Gui:
             if now is None:
                 raise GuiError("Rocksmith didn't answer" if self._game_said is None else
                                "Music volume: update the riffloop mod")
-            if "mute" in body and body["mute"]:
-                if now > 0:
-                    self._game_music_was = round(now)
-                level = 0
-            elif "mute" in body:
-                level = self._game_music_was if now == 0 else now
+            level = now
+            if "mute" in body:
+                muted = bool(body["mute"])
             else:
                 level = min(max(now + _number(body.get("step", 0), "step", -100, 100), 0), 100)
-        said = self._riff_loop.music(round(level))
+        said = self._riff_loop.music(0 if muted else round(level))
         if said is None:
             raise GuiError("Rocksmith didn't answer: needs its riffloop mod")
         if said.music is None:
             raise GuiError("Music volume: update the riffloop mod")
+        self._game_music_kept = round(level) if muted else None
         self._game_time, self._game_said = (time.monotonic(), said.time), said
-        return {"music": round(said.music)}
+        return {"music": round(level) if muted else round(said.music), "muted": muted}
 
     def remote_dialling(self, dialling: dict[str, Any]) -> None:
         """A remote was used: what it's setting and will apply when it stops (speed, position), for the page."""

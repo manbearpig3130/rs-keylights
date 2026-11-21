@@ -96,6 +96,7 @@ SECONDS_PER_STEP = 1.0  # knob 8
 PICTURE_SHOWN, PICTURE_GAP = 3.0, 0.1
 ARRANGEMENT_KNOBS = 5  # knobs (and pad columns) 1 to 5: the arrangements (one after the 5th has none: songs seldom
 # have 6)
+MIXER_ARRANGEMENTS = 6  # in the mixer, one more: knob 6 and its pads a 6th arrangement's (the guitar's outside it)
 GUITAR_COLUMN = 5  # knob 6 and the pads under it: the guitar (its pedal's presets, whether its tone's held)
 KEYS_COLUMN = 6  # knob 7 and the pads under it: its keys, a part of their own
 PEDAL_WAIT = 0.4  # seconds knob 6 rests on a preset before the pedal switches to it
@@ -188,6 +189,7 @@ MUSIC_RGB = (0, 90, 100)  # the stems page's knob 7 and its pad: the Music (the 
 GAME_STEM_WAITING = 0.25  # the other one's pad this bright (its level waits for its turn)
 AUDIO_ON, AUDIO_OFF = 21, 5  # the song's audio's pad: green playing, red off
 MUTED_LEVEL = 0.08  # and outside it: its colour, as dim as it goes
+SILENCED_LEVEL = 0.2  # in the mixer, a part (or the keys) sounding but the sound off (Mute): its colour, dimmed
 LIT, DIM = (3, 127), (1, 20)  # a button's light: palette colour and brightness
 CONTROLS = 7  # the column of the right-hand pads and the last knob
 WHITE_KEYS = (0, 2, 4, 5, 7, 9, 11, 12)  # the scale view: an octave from C, white keys on the bottom pads
@@ -445,11 +447,17 @@ class Watch:
         self._beat(now)
         self._show_screen(now)
 
+    def _arrangements_in(self, info: dict[str, Any]) -> list[dict[str, Any]]:
+        """The arrangements with a column (knob and pads): 1 to 5, the 6th column the guitar's; in the mixer, 1 to
+        6 (songs seldom have more than 5)."""
+        return ((info.get("song") or {}).get("arrangements") or [])[:MIXER_ARRANGEMENTS if self.mix_knobs
+                                                                   else ARRANGEMENT_KNOBS]
+
     def _beat_spot(self, info: dict[str, Any]) -> tuple[int, int] | None:
         """Where the beat lights are: the drums' pad below (the arrangements' pads showing, not the mixer's)."""
         if self.mode != "parts" or self.scale_view:
             return None
-        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        arrangements = self._arrangements_in(info)
         column = next((i for i, a in enumerate(arrangements) if a["kind"] == "drums"), None)
         return None if column is None else (1, column)
 
@@ -677,8 +685,9 @@ class Watch:
             self._stem_pads(picture, info)
         else:
             parts = self.mode == "parts"
-            arrangements = song["arrangements"][:ARRANGEMENT_KNOBS] if song and parts else []
-            for column in range(ARRANGEMENT_KNOBS):
+            arrangements = self._arrangements_in(info) if song and parts else []
+            silenced = self.mix_knobs and not info.get("sound", True)  # (Mute: those sounding dimmed, as greyed)
+            for column in range(MIXER_ARRANGEMENTS if self.mix_knobs else ARRANGEMENT_KNOBS):
                 if column >= len(arrangements):
                     picture[(0, column)], picture[(1, column)] = ("palette", 0, False), ("rgb", 0, 0, 0)
                     continue
@@ -690,7 +699,9 @@ class Watch:
                         ("rgb", *(round(c * DRUMS_TO_MAKE) for c in rgb))
                     picture[(1, column)] = self._beat_look(info)
                     continue
-                if a["play"]:
+                if a["play"] and silenced:
+                    picture[(0, column)] = ("rgb", *(round(c * SILENCED_LEVEL) for c in rgb))
+                elif a["play"]:
                     picture[(0, column)] = ("palette", bright, a["playing"] and not self.mix_knobs)
                 elif self.mix_knobs:
                     picture[(0, column)] = ("palette", MUTED_PAD, False)
@@ -704,22 +715,27 @@ class Watch:
             keys = info.get("keys") or {}
             if not parts:
                 picture[(0, KEYS_COLUMN)] = ("palette", 0, False)
+            elif keys.get("sound") and silenced:
+                picture[(0, KEYS_COLUMN)] = ("rgb", *(round(c * SILENCED_LEVEL) for c in KEYS_RGB))
             elif keys.get("sound") or self.mix_knobs:
                 picture[(0, KEYS_COLUMN)] = ("palette", KEYS_ON if keys.get("sound") else MUTED_PAD, False)
             else:
                 picture[(0, KEYS_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in KEYS_RGB))
             lit = (1.0 if keys.get("lights") else 0.15) if parts else 0.0
             picture[(1, KEYS_COLUMN)] = ("rgb", *(round(c * lit) for c in KEYS_RGB))
-            guitar = parts and not self.mix_knobs  # (the guitar: its pedal on a favourite or not, its tone held or not)
-            pedal = info.get("pedal") or {}
-            if not guitar:
+            guitar = parts and not self.mix_knobs  # (the guitar: its pedal on a favourite or not, its tone held or not;
+            pedal = info.get("pedal") or {}         # in the mixer, the 6th arrangement's, above)
+            if self.mix_knobs:
+                pass
+            elif not guitar:
                 picture[(0, GUITAR_COLUMN)] = ("palette", 0, False)
             elif pedal.get("slot") in (pedal.get("favourites") or ()):
                 picture[(0, GUITAR_COLUMN)] = ("palette", GUITAR_ON, False)
             else:
                 picture[(0, GUITAR_COLUMN)] = ("rgb", *(round(c * MUTED_LEVEL) for c in GUITAR_RGB))
             follows = (0.15 if pedal.get("hold") else 1.0) if guitar else 0.0  # (bright: it follows the song's tones)
-            picture[(1, GUITAR_COLUMN)] = ("rgb", *(round(c * follows) for c in GUITAR_RGB))
+            if not self.mix_knobs:
+                picture[(1, GUITAR_COLUMN)] = ("rgb", *(round(c * follows) for c in GUITAR_RGB))
             if not parts:
                 self._playback_pads(picture, info)
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if info.get("sound") else SOUND_OFF, False)
@@ -848,9 +864,22 @@ class Watch:
         return "bass" if playing is not None and playing.get("kind") == "bass" else "guitar"
 
     def _game_level(self, part: str, info: dict[str, Any]) -> int:
-        """A part's level in the game's song (turns not in the page's state yet too)."""
+        """A part's level in the game's song (muted, the level kept for it; turns not in the page's state yet too)."""
         pending = self._pending.get(("game", part))
         return pending if pending is not None else int((self._game_stems(info) or {}).get(part, 100))
+
+    def _game_muted(self, part: str, info: dict[str, Any]) -> bool:
+        """Whether a part of the game's song is muted (its level kept: greyed, dimmed; presses not in the page's state
+        yet too)."""
+        pending = self._pending.get(("game muted", part))
+        return pending if pending is not None else bool(((self._game_stems(info) or {}).get("muted") or {}).get(part))
+
+    def _game_stems_set(self, stems: dict[str, Any]) -> None:
+        """The game's song's parts as the page has just set them, kept till its state has them."""
+        for stem in GAME_STEMS:
+            if stem in stems:
+                self._pending[("game", stem)] = int(stems[stem])
+                self._pending[("game muted", stem)] = bool((stems.get("muted") or {}).get(stem))
 
     def _stem_pads(self, picture: dict[Any, Any], info: dict[str, Any]) -> None:
         """The mixer's stems page: on top a pad a part (its colour; muted, red; the song not split, dim: a tap
@@ -864,15 +893,16 @@ class Watch:
         if info.get("mode") == "follow":  # (the game's song: its bass and guitar, the one taken out now bright;
             playing = self._game_part(info)  # without Song Stems, none)
             for column, (stem, _label, rgb) in enumerate(STEMS):
-                if stem in GAME_STEMS and self._game_stems(info) is not None:
-                    level = 1.0 if stem == playing else GAME_STEM_WAITING
-                    picture[(0, column)] = (("palette", MUTED_PAD, False) if self._game_level(stem, info) == 0 else
-                                            ("rgb", *(round(c * level) for c in rgb)))
+                if stem in GAME_STEMS and self._game_stems(info) is not None:  # (muted: dimmed, its level kept)
+                    level = (MUTED_LEVEL if self._game_muted(stem, info) else 1.0 if stem == playing
+                             else GAME_STEM_WAITING)
+                    picture[(0, column)] = ("rgb", *(round(c * level) for c in rgb))
             music = self._music_of(info)  # (its Music, knob 7's: muted, red)
             if music is not None:
-                picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if music == 0 else ("rgb", *MUSIC_RGB)
-            if self._game_stems(info) is not None:  # (the page's master mute: its parts, green sounding, red all off)
-                sounding = any(self._game_level(stem, info) > 0 for stem in GAME_STEMS)
+                picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if info.get("music_muted") else \
+                    ("rgb", *MUSIC_RGB)
+            if self._game_stems(info) is not None:  # (the page's master mute: its parts, green sounding, red all muted)
+                sounding = not all(self._game_muted(stem, info) for stem in GAME_STEMS)
                 picture[(0, CONTROLS)] = ("palette", SOUND_ON if sounding else SOUND_OFF, False)
             picture[(1, CONTROLS)] = ("palette", FOLLOWING, True)
             return
@@ -881,8 +911,8 @@ class Watch:
                 picture[(0, column)] = ("palette", STEM_PULSE, True)
             elif not audio.get("made"):
                 picture[(0, column)] = ("rgb", *(round(c * STEMS_TO_SPLIT) for c in rgb))
-            elif mutes.get(stem):
-                picture[(0, column)] = ("palette", MUTED_PAD, False)
+            elif mutes.get(stem):  # (dimmed, its volume kept)
+                picture[(0, column)] = ("rgb", *(round(c * MUTED_LEVEL) for c in rgb))
             else:
                 picture[(0, column)] = ("rgb", *rgb)
         picture[(0, KEYS_COLUMN)] = ("rgb", *MUSIC_RGB) if audio.get("on") else ("palette", MUTED_PAD, False)  # (its
@@ -998,10 +1028,10 @@ class Watch:
         if column == KEYS_COLUMN:
             self._keys_column(event, info, now)
             return
-        if column == GUITAR_COLUMN:
+        if column == GUITAR_COLUMN and not self.mix_knobs:  # (in the mixer: the 6th arrangement's)
             self._guitar_column(event, info, now)
             return
-        arrangements = song["arrangements"][:ARRANGEMENT_KNOBS] if song else []
+        arrangements = self._arrangements_in(info) if song else []
         if column >= len(arrangements):
             return
         a = arrangements[column]
@@ -1560,8 +1590,9 @@ class Watch:
             names = [label for stem, label, _rgb in STEMS if stem in GAME_STEMS] + ["Music"]
             volumes = [self._game_level(stem, info) for stem, _label, _rgb in STEMS if stem in GAME_STEMS]
             volumes.append(self._music_of(info) or 0)
-            off = self._game_stems(info) is None  # (Song Stems off: both quiet)
-            quiet = [off or stem != self._game_part(info) for stem, _label, _rgb in STEMS if stem in GAME_STEMS] + [False]
+            off = self._game_stems(info) is None  # (Song Stems off: both quiet; muted, waiting its turn, greyed)
+            quiet = [off or self._game_muted(stem, info) or stem != self._game_part(info)
+                     for stem, _label, _rgb in STEMS if stem in GAME_STEMS] + [bool(info.get("music_muted"))]
             columns = [column for column, (stem, _label, _rgb) in enumerate(STEMS) if stem in GAME_STEMS]
             turned = (len(columns) if self._mix_slider == KEYS_COLUMN else
                       columns.index(self._mix_slider) if self._mix_slider in columns else None)
@@ -1579,18 +1610,18 @@ class Watch:
             tops, divider = [100] * len(names), len(STEMS)
             return (("mixer", "stems", *volumes, *quiet, turned, muted),
                     lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, tops=tops, divider=divider))
-        if self._picture_of == "mixer":  # the arrangements', then its keys' (the game's Music: the stems page's)
-            names = [a["name"] for a in arrangements_now] + ["Keys"]
-            volumes = ([_shown(self._volume_of(slot, info)) for slot in range(len(arrangements_now))] +
+        if self._picture_of == "mixer":  # the arrangements' (6 at most), then its keys' (the game's Music: the stems
+            mixed = self._arrangements_in(info)  # page's)
+            names = [a["name"] for a in mixed] + ["Keys"]
+            volumes = ([_shown(self._volume_of(slot, info)) for slot in range(len(mixed))] +
                        [_shown(self._keys_volume(info))])  # (percent, as the game's MIXER has them)
             keys = info.get("keys") or {}
-            quiet = [muted or not a["play"] for a in arrangements_now] + [muted or not keys.get("sound", True)]  # (the
-            # sound off: all of them, as the Mute pad has them)
-            lights = [min(self._lights_of(a), 1) for a in arrangements_now] + [1.0 if keys.get("lights") else 0.0]
+            quiet = [muted or not a["play"] for a in mixed] + [muted or not keys.get("sound", True)]  # (the sound
+            # off: all of them, as the Mute pad has them)
+            lights = [min(self._lights_of(a), 1) for a in mixed] + [1.0 if keys.get("lights") else 0.0]
             tops = [100] * len(names)
-            turned = (None if self._mix_slider in (CONTROLS, GUITAR_COLUMN) else len(names) - 1
-                      if self._mix_slider == KEYS_COLUMN else min(self._mix_slider, len(names) - 1))  # (its keys'
-            # slider: the last)
+            turned = (len(names) - 1 if self._mix_slider == KEYS_COLUMN else self._mix_slider
+                      if self._mix_slider < len(mixed) else None)  # (its keys' slider: the last)
             return (("mixer", *names, *volumes, *quiet, *lights, turned, muted),
                     lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, lights=lights, tops=tops))
         if self._picture_of == "playback":
@@ -1843,7 +1874,7 @@ class Watch:
         """The mixer: knobs 1 to 7 the volumes, 8 all of them; the pads on top mute each or play it again (the
         right one: all of them), and Func keeps it up (opened by knob 8: up a while longer each time it's
         used), or closes it. What's said over it goes as it's used."""
-        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        arrangements = self._arrangements_in(info)
         self._note_until = 0.0
         if isinstance(event, Button) and event.number in ENCODER_BUTTONS:  # (its pages: up, the arrangements';
             # down, the song's audio's)
@@ -1911,17 +1942,17 @@ class Watch:
         self._open_mixer(now, kept=self._mixer_kept)
         if info.get("mode") == "follow" and isinstance(event, Pad) and event.column == CONTROLS:  # (the page's
             def mute_stems() -> None:                                                            # master mute)
-                for stem, level in self.gui.toggle_game_stems().items():
-                    if stem in GAME_STEMS:
-                        self._pending[("game", stem)] = int(level)
+                self._game_stems_set(self.gui.toggle_game_stems())
             if self._try(mute_stems):
                 self._mix_slider = CONTROLS
             return
         if info.get("mode") == "follow" and isinstance(event, Pad) and event.column == KEYS_COLUMN:  # (the game's
-            music = self._music_of(info)                                                         # Music: muted, back)
+            muted = bool(info.get("music_muted"))                                                 # Music: muted, back)
 
             def mute_music() -> None:
-                self._pending[("volume", "music")] = int(self.gui.set_game_music({"mute": bool(music)})["music"])
+                said = self.gui.set_game_music({"mute": not muted})
+                self._pending[("volume", "music")] = int(said["music"])
+                self._info = {**(self._info or info), "music_muted": bool(said.get("muted"))}
             if self._try(mute_music):
                 self._mix_slider = KEYS_COLUMN
             return
@@ -1930,10 +1961,10 @@ class Watch:
             if stem not in GAME_STEMS:
                 self._say(now, lines=("In the game's song:", "just the bass and guitar"))
                 return
-            muted = self._game_level(stem, info) > 0
+            muted = self._game_muted(stem, info)
 
-            def mute() -> None:  # (back: where it was before, as the page kept it)
-                self._pending[("game", stem)] = int(self.gui.set_game_stems({"part": stem, "mute": muted})[stem])
+            def mute() -> None:  # (its level kept, greyed; back: at it)
+                self._game_stems_set(self.gui.set_game_stems({"part": stem, "mute": not muted}))
             if self._try(mute):
                 self._mix_slider = event.column
             return
@@ -2028,8 +2059,7 @@ class Watch:
             def turn_both() -> None:
                 for stem in GAME_STEMS:
                     level = min(max(self._game_level(stem, info) + steps * STEM_STEP, 0), 100)
-                    self.gui.set_game_stems({"part": stem, "level": level})
-                    self._pending[("game", stem)] = level
+                    self._game_stems_set(self.gui.set_game_stems({"part": stem, "level": level}))
             if self._try(turn_both):
                 self._mix_slider = CONTROLS
             return
@@ -2038,8 +2068,7 @@ class Watch:
             self._say(now, lines=("In the game's song:", "just the bass and guitar"))
             return
         level = min(max(self._game_level(stem, info) + steps * STEM_STEP, 0), 100)
-        if self._try(lambda: self.gui.set_game_stems({"part": stem, "level": level})):
-            self._pending[("game", stem)] = level
+        if self._try(lambda: self._game_stems_set(self.gui.set_game_stems({"part": stem, "level": level}))):
             self._mix_slider = encoder
 
     def _stem_volume(self, stem: str, info: dict[str, Any]) -> int:
@@ -2069,11 +2098,11 @@ class Watch:
         """A mixer's knob: 1 to 6 the volume of the arrangement in its place (the same in every song), 7 its keys',
         8 all of them together; VOLUME_STEP a step, at once (the notes going on). (Following, the game's Music is
         the stems page's knob 8.)"""
-        if encoder == GUITAR_COLUMN:
+        arrangements = self._arrangements_in(info)
+        if encoder == GUITAR_COLUMN and encoder >= len(arrangements):  # (no 6th arrangement)
             if info.get("mode") == "follow":  # (the game's Music: on the stems page)
                 self._say(now, lines=("The game's Music:", "▼, then knob 7"))
             return
-        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
         drummed = next((slot for slot, a in enumerate(arrangements) if a["kind"] == "drums"), None)
         if drummed is not None and not arrangements[drummed].get("made", True):  # (no volume till they're made)
             if encoder == drummed:
@@ -2110,7 +2139,7 @@ class Watch:
     def _volume_of(self, slot: int, info: dict[str, Any]) -> int:
         """The volume of the arrangement in a place in its song (turns not in the page's state yet too); the drum
         part's, its own."""
-        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
+        arrangements = ((info.get("song") or {}).get("arrangements") or [])[:MIXER_ARRANGEMENTS]
         if slot < len(arrangements) and arrangements[slot]["kind"] == "drums":
             pending = self._pending.get(("volume", "drums"))
             return pending if pending is not None else int(arrangements[slot].get("volume", 100))

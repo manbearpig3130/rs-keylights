@@ -65,7 +65,7 @@ class FakeGui:
     def remote_info(self):
         return {**self.info, "sound": self.sound, "real_pitch": self.real_pitch, "keys": self.keys,
                 "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal),
-                "riff": dict(self.riff), "music": self.music,
+                "riff": dict(self.riff), "music": self.music, "music_muted": getattr(self, "music_muted", False),
                 "game_stems": dict(self.game_stems) if self.game_stems else self.game_stems,
                 "audio": {**self.audio, "volumes": dict(self.audio["volumes"]), "mutes": dict(self.audio["mutes"])}}
 
@@ -87,26 +87,24 @@ class FakeGui:
         self.info["beat_lights"] = not self.info.get("beat_lights", False)
         return self.info["beat_lights"]
 
-    def set_game_music(self, body):  # (following: the game's Music volume, from where it is; muted and back)
+    def set_game_music(self, body):  # (following: the game's Music volume, from where it is; muted, its level kept)
         if self.music is None:
             raise ValueError("Music volume: update the riffloop mod")
         if "mute" in body:
-            self.music_was = self.music if body["mute"] else getattr(self, "music_was", 80)
-            self.music = 0 if body["mute"] else self.music_was
+            self.music_muted = bool(body["mute"])
         else:
             self.music = min(max(self.music + body["step"], 0), 100)
-        return {"music": self.music}
+        return {"music": self.music, "muted": getattr(self, "music_muted", False)}
 
-    def set_game_stems(self, body):  # (the game's song's guitar or bass, as RSMods.ini has them)
+    def set_game_stems(self, body):  # (the game's song's guitar or bass, as RSMods.ini has them; muted, kept)
         self.game_stem_calls.append(dict(body))
         part = body["part"]
+        muted = self.game_stems.setdefault("muted", {"bass": False, "guitar": False})
         if "level" in body:
             self.game_stems[part] = body["level"]
-        elif body.get("mute"):
-            self.game_stems[f"{part}_was"], self.game_stems[part] = self.game_stems[part], 0
-        else:
-            self.game_stems[part] = self.game_stems.pop(f"{part}_was", 100)
-        return dict(self.game_stems)
+        elif "mute" in body:
+            muted[part] = bool(body["mute"])
+        return {**self.game_stems, "muted": dict(muted)}
 
     def set_game_riff(self, body):  # (following: Riff Repeater's settings)
         self.riff_calls.append(dict(body))
@@ -170,11 +168,11 @@ class FakeGui:
         return self.sound
 
     def toggle_game_stems(self):  # (the stems page's master mute: both muted, or back)
-        mute = any(self.game_stems[part] > 0 for part in ("bass", "guitar"))
+        muted = self.game_stems.setdefault("muted", {"bass": False, "guitar": False})
+        mute = not all(muted.values())
         for part in ("bass", "guitar"):
-            if (self.game_stems[part] > 0) == mute:
-                self.set_game_stems({"part": part, "mute": mute})
-        return dict(self.game_stems)
+            self.set_game_stems({"part": part, "mute": mute})
+        return {**self.game_stems, "muted": dict(muted)}
 
     def toggle_follow(self):
         self.following = not self.following
@@ -1306,6 +1304,32 @@ def test_the_games_tone_mixer_brings_up_the_mixer_until_it_closes():
     assert not watch.mix_knobs
 
 
+def test_the_mixers_6th_column_is_a_6th_arrangements_the_guitars_outside_it():
+    watch, gui, launchkey, clock = watching("play")
+    extra = [{"id": f"X{k}", "name": f"Alt {k}", "kind": "lead", "playing": False, "play": True, "lights": 0,
+              "tones": {}} for k in (4, 5, 6)]
+    gui.song["arrangements"] = gui.song["arrangements"][:3] + extra  # (six of them)
+    gui.info["song"] = gui.song
+    watch.step()
+    assert pads(launchkey)[(0, GUITAR_COLUMN)] != (9, False)  # (outside the mixer: the guitar's)
+    launchkey.queued = [Button(105)]  # Func: the mixer, six arrangements
+    clock.now = 0.5
+    watch.step()
+    assert pads(launchkey)[(0, GUITAR_COLUMN)] == (9, False)  # (the 6th: a lead's)
+    launchkey.queued = [Turn(GUITAR_COLUMN, -3)]  # knob 6: its volume
+    clock.now = 1.0
+    watch.step()
+    assert gui.volume_changes[-1] == {5: gui.volumes[5]} and 5 in gui.volume_changes[-1]
+    launchkey.queued = [Pad(0, GUITAR_COLUMN)]  # its pad: muted
+    clock.now = 1.5
+    watch.step()
+    assert gui.changes[-1] == ("X6", {"play": False}) and pads(launchkey)[(0, GUITAR_COLUMN)] == (5, False)
+    launchkey.queued = [Pad(0, CONTROLS)]  # Mute: those sounding dimmed (greyed above them), the muted red
+    clock.now = 2.0
+    watch.step()
+    assert not gui.sound and pads(launchkey)[(0, 0)] == (25, 9, 0) and pads(launchkey)[(0, GUITAR_COLUMN)] == (5, False)
+
+
 def test_the_games_mixer_and_the_launchkeys_turn_each_others_pages():
     watch, gui, launchkey, clock = watching()
     gui.info["song"], gui.info["position"] = gui.song, 21.0
@@ -1973,10 +1997,10 @@ def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
     clock.now = 2.0
     watch.step()
     assert gui.audio["volumes"]["guitar"] == 0
-    launchkey.queued = [Pad(0, 0)]  # the drums' pad on top: muted (red, greyed: its volume kept)
+    launchkey.queued = [Pad(0, 0)]  # the drums' pad on top: muted (dimmed, greyed: its volume kept)
     clock.now = 2.5
     watch.step()
-    assert gui.options[-1] == {"stem_mutes": {"drums": True}} and pads(launchkey)[(0, 0)] == (5, False)
+    assert gui.options[-1] == {"stem_mutes": {"drums": True}} and pads(launchkey)[(0, 0)] == (8, 8, 8)
     assert screens(launchkey)[-1] == mixer([100, 100, 0, 100, 100, 100, 80], 0, [True] + off[1:])
     launchkey.queued = [Pad(0, 0)]  # again: back
     clock.now = 3.0
@@ -2115,26 +2139,28 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
     watch.step()
     assert gui.game_stem_calls[-1] == {"part": "guitar", "level": 60}
     assert screens(launchkey)[-1] == mixer([60, 60, 80], 1, [True, False, False])
-    launchkey.queued = [Pad(0, 2)]  # its pad: muted (red), then back where it was
+    launchkey.queued = [Pad(0, 2)]  # its pad: muted (dimmed, greyed, its level kept), then back
     clock.now = 1.5
     watch.step()
-    assert gui.game_stems["guitar"] == 0 and pads(launchkey)[(0, 2)] == (5, False)
+    assert gui.game_stems["guitar"] == 60 and gui.game_stems["muted"]["guitar"] and pads(launchkey)[(0, 2)] == (10, 4, 0)
+    assert screens(launchkey)[-1] == mixer([60, 60, 80], 1, [True, True, False])
     launchkey.queued = [Pad(0, 2)]
     clock.now = 2.0
     watch.step()
-    assert gui.game_stems["guitar"] == 60 and pads(launchkey)[(0, 2)] == (127, 45, 0)
+    assert not gui.game_stems["muted"]["guitar"] and pads(launchkey)[(0, 2)] == (127, 45, 0)
     launchkey.queued = [Turn(KEYS_COLUMN, -5)]  # knob 7: the game's Music volume
     clock.now = 2.5
     watch.step()
     assert gui.music == 75 and screens(launchkey)[-1] == mixer([60, 60, 75], 2, [True, False, False])
-    launchkey.queued = [Pad(0, KEYS_COLUMN)]  # its pad: muted (red), then back where it was
+    launchkey.queued = [Pad(0, KEYS_COLUMN)]  # its pad: muted (red, greyed, its level kept), then back
     clock.now = 2.6
     watch.step()
-    assert gui.music == 0 and pads(launchkey)[(0, KEYS_COLUMN)] == (5, False)
+    assert gui.music == 75 and gui.music_muted and pads(launchkey)[(0, KEYS_COLUMN)] == (5, False)
+    assert screens(launchkey)[-1] == mixer([60, 60, 75], 2, [True, False, True])
     launchkey.queued = [Pad(0, KEYS_COLUMN)]
     clock.now = 2.7
     watch.step()
-    assert gui.music == 75 and pads(launchkey)[(0, KEYS_COLUMN)] == (0, 90, 100)
+    assert not gui.music_muted and pads(launchkey)[(0, KEYS_COLUMN)] == (0, 90, 100)
     launchkey.queued = [Turn(CONTROLS, -5)]  # knob 8: the bass and guitar together, the Music apart
     clock.now = 2.8
     watch.step()
@@ -2142,12 +2168,13 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
     launchkey.queued = [Pad(0, CONTROLS)]  # its pad: the page's master mute, both (not the keyboard's, nor the Music)
     clock.now = 2.9
     watch.step()
-    assert (gui.game_stems["bass"], gui.game_stems["guitar"]) == (0, 0) and gui.sound and gui.music == 75
-    assert pads(launchkey)[(0, CONTROLS)] == (5, False)
-    launchkey.queued = [Pad(0, CONTROLS)]  # (and back where they were)
+    assert gui.game_stems["muted"] == {"bass": True, "guitar": True} and gui.sound and not gui.music_muted
+    assert (gui.game_stems["bass"], gui.game_stems["guitar"]) == (55, 55) and pads(launchkey)[(0, CONTROLS)] == (5, False)
+    assert pads(launchkey)[(0, 1)] == (0, 4, 10) and pads(launchkey)[(0, 2)] == (10, 4, 0)  # (both dimmed)
+    launchkey.queued = [Pad(0, CONTROLS)]  # (and back)
     clock.now = 2.95
     watch.step()
-    assert (gui.game_stems["bass"], gui.game_stems["guitar"]) == (55, 55) and pads(launchkey)[(0, CONTROLS)] == (21, False)
+    assert gui.game_stems["muted"] == {"bass": False, "guitar": False} and pads(launchkey)[(0, CONTROLS)] == (21, False)
     calls = len(gui.game_stem_calls)
     launchkey.queued = [Turn(0, 5)]  # the drums' knob: not in the game's song
     clock.now = 3.0
