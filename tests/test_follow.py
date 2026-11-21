@@ -402,6 +402,46 @@ def test_the_games_own_time_stops_as_it_pauses_or_stands_still_and_is_dark_going
     assert abs(clock.position(now + 0.46) - (t - 0.98)) < 0.01
 
 
+def test_going_on_after_a_pause_is_quiet_till_the_games_time_has_settled():
+    clock = GameClock()
+    now = game_reads(clock, 50.0, 1.0, 1.0, 0.0)
+    assert clock.settled()  # (a song's start: at once)
+    clock.update(51.0, now, paused=True)  # paused a while...
+    now += 5.0
+    clock.update(51.0, now)  # (...the pause screen gone, the time not on yet)
+    start = now + 0.02
+    end = game_reads(clock, 51.02, 1.0, 0.3, start)  # going on: 0.3 s of reads, not settled yet
+    assert clock.position(end) is not None and not clock.settled()
+    end = game_reads(clock, 51.32, 1.0, 0.2, end)
+    assert clock.settled()
+    t = clock._last[0]
+    clock.update(t - 2.0, end + 0.02)  # (Riff Repeater's rewind, and on again: no wait)
+    clock.update(t - 1.98, end + 0.04)
+    assert clock.position(end + 0.04) is not None and clock.settled()
+
+
+def test_following_is_quiet_going_on_after_a_pause_not_a_rush_of_notes():
+    client, index, keys = FakeClient(), FakeIndex([REF]), FakeKeys()
+    game: dict = {"t": 9.5, "screen": "LearnASong_Game"}
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 game_time=lambda: (game["t"], game["screen"], "x_lead"))
+    for i in range(20):  # playing from 9.5: 9.88 by the pause
+        game["t"] = round(9.5 + i * 0.02, 4)
+        f.step(i * 0.02)
+    game["screen"] = "LearnASong_Pause"
+    for i in range(20, 270):  # paused 5 s
+        f.step(i * 0.02)
+    game["screen"] = "LearnASong_Game"
+    played = []
+    for i in range(270, 330):  # going on: 9.9 to 11.08
+        game["t"] = round(9.9 + (i - 270) * 0.02, 4)
+        f.step(i * 0.02)
+        played.append((round(game["t"], 2), sorted(keys.lit)))
+    quiet = [lit for t, lit in played if t < 10.2]
+    assert all(not lit for lit in quiet)  # (the first moments: nothing, though 10.0's note is due)
+    assert any(lit == [60] for t, lit in played if 10.4 <= t < 11.0)  # (then the song as it is: 10.0's still on)
+
+
 def test_another_songs_playback_far_from_rs_companions_timer_is_set_aside():
     clock = GameClock()
     now = game_reads(clock, 200.0, 1.0, 1.0, 0.0)

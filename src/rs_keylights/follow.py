@@ -245,6 +245,8 @@ class GameClock:
     RATE_SPAN = 0.4  # at least this long of them for a rate of their own
     SNAP = 0.02  # a rate this near 1 is 1
     JUMP = 0.5  # seconds a read is further on than its rate says: a seek
+    SETTLE = 0.4  # seconds of reads after a jump on (going on after a pause, a seek ahead) before it's played from:
+    # quiet till then, rather than the notes since in a rush while it finds where and how fast the song goes
     MISMATCH, DISTRUST = 5.0, 3.0  # seconds from RS Companion's timer: not this song's; set aside this long
     MISMATCHES = 4  # RS Companion's timers in a row that far off, first (its timer, a trace showed, now and then
     # reads 0, jumps half a minute on, or falls 2 s behind, for a few updates: the game's own is the one to go by)
@@ -258,7 +260,7 @@ class GameClock:
         self._samples: deque[tuple[float, float]] = deque()  # (time, read at)
         self._last: tuple[float, float] | None = None
         self._changed_at = self._read_at = -math.inf
-        self._paused = self._going_back = False
+        self._paused = self._going_back = self._settling = False
         self.rate = 1.0
 
     def update(self, timer: float, now: float, paused: bool = False) -> None:
@@ -274,6 +276,7 @@ class GameClock:
             elif abs(step - expected) > self.JUMP:  # on: a seek, or going on after a while
                 self._samples.clear()
                 self._going_back = False
+                self._settling = True
             else:
                 self._going_back = False
         self._last, self._changed_at = (timer, now), now
@@ -284,6 +287,13 @@ class GameClock:
         if span >= self.RATE_SPAN:
             rate = (self._samples[-1][0] - self._samples[0][0]) / span
             self.rate = 1.0 if abs(rate - 1.0) < self.SNAP else min(max(rate, 0.1), 2.0)
+
+    def settled(self) -> bool:
+        """Since a jump on (going on after a pause, a seek ahead), SETTLE of reads: where the song is and how fast,
+        sure again (a song's start and a rewind, Riff Repeater's, are at once)."""
+        if self._settling and self._samples and self._samples[-1][1] - self._samples[0][1] >= self.SETTLE:
+            self._settling = False
+        return not self._settling
 
     def trusted(self, now: float) -> bool:
         """Read lately (the game answering, with a song's playback), and not set aside."""
@@ -540,6 +550,8 @@ class Follower:
             self._next_poll = now + POLL_INTERVAL
             self._poll(now)
         position = self.position(now)
+        if position is not None and self._game_says and self._game_clock.trusted(now) and not self._game_clock.settled():
+            position = None  # (going on again after a pause, or after a seek ahead: quiet a moment, not in a rush)
         if self._show is not None:
             self._show.step(self.keyboard, now, self._player, None if position is None else position + self.offset)
             if self._show.done:
