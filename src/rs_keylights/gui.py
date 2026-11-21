@@ -2492,7 +2492,9 @@ class Gui:
                 return  # (the parts' state here as it was: the next look sends the rows as they are now)
             parts = (followed or {}).get("arrangements") or []
             arrangements = [a for a in parts if a.get("kind") != "drums"][:GAME_MIXER_SLIDERS]
-            drummed = next((a for a in parts if a.get("kind") == "drums" and a.get("made", True)), None)
+            drum_part = next((a for a in parts if a.get("kind") == "drums"), None)
+            drummed = drum_part if drum_part is not None and drum_part.get("made", True) else None
+            self._game_mixer_drums = drum_part
             with self._lock:
                 volumes, keys = list(self.settings["volumes"]), int(self.settings["keys_volume"])
                 keys_sound = bool(self.settings["keys_sound"])
@@ -2505,6 +2507,11 @@ class Gui:
                 rows += (("drums", _percent(int(drummed.get("volume", DRUMS_VOLUME))), not drummed.get("play", True),
                           "DRUMS", int(bool(self.settings["beat_lights"])), "drums"),)
                 ids["drums"] = "drums"
+            elif drum_part is not None:  # (not made yet: its column there to make them, as the Launchkey's pad; being
+                # made, how far)
+                making = drum_part.get("making")
+                rows += (("drums", 0.0, False, "DRUMS", -1,
+                          f"drums:{round(100 * (drum_part.get('progress') or 0))}%" if making else "drums:make"),)
             music = said.music if said is not None and said.music is not None else None
             if music is not None:  # (the game's Music volume: the new mixer's 6th column, as knob 6)
                 rows += (("music", float(music), False, "MUSIC", -1, "music"),)
@@ -2552,7 +2559,11 @@ class Gui:
         slots: dict[int, int] = {}
         for key, value in moved.items():
             part = self._game_mixer_ids.get(key)
-            if key == "all" and value == "mute":  # (the new mixer's all: the sound on or off, as the Mute pad)
+            drum_part = getattr(self, "_game_mixer_drums", None)
+            if key == "drums" and drum_part is not None and not drum_part.get("made", True):  # (not made yet: its pad
+                if value == "mute" and not drum_part.get("making"):                         # makes them)
+                    self.change_part("drums", {"make": True})
+            elif key == "all" and value == "mute":  # (the new mixer's all: the sound on or off, as the Mute pad)
                 self.toggle_sound()
             elif key == "music" and isinstance(value, float):  # (its Music: the game's, as knob 6)
                 self.set_game_music({"level": round(value)})

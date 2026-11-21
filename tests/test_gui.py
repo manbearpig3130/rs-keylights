@@ -1265,6 +1265,29 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     assert changed[-1] == ("B", {"lights": 0})
 
 
+def test_the_games_new_mixer_has_a_drum_part_to_make_as_the_launchkeys_pad_makes_it(server):
+    gui, game = server.gui, server.gui._riff_loop
+    call(server, "/api/follow", {})
+    changed = []
+    gui.change_part = lambda part, fields, *a, **k: changed.append((part, fields))
+    drums = {"id": "drums", "name": "Drums", "kind": "drums", "play": False, "made": False, "making": False}
+    followed = {"arrangements": [{"id": "L", "name": "Lead", "kind": "lead", "play": True, "lights": 1, "tones": {}},
+                                 drums]}
+    gui._game_mixer(followed, game.status())
+    assert next(r for r in game.kmix_rows if r[0] == "drums") == ("drums", 0.0, False, "DRUMS", -1, "drums:make")
+    game.kmix_moved = {"drums": "mute"}  # its pad: made
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert changed == [("drums", {"make": True})]
+    drums.update(making=True, progress=0.42)
+    gui._game_mixer(followed, game.status())
+    assert next(r for r in game.kmix_rows if r[0] == "drums")[5] == "drums:42%"
+    game.kmix_moved = {"drums": "mute"}  # (again while it's made: nothing)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert changed == [("drums", {"make": True})]
+
+
 def test_the_games_tones_page_has_the_keyboards_drum_kit_and_steps_it(server):
     from rs_keylights.gui import _drum_kit_said
     from rs_keylights.tones import DRUM_SETS
