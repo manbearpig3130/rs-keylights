@@ -311,6 +311,18 @@ class GuiProtocol(Protocol):
     def set_game_stems(self, body: dict[str, Any]) -> dict[str, Any]:
         ...
 
+    def toggle_game_stems(self) -> dict[str, Any]:
+        ...
+
+    def game_mixer_step(self) -> bool:
+        ...
+
+    def set_game_mixer_page(self, page: str) -> None:
+        ...
+
+    def set_tone_field(self, field: int) -> None:
+        ...
+
     def game_browse(self) -> dict[str, Any] | None:
         ...
 
@@ -436,7 +448,7 @@ class Watch:
         self._song: tuple[bool, str, str | None] | None = None  # following?, the song and arrangement played, last seen
         self._drawn: dict[Any, Any] = {}  # what the Launchkey shows, so only changes are sent
         self._beat_drawn: str | None = None  # beat lights on: where in a beat it was drawn ("beat", "bar", "rest")
-        self._pending: dict[tuple[str, str], int] = {}  # (arrangement, tone field or "lights"; or "volume", its place):
+        self._pending: dict[tuple[str, str], int | bool] = {}  # (arrangement, tone field or "lights"; or "volume", its place):
         # sent, until the page's state has them (several turns come at once)
         self._settling = False  # turned or tapped: where it stopped shown again once it stops
         self._moving_to: float | None = None  # where knob 8 is taking the song
@@ -531,7 +543,7 @@ class Watch:
         if not arrangement.get("tone_changes_known"):
             return None
         pending = self._pending.get((arrangement["id"], "follow"))
-        return pending if pending is not None else arrangement["tones"].get("follow_tones") is not False
+        return bool(pending) if pending is not None else arrangement["tones"].get("follow_tones") is not False
 
     def _toggle_follow(self, arrangement: dict[str, Any], now: float) -> None:
         """The tones on the screen, an arrangement's pad below: its tone following the song's tone changes, or kept
@@ -992,7 +1004,7 @@ class Watch:
         """Whether a part of the game's song is muted (its level kept: greyed, dimmed; presses not in the page's state
         yet too)."""
         pending = self._pending.get(("game muted", part))
-        return pending if pending is not None else bool(((self._game_stems(info) or {}).get("muted") or {}).get(part))
+        return bool(pending) if pending is not None else bool(((self._game_stems(info) or {}).get("muted") or {}).get(part))
 
     def _game_stems_set(self, stems: dict[str, Any]) -> None:
         """The game's song's parts as the page has just set them, kept till its state has them."""
@@ -2099,8 +2111,8 @@ class Watch:
                 self._split(info, now)
                 return
             mutes = audio.get("mutes") or {}
-            mute = not all(mutes.get(stem) for stem, _label, _rgb in STEMS)
-            changes = {stem: mute for stem, _label, _rgb in STEMS}
+            muting = not all(mutes.get(stem) for stem, _label, _rgb in STEMS)
+            changes = {stem: muting for stem, _label, _rgb in STEMS}
             if self._try(lambda: self.gui.set_play_options({"stem_mutes": changes})):
                 self._info = {**info, "audio": {**audio, "mutes": {**mutes, **changes}}}
                 self._mix_slider = CONTROLS

@@ -498,7 +498,7 @@ class Gui:
         self._recorder.start()
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
-        self._game_mixer_sent: tuple[tuple[str, float, bool, str], ...] | None = None  # the MIXER's rows sent
+        self._game_mixer_sent: tuple[tuple[Any, ...], ...] | None = None  # the MIXER's rows sent
         self._tone_field = {"turns": 0, "field": 0}  # the knobs' tones' page (tone, palm mutes, harmonics: the
         # Launchkey's up arrow's, and the game's TONES'), and the turns its TONES made (the Launchkey follows each)
         self._game_mixer_page = {"turns": 0, "page": None}  # the page the MIXER was turned to there last (each turn
@@ -2631,13 +2631,13 @@ class Gui:
             elif key == "field" and isinstance(value, float):  # (TONES' up arrow: its next page, the Launchkey's too)
                 self._tone_field = {"turns": self._tone_field["turns"] + 1, "field": int(value) % len(TONE_PAGES)}
             elif value == "follow" and arranged is not None:  # (TONES' pad below: following the song's tone changes)
-                self.change_part(part, {"follow_tones": False if arranged["tones"].get("follow_tones") is not False
-                                        else None})
+                self.change_part(arranged["id"], {"follow_tones": False if arranged["tones"].get("follow_tones")
+                                                  is not False else None})
             elif isinstance(value, str) and value.startswith("tone:") and arranged is not None:  # (its tone on TONES'
                 field = TONE_PAGES[self._tone_field["field"]][0]                                # page, as its knob)
                 kind = self.follow_settings.get(arranged["kind"]) or {}
                 number = stepped_tone(knob_tone(arranged, field, kind), int(value[5:]), False, tone_choices(kind, field))
-                self.change_part(part, {field: None if number == DEFAULT_TONE else number})
+                self.change_part(arranged["id"], {field: None if number == DEFAULT_TONE else number})
             elif key in ("gbass", "gguitar"):  # (the stem mixer's: the game's song's part, as the Launchkey's
                 stem = key[1:]                        # stems page has it)
                 try:
