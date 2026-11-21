@@ -105,7 +105,7 @@ class PlanCache:
         return store
 
 
-def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True, pooled: bool = False,
+def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = True, pooled: bool = True,
          first: ArrangementRef | None = None, cache: PlanCache | None = None) -> list[PlannedPart]:
     """Lights and voices for each part. The lit parts' keys share an octave shift, so they line up; each part's
     sound is moved by its own (its notes' octaves: the same however many keys it lights); each part on

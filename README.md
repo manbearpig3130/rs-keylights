@@ -89,8 +89,9 @@ Launchkey shows.
 ### The song's cards
 
 - **Song**: its art, title, artist and key, and a block for each part:
-  - lit keys (− and +, 4 in all);
-  - volume (100% at first, up to 127%; it's the volume of the part in that place, first, second…, in every song);
+  - lit keys, on or off: the lit parts share the keyboard's 4 lit keys a moment at a time, as many different keys as
+    they play, the part you play in the game first, then the song's order;
+  - volume (0 to 100%, 100% at first; it's the volume of the part in that place, first, second…, in every song);
   - mute 🔇;
   - its tones under **Tones**: the main tone, a palm-mute tone and a harmonics tone.
 
@@ -171,10 +172,7 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
 ### Settings cards
 
 - **Keyboard**: the MIDI output, the lights' channel, **Lights early** (15 ms) and **Fastest flash** (70 ms); notes
-  ringing and their overlap; **Most lights**; **Real pitch**; techniques; the Launchkey remote; and **Look for new
-  songs**.
-  - **Most lights**: the lit parts share the 4 lit keys a moment at a time, as many different keys as they play.
-    The part you play in the game goes first, then the song's order. Each part's lit keys become on or off.
+  ringing and their overlap; **Real pitch**; techniques; the Launchkey remote; and **Look for new songs**.
   - **Real pitch** (on at first): the notes sound at their own pitch, not the lit keys' pitch (moved into the
     keys' range). The keyboard plays MIDI notes below its lowest key, but some tones don't reach as low as a B
     standard guitar.
@@ -354,7 +352,7 @@ While a warm-up runs, it has the Launchkey instead (see [On the Launchkey](#on-t
 |---|---|
 | Pads 1–5, top | an arrangement each (orange lead, green rhythm, blue bass; dim when muted; the one you play in the game pulses). Tap to mute or unmute. |
 | Drum part's pad, top | after the arrangements, white. Tap to mute. Not made yet: dim, and a tap makes it. |
-| Pads 1–5, bottom | each arrangement's lit keys (brighter for more). Tap for one more, round to none. |
+| Pads 1–5, bottom | each arrangement's lit keys, on or off |
 | Drum part's bottom pad | **beat lights**: it flashes on each beat (brighter on a bar's first) and the other lit pads pulse with it |
 | Knobs 1–5 | each arrangement's tone. The drum part's knob goes through the Casio's drum kits. |
 | ▲ again | switches the knobs between tones, palm-mute tones and harmonics tones (squares at the top right of the screen show which) |

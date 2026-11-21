@@ -69,7 +69,8 @@ SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over 
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game (from Learn a Song's pause menu)
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Tones")  # (and its TONES: each part's tone, the drum kit's)
+GAME_MIXER2_SCREEN = "RSKeylights_Mixer2"  # its new mixer (the Launchkey's mixer page, our own movie)
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_MIXER2_SCREEN, "RSKeylights_Tones")  # (and TONES: each part's tone)
 GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
@@ -158,15 +159,10 @@ def kind(ref: ArrangementRef) -> str:
 
 
 def default_lights(kinds: list[str]) -> list[int]:
-    """The keys each of a song's parts lights by default when it's played (0: it doesn't play): with 4 parts or
-    fewer, a key each, and those left over to the lead parts and the rhythm parts in turn (to the bass only
-    without them); with more, so for the first lead, rhythm and bass part."""
+    """Whether each of a song's parts plays and lights keys by default (1), sharing the 4 lit keys, or not (0): with
+    4 parts or fewer, all of them; with more, the first lead, rhythm and bass part."""
     chosen = list(range(len(kinds))) if len(kinds) <= 4 else [kinds.index(k) for k in KINDS if k in kinds]
-    lights = [1 if i in chosen else 0 for i in range(len(kinds))]
-    favoured = sorted([i for i in chosen if kinds[i] != "bass"] or chosen, key=lambda i: (kinds[i] != "lead", i))
-    for n in range(4 - len(chosen) if favoured else 0):
-        lights[favoured[n % len(favoured)]] += 1
-    return lights
+    return [1 if i in chosen else 0 for i in range(len(kinds))]
 
 
 def default_follow() -> dict[str, Any]:
@@ -581,7 +577,7 @@ class Gui:
                                          "launchkey": True, "keys_sound": True, "keys_lights": True, "ring": True,
                                          "overlap_ms": 120, "listen": False, "listen_device": GUITAR_INPUT,
                                          "tone_changes": True, "tone_map": dict(TONE_KINDS), "techniques": True,
-                                         "outputs": {}, "outputs_known": {}, "most_lights": False, "beat_lights": False,
+                                         "outputs": {}, "outputs_known": {}, "beat_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME, "keys_output": None,
                                          "volumes": [NORMAL_VOLUME] * SLOTS, "pedal_backup": "",
                                          "pedal_favourites": list(PEDAL_FAVOURITES), "pinch": asdict(Squeal()),
@@ -846,12 +842,12 @@ class Gui:
         with self._lock:
             session = self._session
         planned: list[PlannedPart] | None = None
-        pooled = bool(self.settings["most_lights"])
+        pooled = True  # (the lit parts share the 4 keys)
         if part:
             one = next(((r, a) for r, a in loaded if part in (r.part, r.persistent_id)), None)
             if one is None:
                 raise GuiError(f"No part {part} in this song")
-            planned, pooled = plan([Part(one[0], one[1], 4)], None), False
+            planned, pooled = plan([Part(one[0], one[1], 4)], None, pooled=False), False
         elif isinstance(session, Following) and session.running:  # (as chosen now: what plays takes the choices a
             # moment later, a remote's taps once they stop)
             followed = session.follower.plan_now()
@@ -1129,14 +1125,7 @@ class Gui:
                 play = bool(fields["play"]) if "play" in fields else part["play"]
                 lights = int(_number(fields["lights"], "lit keys", 0, 4)) if "lights" in fields else part["lights"]
                 parts[name] = {"play": play, "lights": lights, **tones}
-            pooled = bool(self.settings["most_lights"])  # (the lit parts sharing the 4 keys: any number lit)
-            for name, fields in change.items():  # a part turned on takes the keys still free
-                if fields.get("play") and "lights" not in fields and not pooled:
-                    others = sum(p["lights"] for n, p in parts.items() if p["play"] and n != name)
-                    parts[name]["lights"] = min(parts[name]["lights"], max(0, 4 - others))
             on = [p for p in parts.values() if p["play"]]
-            if sum(p["lights"] for p in on) > 4 and not pooled:
-                raise GuiError(f"The {self._keyboard_name} lights 4 keys at most: give the parts fewer lit keys")
             kept = dict(self.song_settings.get(sid, {}), parts=parts)
             if "start" in body:
                 kept["start"] = _number(body["start"], "start", 0, 24 * 3600)
@@ -1651,7 +1640,7 @@ class Gui:
             voices = replace(choice.voices(ref, channels), volume=volume[ref.part])
             return self._routed(replace(voices, tone_map=()) if ref.part in fixed else voices, ref)
 
-        planned = plan(parts, voices_for if choice else None, pooled=bool(self.settings["most_lights"]),
+        planned = plan(parts, voices_for if choice else None,
                        cache=self._made)
         length = max([a.length for _r, a in loaded] + [l.off for pp in planned for l in pp.lights[-1:]])
         return planned, length
@@ -2115,20 +2104,6 @@ class Gui:
                 played = self.index.find(played_id)
                 if played is None:
                     raise GuiError(f"No arrangement {played_id} in the library")
-                refs = self._song_refs(played)
-                pooled = bool(self.settings["most_lights"])  # (the lit parts sharing the 4 keys: any number lit)
-                for arrangement_id, fields in chosen.items():  # one turned on takes the keys still free
-                    if isinstance(fields, dict) and fields.get("play") and "lights" not in fields and not pooled:
-                        others = sum(lights for r, play, lights in parts_chosen(settings, played, refs)
-                                     if play and r.persistent_id != arrangement_id.upper())
-                        mine = next((l for r, _p, l in parts_chosen(settings, played, refs)
-                                     if r.persistent_id == arrangement_id.upper()), 0)
-                        if mine > 4 - others:
-                            settings = changed_follow(settings, {"parts": {played_id: {arrangement_id: {
-                                "lights": max(0, 4 - others)}}}})
-                on = [lights for _r, play, lights in parts_chosen(settings, played, refs) if play]
-                if sum(on) > 4 and not pooled:
-                    raise GuiError(f"The {self._keyboard_name} lights 4 keys at most: give the parts fewer lit keys")
             was, self.follow_settings = self.follow_settings, settings
             voices_for = self._follow_voices()  # (the parts' sounds fit the keyboard's channels: else as it was)
             if voices_for is not None:
@@ -2154,7 +2129,6 @@ class Gui:
     def _follow_on(self, session: Following) -> None:
         """The arrangement played goes on with the parts and tones as chosen now."""
         if session is self._session and session.running:
-            session.follower.pooled_lights = bool(self.settings["most_lights"])
             session.set_parts(self._follow_voices(), self._follow_parts())
             session.set_extras(lambda ref: self._drum_tracks(song_id(ref)))
 
@@ -2199,7 +2173,6 @@ class Gui:
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
                                       parts_for=self._follow_parts(), trace=self._trace,
                                       game_time=self._riff_loop.time)
-                following.follower.pooled_lights = bool(self.settings["most_lights"])
                 following.set_extras(lambda ref: self._drum_tracks(song_id(ref)))  # (its song's drum part)
                 following.start()
                 self._session, self._followed = following, None
@@ -2330,7 +2303,7 @@ class Gui:
                     "game_stems": self.game_stems_info(),
                     "audio": self.audio_info(followed["id"] if followed else None),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
-                    "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
+                    "beat_lights": bool(self.settings["beat_lights"])}
         sid, song = playing or self.play_options.get("song"), None
         position = length = None
         if sid:
@@ -2362,7 +2335,7 @@ class Gui:
                 "volumes": list(self.settings["volumes"]), "loop": self.loop_info(sid),
                 "audio": self.audio_info(sid if song is not None else None),
                 "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
-                    "most_lights": bool(self.settings["most_lights"]), "beat_lights": bool(self.settings["beat_lights"])}
+                    "beat_lights": bool(self.settings["beat_lights"])}
 
     def _chords(self, sid: str, key: Callable[[ArrangementRef], str]) -> dict[str, tuple[Chord, ...]]:
         """A song's arrangements' chords, by their key (the part, or its persistent ID); none if it's gone."""
@@ -2524,13 +2497,20 @@ class Gui:
                 volumes, keys = list(self.settings["volumes"]), int(self.settings["keys_volume"])
                 keys_sound = bool(self.settings["keys_sound"])
             rows = tuple((f"a{i}", _percent(volumes[i] if i < len(volumes) else NORMAL_VOLUME), not a.get("play", True),
-                          str(a["name"]).upper()) for i, a in enumerate(arrangements))
+                          str(a["name"]).upper(), min(int(a.get("lights") or 0), 1), str(a.get("kind") or "lead"))
+                         for i, a in enumerate(arrangements))
+            self._game_mixer_parts = arrangements
             ids = {f"a{i}": a["id"] for i, a in enumerate(arrangements)}
             if drummed is not None:  # (its own volume and mute, the song's)
                 rows += (("drums", _percent(int(drummed.get("volume", DRUMS_VOLUME))), not drummed.get("play", True),
-                          "DRUMS"),)
+                          "DRUMS", int(bool(self.settings["beat_lights"])), "drums"),)
                 ids["drums"] = "drums"
-            rows += (("keys", _percent(keys), not keys_sound, "LAUNCHKEY KEYS"),)
+            music = said.music if said is not None and said.music is not None else None
+            if music is not None:  # (the game's Music volume: the new mixer's 6th column, as knob 6)
+                rows += (("music", float(music), False, "MUSIC", -1, "music"),)
+            rows += (("keys", _percent(keys), not keys_sound, "KEYS", int(bool(self.settings["keys_lights"])), "keys"),)
+            rows += (("all", max([row[1] for row in rows if row[5] != "music"] or [0.0]),  # (the loudest: knob 8's)
+                      bool(self.play_options["silent"]), "ALL", -1, "all"),)
             self._game_mixer_ids = ids
             if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
                 self._game_mixer_sent = rows
@@ -2545,6 +2525,12 @@ class Gui:
                                f"{number:03d} {tone(number).name}") for key, number in tones.items())
             if tone_rows != self._game_tones_sent and self._riff_loop.ktones(tone_rows) is not None:
                 self._game_tones_sent = tone_rows
+
+    def _next_lights(self, part: str) -> int:
+        """A part's lit keys after its bottom pad, as the Launchkey's: on or off (the lit parts share the 4 keys)."""
+        parts = getattr(self, "_game_mixer_parts", [])
+        a = next((x for x in parts if x["id"] == part), {"lights": 0})
+        return 0 if int(a.get("lights") or 0) else 1
 
     def _part_tone(self, arrangement: dict[str, Any]) -> int:
         """The tone an arrangement plays with (following): its own, its kind's default, or the built-in one."""
@@ -2566,13 +2552,24 @@ class Gui:
         slots: dict[int, int] = {}
         for key, value in moved.items():
             part = self._game_mixer_ids.get(key)
-            if value == "mute" and key in sent:
+            if key == "all" and value == "mute":  # (the new mixer's all: the sound on or off, as the Mute pad)
+                self.toggle_sound()
+            elif key == "music" and isinstance(value, float):  # (its Music: the game's, as knob 6)
+                self.set_game_music({"level": round(value)})
+            elif value == "lights":  # (a bottom pad: as the Launchkey's)
+                if key == "keys":
+                    self.set_keys({"lights": not self.settings["keys_lights"]})
+                elif key == "drums":
+                    self.toggle_beat_lights()
+                elif part is not None:
+                    self.change_part(part, {"lights": self._next_lights(part)})
+            elif value == "mute" and key in sent:
                 muted = sent[key][2]  # (as the game showed it before: now the other way)
                 if key == "keys":
                     self.set_keys({"sound": muted})
                 elif part is not None:
                     self.change_part(part, {"play": muted})
-                sent[key] = (*sent[key][:2], not muted, sent[key][3])
+                sent[key] = (*sent[key][:2], not muted, *sent[key][3:])
             elif isinstance(value, float) and key == "keys":
                 self.set_keys({"volume": _volume_of(value)})
             elif isinstance(value, float) and key == "drums" and part is not None:
@@ -3486,7 +3483,6 @@ class Gui:
         overlap = _number(body.get("overlap_ms", self.settings["overlap_ms"]), "overlap", 0, 500)
         tone_changes = bool(body.get("tone_changes", self.settings["tone_changes"]))
         played = bool(body.get("techniques", self.settings["techniques"]))
-        most_lights = bool(body.get("most_lights", self.settings["most_lights"]))
         listen = bool(body.get("listen", self.settings["listen"]))
         listen_device = str(body.get("listen_device", self.settings["listen_device"]) or GUITAR_INPUT)
         backup = str(body.get("pedal_backup", self.settings["pedal_backup"]) or "").strip()
@@ -3505,12 +3501,12 @@ class Gui:
             raise GuiError("Choose the keyboard's MIDI output")
         sounded = (self.settings["ring"], self.settings["tone_changes"], self.settings["tone_map"],
                    self.settings["techniques"], self.settings["outputs"], self.settings["overlap_ms"],
-                   self.settings["most_lights"], self.settings["pinch"])
+                   self.settings["pinch"])
         changed = dict(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash, launchkey=launchkey,
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        outputs_known=known,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, pedal_backup=backup,
-                       pedal_favourites=favourites, most_lights=most_lights, pinch=pinch)
+                       pedal_favourites=favourites, pinch=pinch)
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
         self.settings.update(changed)
@@ -3522,8 +3518,8 @@ class Gui:
             if isinstance(session, (Playback, Following)) and session.running:
                 session.retime_lights(*self._light_timing())
         self.listen_now()  # (the guitar heard, or not)
-        if (ring, tone_changes, tone_map, played, outputs, overlap, most_lights, pinch) != sounded:  # (the notes
-            # ringing, tone changes, techniques, other MIDI devices, the lights pooled and pinch harmonics: at once)
+        if (ring, tone_changes, tone_map, played, outputs, overlap, pinch) != sounded:  # (the notes ringing, tone
+            # changes, techniques, other MIDI devices and pinch harmonics: at once)
             if isinstance(session, Following):
                 self._follow_on(session)
             elif self._playing:

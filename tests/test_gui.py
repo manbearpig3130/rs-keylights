@@ -189,18 +189,14 @@ def test_play_pause_seek_resume_stop(server):
 
 
 def test_a_songs_parts_share_the_keys_at_first():
-    assert default_lights(["lead"]) == [4] and default_lights(["lead", "rhythm"]) == [2, 2]
-    assert default_lights(["lead", "rhythm", "bass"]) == [2, 1, 1]  # those left over: lead and rhythm first
-    assert default_lights(["lead", "bass"]) == [3, 1] and default_lights(["rhythm", "bass"]) == [3, 1]
-    assert default_lights(["bass", "bass"]) == [2, 2]  # (no lead or rhythm part)
-    assert default_lights(["lead", "lead", "rhythm", "bass"]) == [1, 1, 1, 1]
-    assert default_lights(["lead", "rhythm", "bass", "lead", "rhythm"]) == [2, 1, 1, 0, 0]  # more than 4: the first
+    assert default_lights(["lead"]) == [1] and default_lights(["lead", "rhythm", "bass"]) == [1, 1, 1]  # (all lit:
+    assert default_lights(["lead", "lead", "rhythm", "bass"]) == [1, 1, 1, 1]  # sharing the 4 keys)
+    assert default_lights(["lead", "rhythm", "bass", "lead", "rhythm"]) == [1, 1, 1, 0, 0]  # more than 4: the first
 
 
 def test_requests_that_are_refused(server):
     sid = first_song(server)
-    assert call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"lights": 3}}}) == (
-        400, {"error": "The CASIO LK-170 lights 4 keys at most: give the parts fewer lit keys"})  # the lead has 2
+    assert call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"lights": 5}}})[0] == 400
     assert call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"tone": 999}}})[0] == 400
     assert call(server, "/api/song/settings", {"song": sid, "parts": {"solo": {"play": True}}})[1]["error"] == (
         "No part solo in this song")
@@ -226,7 +222,7 @@ def test_settings_are_kept(server, tmp_path):
         "midi_port": "CASIO USB-MIDI", "channel": 11, "lights_early_ms": 15, "fastest_flash_ms": 70, "launchkey": True,
         "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
         "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {}, "outputs_known": {},
-        "most_lights": False, "beat_lights": False,
+        "beat_lights": False,
         "keys_tone": 1, "keys_volume": 100, "keys_output": None, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187], "pinch": {"up": 19, "velocity": 127, "note_velocity": 70, "scoop": 0.5,
                                                  "scoop_ms": 80.0, "width": 1.05, "rate": 15.0, "grows_ms": 200.0,
@@ -242,7 +238,7 @@ def test_a_songs_choices_are_kept_on_the_mac_for_every_page(server, tmp_path):
     sid = first_song(server)
     _, song = call(server, f"/api/song?id={urllib.request.quote(sid)}")
     assert [(p["part"], p["play"], p["lights"], p["tones"]) for p in song["parts"]] == [
-        ("lead", True, 2, {}), ("rhythm", True, 2, {})]  # every part plays, sharing the keys
+        ("lead", True, 1, {}), ("rhythm", True, 1, {})]  # every part plays, sharing the keys
     assert (song["start"], song["saved"]) == (0, False)
     _, song = call(server, "/api/song/settings", {"song": sid, "start": 12, "parts": {
         "lead": {"lights": 3, "tone": 296}, "rhythm": {"play": True, "lights": 1, "pinch_tone": 0}}})
@@ -346,22 +342,16 @@ def test_five_arrangements_can_play_at_once_as_many_as_the_keyboards_channels_ta
     status, said = call(server, "/api/song/settings", {"song": sid, "parts": {  # three channels each: 15 of 12
         name: {"pinch_tone": 33, "mute_tone": 29} for name in names}})
     assert status == 400 and "channels are used up" in said["error"]
-    lit = {"song": sid, "parts": {name: {"lights": 1} for name in names}}  # all five lighting keys:
-    assert call(server, "/api/song/settings", lit)[0] == 400  # 5 of the 4 keys, each its own share
-    call(server, "/api/settings", {"most_lights": True})
-    assert call(server, "/api/song/settings", lit)[0] == 200  # pooled: any number lit, sharing the 4
+    lit = {"song": sid, "parts": {name: {"lights": 1} for name in names}}  # all five lighting keys: sharing the 4
+    assert call(server, "/api/song/settings", lit)[0] == 200
 
 
-def test_most_lights_pools_the_lit_keys_at_once_while_a_song_plays(server):
+def test_the_lit_parts_share_the_four_lit_keys_while_a_song_plays(server):
     sid = first_song(server)
-    call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 2}, "rhythm": {"play": True, "lights": 2}}})
+    call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 1}, "rhythm": {"play": True, "lights": 1}}})
     call(server, "/api/play", {"song": sid, "start": 1})
-    before = server.gui._session.player
-    assert before.most_keys == 4  # (whatever the parts' shares: the keyboard lights 4 at most)
-    _, settings = call(server, "/api/settings", {"most_lights": True})
     player = server.gui._session.player
-    assert settings["most_lights"] is True and player is not before  # (planned again: the keys pooled)
-    assert [t.priority for t in player.tracks] == [0, 1] and server.gui.remote_info()["most_lights"] is True
+    assert player.most_keys == 4 and [t.priority for t in player.tracks] == [0, 1]  # (the keys shared, in turn)
     call(server, "/api/stop", {})
 
 
@@ -414,7 +404,7 @@ def test_a_remote_follows_the_song_playing_or_picked(server):
     call(server, "/api/play/options", {"song": sid})  # picked on the page
     info = gui.remote_info()
     assert info["song"]["title"] == "Band - The Pursuit" and info["sound"] is True
-    assert [(a["id"], a["play"], a["lights"]) for a in info["song"]["arrangements"]] == [("lead", True, 2), ("rhythm", True, 2)]
+    assert [(a["id"], a["play"], a["lights"]) for a in info["song"]["arrangements"]] == [("lead", True, 1), ("rhythm", True, 1)]
     gui.change_part("lead", {"lights": 2})
     gui.change_part("rhythm", {"play": True, "lights": 2, "tone": 178})
     assert [(a["play"], a["lights"]) for a in gui.remote_info()["song"]["arrangements"]] == [(True, 2), (True, 2)]
@@ -514,8 +504,7 @@ def test_other_arrangements_play_along_while_following(server, tmp_path):
     assert [(p["name"], p["lights"], p["tone"]) for p in table] == [("Lead", 4, "079 DISTORTION GT"), ("Rhythm", 0, "178 SAW LEAD 1")]
     assert call(server, "/api/state")[1]["follow"]["messages"][-1] == (
         "Band - The Pursuit (Lead): Lead lighting 4 keys, tone 079 DISTORTION GT; Rhythm lighting no keys, tone 178 SAW LEAD 1")
-    status, answer = call(server, "/api/follow/settings", {"parts": {"L": {"R": {"lights": 1}}}})
-    assert status == 400 and answer["error"] == "The CASIO LK-170 lights 4 keys at most: give the parts fewer lit keys"
+    assert call(server, "/api/follow/settings", {"parts": {"L": {"R": {"lights": 1}}}})[0] == 200  # (sharing the 4)
     _, info = call(server, "/api/follow/settings", {"parts": {"L": {"L": {"lights": 2}, "R": {"lights": 2}}}})
     assert parts(info) == [("L", True, 2), ("R", True, 2)]
     assert kept() == {"L": {"L": {"lights": 2}, "R": {"play": True, "lights": 2}}}
@@ -729,10 +718,10 @@ def test_switching_songs_and_going_through_the_library(server, tmp_path):
 
 def test_a_part_turned_on_takes_the_keys_left_and_a_remote_stops(server):
     gui, sid = server.gui, first_song(server)
-    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": False}, "lead": {"lights": 4}}})
-    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"lights": 3}}})  # off: its lights wait
-    _, song = call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": True}}})  # the lead has 4
-    assert [(p["play"], p["lights"]) for p in song["parts"]] == [(True, 4), (True, 0)]
+    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": False}, "lead": {"lights": 1}}})
+    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"lights": 1}}})  # off: its lights wait
+    _, song = call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": True}}})  # (on: both lit,
+    assert [(p["play"], p["lights"]) for p in song["parts"]] == [(True, 1), (True, 1)]  # sharing the 4 keys)
     assert call(server, f"/api/art?id={urllib.request.quote(sid)}")[0] == 404  # no album art in this one
     assert gui.remote_stop() == "nothing playing"
     call(server, "/api/play", {"song": sid, "start": 20})
@@ -1206,7 +1195,8 @@ def test_following_the_games_tone_mixer_is_sent_the_volumes_and_sets_them(server
     gui, game = server.gui, server.gui._riff_loop
     call(server, "/api/follow", {})
     gui.remote_info()
-    assert game.kmix_rows[-1] == ("keys", round(gui.settings["keys_volume"] * 100 / 127, 1), False, "LAUNCHKEY KEYS")
+    keys_row = lambda rows: next(r for r in rows if r[0] == "keys")[:4]  # noqa: E731
+    assert keys_row(game.kmix_rows) == ("keys", round(gui.settings["keys_volume"] * 100 / 127, 1), False, "KEYS")
     sent = len(game.sent)
     gui.remote_info()
     assert not [s for s in game.sent[sent:] if s[0] == "kmix"]  # (unchanged: not sent again)
@@ -1215,14 +1205,14 @@ def test_following_the_games_tone_mixer_is_sent_the_volumes_and_sets_them(server
     info = gui.remote_info()
     assert gui.settings["keys_volume"] == 64 and info["game_screen"] == "RSKeylights_Mixer"
     gui.remote_info()
-    assert game.kmix_rows[-1] == ("keys", 50.4, False, "LAUNCHKEY KEYS")  # (and the mod's told the volume as it's now)
+    assert keys_row(game.kmix_rows) == ("keys", 50.4, False, "KEYS")  # (and the mod's told the volume as it's now)
     game.kmix_moved = {"keys": "mute"}  # Return on its row: muted (the mod shows it at once: nothing sent back)
     gui._game_time = (-math.inf, None)
     gui.remote_info()
-    assert not gui.settings["keys_sound"] and gui._game_mixer_sent[-1] == ("keys", 50.4, True, "LAUNCHKEY KEYS")
+    assert not gui.settings["keys_sound"] and keys_row(gui._game_mixer_sent) == ("keys", 50.4, True, "KEYS")
     game.kmix_moved = {"keys": "mute"}  # again, asked between looks (the Launchkey's loop, each time round): back on
     gui.game_mixer_step()
-    assert gui.settings["keys_sound"] and gui._game_mixer_sent[-1] == ("keys", 50.4, False, "LAUNCHKEY KEYS")
+    assert gui.settings["keys_sound"] and keys_row(gui._game_mixer_sent) == ("keys", 50.4, False, "KEYS")
 
 
 def test_following_the_games_tones_page_is_sent_the_tones_and_steps_them(server, no_real_game_loop):
@@ -1244,6 +1234,35 @@ def test_following_the_games_tones_page_is_sent_the_tones_and_steps_them(server,
     assert gui.keys_info()["tone"] == TONE_ORDER[TONE_ORDER.index(keys["tone"]) - 1]
     gui.remote_info()
     assert game.ktone_rows[0][2] == f"{stepped:03d} {tone(stepped).name}"  # (and the mod's told)
+
+
+def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_as_the_launchkeys(server):
+    gui, game = server.gui, server.gui._riff_loop
+    call(server, "/api/follow", {})
+    changed = []
+    gui.change_part = lambda part, fields, *a, **k: changed.append((part, fields))
+    followed = {"arrangements": [
+        {"id": "L", "name": "Lead", "kind": "lead", "play": True, "lights": 4, "tones": {}},
+        {"id": "B", "name": "Bass", "kind": "bass", "play": True, "lights": 0, "tones": {}},
+        {"id": "drums", "name": "Drums", "kind": "drums", "play": True, "made": True, "drum_set": None, "volume": 90}]}
+    said = game.status()  # (the game's Music 80, as the fake has it)
+    gui._game_mixer(followed, said)
+    rows = {r[0]: r for r in game.kmix_rows}
+    assert rows["a0"][4:] == (1, "lead") and rows["a1"][4:] == (0, "bass") and rows["drums"][4:] == (0, "drums")
+    assert rows["music"] == ("music", 80.0, False, "MUSIC", -1, "music") and rows["keys"][3:] == ("KEYS", 1, "keys")
+    assert rows["all"][1] == max(r[1] for k, r in rows.items() if k not in ("music", "all")) and rows["all"][5] == "all"
+    game.kmix_moved = {"a1": "lights", "drums": "lights", "keys": "lights", "all": "mute", "music": 55.0}
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert changed == [("B", {"lights": 1})]  # (lit too: sharing the 4 keys)
+    assert gui.settings["beat_lights"] and not gui.settings["keys_lights"] and gui.play_options["silent"]
+    assert game.sent[-1] == ("music", 55)
+    followed["arrangements"][1]["lights"] = 1  # (lit now: its pad turns it off)
+    gui._game_mixer(followed, said)
+    game.kmix_moved = {"a1": "lights"}
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert changed[-1] == ("B", {"lights": 0})
 
 
 def test_the_games_tones_page_has_the_keyboards_drum_kit_and_steps_it(server):
@@ -1323,7 +1342,7 @@ def test_the_keys_card_has_what_the_keyboard_plays_on_its_keys(server):
     sid = first_song(server)
     status, roll = call(server, f"/api/roll?id={urllib.request.quote(sid)}")
     assert status == 200 and (roll["lowest"], roll["highest"], roll["most_lit"]) == (36, 96, 4)
-    assert [(p["part"], p["kind"], p["lights"]) for p in roll["parts"]] == [("lead", "lead", 2), ("rhythm", "rhythm", 2)]
+    assert [(p["part"], p["kind"], p["lights"]) for p in roll["parts"]] == [("lead", "lead", 1), ("rhythm", "rhythm", 1)]
     assert roll["notes"] and all(36 <= key <= 96 and end > start for start, end, key, _part, _lit in roll["notes"])
     assert {part for *_rest, part, _lit in roll["notes"]} == {0, 1} and any(lit for *_rest, lit in roll["notes"])
     assert [n[0] for n in roll["notes"]] == sorted(n[0] for n in roll["notes"])  # (in time)

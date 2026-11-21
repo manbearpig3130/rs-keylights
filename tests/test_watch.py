@@ -401,29 +401,21 @@ def test_pads_turn_arrangements_on_and_give_them_lit_keys():
     watch.step()
     assert gui.changes[-1] == ("B", {"play": True})
     assert note(watch) == ("Bass: on", None)  # (in the scale's place)
-    launchkey.queued = [Pad(1, 0)]  # the lead's lit keys: from 4 round to none, the song taking it once taps stop
+    launchkey.queued = [Pad(1, 0)]  # the lead's lit keys: off, the song taking it once taps stop
     watch.step()
     assert gui.changes[-1] == ("L", {"lights": 0}) and gui.later == PAD_WAIT
     gui.song["arrangements"][2].update(play=True, lights=0)
-    gui.song["arrangements"][0]["lights"] = 3
-    launchkey.queued = [Pad(1, 2)]  # the bass's: one more, the lead keeping 3
+    gui.song["arrangements"][0]["lights"] = 1
+    launchkey.queued = [Pad(1, 2)]  # the bass's: on too, sharing the 4 keys with the lead's
     clock.now = 1.0
     watch.step()
     assert gui.changes[-1] == ("B", {"lights": 1})
     gui.song["arrangements"][2]["lights"] = 1
-    launchkey.queued, before = [Pad(1, 0), Pad(1, 0)], len(gui.changes)  # the lead's, twice quickly: 3, none, 1
+    launchkey.queued, before = [Pad(1, 0), Pad(1, 0)], len(gui.changes)  # the lead's, twice quickly: off, on again
     clock.now = 2.0
     watch.step()
     assert gui.changes[before:] == [("L", {"lights": 0}), ("L", {"lights": 1})]
-    assert note(watch) == ("Lead: 1 lit key", None)
-    gui.song["arrangements"][2]["lights"] = 0
-    gui.song["arrangements"][0]["lights"] = 4
-    launchkey.queued, before = [Pad(1, 1)], len(gui.changes)  # the rhythm, with every key taken: nothing
-    clock.now = 3.0
-    watch.step()
-    clock.now = 4.0
-    watch.step()
-    assert len(gui.changes) == before and note(watch) == ("Rhythm: no keys free", None)
+    assert note(watch) == ("Lead: lights on", None)
 
 
 def test_encoders_step_through_tones_and_send_where_they_stop(monkeypatch):
@@ -666,9 +658,9 @@ def test_following_the_games_song_list_moving_by_itself_shows_the_song_it_highli
     assert clock.now < watch._browse_until  # (on the screen for a while)
 
 
-def test_with_most_lights_a_parts_pad_below_turns_its_lights_on_or_off():
+def test_a_parts_pad_below_turns_its_lights_on_or_off():
     watch, gui, launchkey, clock = watching()
-    gui.info["song"], gui.info["most_lights"] = gui.song, True
+    gui.info["song"] = gui.song
     watch.step()
     assert gui.song["arrangements"][0]["lights"] == 4
     launchkey.queued = [Pad(1, 0)]  # the lead's: off at once (no going through 3, 2, 1)
@@ -980,11 +972,11 @@ def test_a_toggle_is_said_at_the_bottom_left_of_whatever_the_screen_shows():
     launchkey.queued = [Pad(1, 0)]  # the lead's lit keys: said over it too
     clock.now = 1.5
     watch.step()
-    assert screens(launchkey)[-1] == with_note(tone_shown, ("Lead: no lit keys",)).data()
+    assert screens(launchkey)[-1] == with_note(tone_shown, ("Lead: lights off",)).data()
     clock.now = 0.5 + PICTURE_SHOWN  # the tone gone, still said, over the song
     watch.step()
     assert screens(launchkey)[-1] == with_note(song_picture(*TWILIGHT, done=30 / 260, sign="playing",
-                                                            beside="0:30 / 4:20"), ("Lead: no lit keys",)).data()
+                                                            beside="0:30 / 4:20"), ("Lead: lights off",)).data()
 
 
 def test_playing_the_song_knob_3_and_the_pads_below_go_through_its_sections():

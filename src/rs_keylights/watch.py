@@ -109,7 +109,7 @@ SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.01  # knob 4 a section at a time 
 GAME_SMALL_STEPS, GAME_PHRASES, GAME_STEPS, GAME_BEHIND = ("left", "right"), ("pagedown", "pageup"), 8, 4
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's TONE MIXER in the game: the mixer up here too
 GAME_TONES_SCREEN = "RSKeylights_Tones"  # its TONES: a tone stepped there shown here as a knob's turn shows it
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_TONES_SCREEN)  # (and its TONES):
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Mixer2", GAME_TONES_SCREEN)  # (the new mixer, and TONES):
 # what's done there, done here at once
 GAME_KEY_TIME = 2 / 60  # seconds the game takes to type a key (pressed a frame, let go the next)
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
@@ -569,7 +569,7 @@ class Watch:
     def _game_mixer(self, info: dict[str, Any], now: float) -> None:
         """Following, RS-Keylights' TONE MIXER open in the game (the riffloop mod's, from its pause menu): the mixer
         up here too, on the arrangements' volumes, until it closes there."""
-        on = info.get("mode") == "follow" and info.get("game_screen") == GAME_MIXER_SCREEN
+        on = info.get("mode") == "follow" and info.get("game_screen") in (GAME_MIXER_SCREEN, "RSKeylights_Mixer2")
         if on and not self._mixer_by_game:
             self._mixer_by_game = True
             self._mix_page_to("parts", info, now)
@@ -686,7 +686,7 @@ class Watch:
                     picture[(0, column)] = ("palette", MUTED_PAD, False)
                 else:
                     picture[(0, column)] = ("rgb", *(round(c * MUTED_LEVEL) for c in rgb))
-                share = min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
+                share = min(self._lights_of(a), 1)  # (lit or not: the lit parts share the 4 keys)
                 level = share * (1.0 if a["play"] else 0.25)
                 picture[(1, column)] = ("rgb", *(round(c * level) for c in rgb))
                 if a["kind"] == "drums":  # (its pad below: the beat lights)
@@ -993,24 +993,12 @@ class Watch:
             if self._info is not None:
                 self._info = {**self._info, "beat_lights": on}
             self._say(now, line=f"Beat lights: {'on' if on else 'off'}")
-        elif info.get("most_lights"):  # (the lit parts share the 4 keys: just whether it lights them)
+        else:  # (the lit parts share the 4 keys: just whether it lights them)
             lights = 0 if self._lights_of(a) else 1
             self._pending[(a["id"], "lights")] = lights
             self.gui.change_part(a["id"], {"lights": lights}, later=PAD_WAIT)
             self._turned_at, self._wait, self._settling = now, PAD_WAIT, True
             self._said_by_pad(now, f"{a['name']}: lights {'on' if lights else 'off'}")
-        else:
-            others = sum(self._lights_of(x) for x in arrangements if x["play"] and x["id"] != a["id"])
-            options = list(range(max(0, 4 - others) + 1))  # up to the keys still free
-            current = self._lights_of(a)
-            if options == [0] and current == 0:
-                self._said_by_pad(now, f"{a['name']}: no keys free")
-                return
-            lights = options[(options.index(current) + 1) % len(options)] if current in options else options[0]
-            self._pending[(a["id"], "lights")] = lights
-            self.gui.change_part(a["id"], {"lights": lights}, later=PAD_WAIT)
-            self._turned_at, self._wait, self._settling = now, PAD_WAIT, True
-            self._said_by_pad(now, f"{a['name']}: {lights or 'no'} lit key{'' if lights == 1 else 's'}")
 
     def _playback(self, event: Pad | Turn, info: dict[str, Any], now: float) -> None:
         """Playing the song: knobs 1 and 2 move the loop's start and end, 3 moves through it, 4 goes a section at
@@ -1576,7 +1564,7 @@ class Watch:
                        [_shown(self._keys_volume(info))])  # (percent, as the game's music and TONE MIXER have them)
             keys = info.get("keys") or {}
             quiet = [not a["play"] for a in arrangements_now] + [False] * len(game) + [not keys.get("sound", True)]
-            lights = [min(self._lights_of(a), 1) if info.get("most_lights") else self._lights_of(a) / 4
+            lights = [min(self._lights_of(a), 1)
                       for a in arrangements_now] + [0.0] * len(game) + [1.0 if keys.get("lights") else 0.0]
             tops = [100] * len(names)
             turned = (None if self._mix_slider == CONTROLS else len(names) - 1 if self._mix_slider == KEYS_COLUMN

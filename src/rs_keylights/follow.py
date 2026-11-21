@@ -412,7 +412,6 @@ class Follower:
         self._made = PlanCache()  # (the parts' lights and tracks as made: a change remakes just the part changed)
         self.lights_early = lights_early  # seconds the keys light before the notes
         self.fastest_flash = fastest_flash  # a key's repeats closer than this flash on every other note
-        self.pooled_lights = False  # the lit parts share the 4 lit keys a moment at a time, the one played first
         self._trace = trace  # what RS Companion reports and what the clock makes of it, for debugging
         self._clock = clock
         self._sleep = sleep
@@ -732,7 +731,7 @@ class Follower:
                     self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
                     continue
             parts.append(Part(ref, arrangement, lights))
-        return plan(parts, voices if callable(voices) else None, strict=False, pooled=self.pooled_lights,
+        return plan(parts, voices if callable(voices) else None, strict=False,
                     first=current, cache=self._made)  # (one that doesn't fit the keyboard's channels: just lit)
 
     def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:

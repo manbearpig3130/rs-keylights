@@ -4,7 +4,7 @@ import os
 import socket
 import threading
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 # Rocksmith's Riff Repeater looping a range of our own (the A-B loop, following the game), through RS Re-ARMed's
 # riffloop mod (rearmed-sidekicks), which makes it phrases of their own in the song for Riff Repeater to pick (and
@@ -160,14 +160,15 @@ class RiffLoop:
         screen only; a range set: once it's phrases of its own and picked, so its menu opens on them, for its Start)."""
         return self._send("riff")
 
-    def kmix(self, rows: Sequence[tuple[str, float, bool, str]]) -> GameLoop | None:
-        """RS-Keylights' TONE MIXER in the game (the mod's menu, from Learn a Song's pause menu): its rows, each an
-        id, a percent (0 to 100), whether it's muted and a label, a slider each; sent as they change (the mod's
-        sliders and labels follow)."""
+    def kmix(self, rows: Sequence[tuple[Any, ...]]) -> GameLoop | None:
+        """RS-Keylights' mixers in the game (the mod's menus, from Learn a Song's pause menu): its rows, each an id, a
+        percent (0 to 100), whether it's muted, a label and (for the Launchkey-like mixer) its lit keys (-1: none to
+        light) and kind (lead, rhythm, bass, drums, keys, music, all); sent as they change (the mod's follow)."""
         def label(text: str) -> str:
             return "".join(c for c in text if c not in ",;\n").strip()[:30] or "?"
-        return self._send("kmix " + ";".join(f"{i},{value:.1f},{int(muted)},{label(text)}"
-                                             for i, value, muted, text in rows))
+        return self._send("kmix " + ";".join(
+            f"{row[0]},{row[1]:.1f},{int(row[2])},{label(row[3])}" + (f",{int(row[4])},{label(row[5])}" if len(row) > 5 else "")
+            for row in rows))
 
     def ktones(self, rows: Sequence[tuple[str, str, str]]) -> GameLoop | None:
         """Its TONES page: its rows, each an id, a label and the tone it plays (as shown); sent as they change."""
@@ -185,8 +186,8 @@ class RiffLoop:
         moved: dict[str, float | str] = {}
         for word in words[1:]:
             key, _, value = word.partition("=")
-            if value == "mute":
-                moved[key] = "mute"
+            if value in ("mute", "lights"):
+                moved[key] = value
                 continue
             if value.startswith("tone:"):
                 try:
