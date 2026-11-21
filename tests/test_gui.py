@@ -1248,9 +1248,11 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     said = game.status()  # (the game's Music 80, as the fake has it)
     gui._game_mixer(followed, said)
     rows = {r[0]: r for r in game.kmix_rows}
-    assert rows["a0"][4:] == (1, "lead") and rows["a1"][4:] == (0, "bass") and rows["drums"][4:] == (0, "drums")
-    assert rows["music"] == ("music", 80.0, False, "MUSIC", -1, "music") and rows["keys"][3:] == ("KEYS", 1, "keys")
-    assert rows["all"][1] == max(r[1] for k, r in rows.items() if k not in ("music", "all")) and rows["all"][5] == "all"
+    assert rows["a0"][4:] == (1, "lead", 0) and rows["a1"][4:] == (0, "bass", 1) and rows["drums"][4:] == (0, "drums", 2)
+    assert rows["keys"][3:] == ("KEYS", 1, "keys", 6)  # (the tone mixer's columns 1 to 8, as the Launchkey's knobs)
+    assert rows["all"][1] == max(rows[k][1] for k in ("a0", "a1", "drums", "keys")) and rows["all"][5:] == ("all", 7)
+    assert rows["music"] == ("music", 80.0, False, "MUSIC", -1, "music", 15)  # (the stem mixer's knob 8)
+    assert rows["gbass"] == ("gbass", 0.0, False, "BASS", -1, "stem:bass:off", 9)  # (no Song Stems: off)
     game.kmix_moved = {"a1": "lights", "drums": "lights", "keys": "lights", "all": "mute", "music": 55.0}
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
@@ -1263,6 +1265,29 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
     assert changed[-1] == ("B", {"lights": 0})
+
+
+def test_the_games_stem_mixer_has_its_songs_bass_and_guitar_as_song_stems_has_them(server):
+    gui, game = server.gui, server.gui._riff_loop
+    call(server, "/api/follow", {})
+    ini = gui.index.game_dir / "RSMods.ini"
+    ini.write_text("[Toggle Switches]\nSongStems = on\n\n[Mod Settings]\nSongStemsGuitarLevel = 0\nSongStemsBassLevel = 60\n")
+    followed = {"arrangements": [
+        {"id": "L", "name": "Lead", "kind": "lead", "play": True, "playing": True, "lights": 1, "tones": {}},
+        {"id": "B", "name": "Bass", "kind": "bass", "play": True, "playing": False, "lights": 0, "tones": {}}]}
+    gui._game_mixer(followed, game.status())
+    rows = {r[0]: r for r in game.kmix_rows}
+    assert rows["gguitar"] == ("gguitar", 0.0, True, "GUITAR", -1, "stem:guitar", 10)  # (played: taken out, muted)
+    assert rows["gbass"] == ("gbass", 60.0, False, "BASS", -1, "stem:bass:wait", 9)  # (waiting its turn)
+    game.kmix_moved = {"gbass": 45.0, "gguitar": "mute"}  # its fader moved; its pad: back where it was
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert gui.game_stems_info() == {"on": True, "guitar": 100, "bass": 45}
+    gui._game_mixer(followed, game.status())
+    game.kmix_moved = {"gguitar": "mute"}  # (and muted again)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert gui.game_stems_info()["guitar"] == 0
 
 
 def test_the_games_mixer_pages_turned_there_are_said_and_the_launchkeys_go_there(server):
@@ -1286,7 +1311,7 @@ def test_the_games_new_mixer_has_a_drum_part_to_make_as_the_launchkeys_pad_makes
     followed = {"arrangements": [{"id": "L", "name": "Lead", "kind": "lead", "play": True, "lights": 1, "tones": {}},
                                  drums]}
     gui._game_mixer(followed, game.status())
-    assert next(r for r in game.kmix_rows if r[0] == "drums") == ("drums", 0.0, False, "DRUMS", -1, "drums:make")
+    assert next(r for r in game.kmix_rows if r[0] == "drums") == ("drums", 0.0, False, "DRUMS", -1, "drums:make", 1)
     game.kmix_moved = {"drums": "mute"}  # its pad: made
     with gui._game_mixer_lock:
         gui._game_mixer_apply()

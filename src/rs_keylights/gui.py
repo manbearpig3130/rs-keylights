@@ -2502,26 +2502,31 @@ class Gui:
             with self._lock:
                 volumes, keys = list(self.settings["volumes"]), int(self.settings["keys_volume"])
                 keys_sound = bool(self.settings["keys_sound"])
+            # (each row's column: a page's 8, as the Launchkey's knobs; the tone mixer's 0-7, the stem mixer's 8-15)
             rows = tuple((f"a{i}", _percent(volumes[i] if i < len(volumes) else NORMAL_VOLUME), not a.get("play", True),
-                          str(a["name"]).upper(), min(int(a.get("lights") or 0), 1), str(a.get("kind") or "lead"))
+                          str(a["name"]).upper(), min(int(a.get("lights") or 0), 1), str(a.get("kind") or "lead"), i)
                          for i, a in enumerate(arrangements))
+            drum_column = len(arrangements) if len(arrangements) < GAME_MIXER_SLIDERS else -1  # (after them)
             self._game_mixer_parts = arrangements
             ids = {f"a{i}": a["id"] for i, a in enumerate(arrangements)}
             if drummed is not None:  # (its own volume and mute, the song's)
                 rows += (("drums", _percent(int(drummed.get("volume", DRUMS_VOLUME))), not drummed.get("play", True),
-                          "DRUMS", int(bool(self.settings["beat_lights"])), "drums"),)
+                          "DRUMS", int(bool(self.settings["beat_lights"])), "drums", drum_column),)
                 ids["drums"] = "drums"
             elif drum_part is not None:  # (not made yet: its column there to make them, as the Launchkey's pad; being
                 # made, how far)
                 making = drum_part.get("making")
                 rows += (("drums", 0.0, False, "DRUMS", -1,
-                          f"drums:{round(100 * (drum_part.get('progress') or 0))}%" if making else "drums:make"),)
+                          f"drums:{round(100 * (drum_part.get('progress') or 0))}%" if making else "drums:make",
+                          drum_column),)
+            rows += (("keys", _percent(keys), not keys_sound, "KEYS", int(bool(self.settings["keys_lights"])), "keys",
+                      6),)
+            rows += (("all", max([row[1] for row in rows if not row[5].startswith("drums:")] or [0.0]),  # (the
+                      bool(self.play_options["silent"]), "ALL", -1, "all", 7),)                       # loudest: knob 8's)
+            rows += self._game_stem_rows(parts)
             music = said.music if said is not None and said.music is not None else None
-            if music is not None:  # (the game's Music volume: the new mixer's 6th column, as knob 6)
-                rows += (("music", float(music), False, "MUSIC", -1, "music"),)
-            rows += (("keys", _percent(keys), not keys_sound, "KEYS", int(bool(self.settings["keys_lights"])), "keys"),)
-            rows += (("all", max([row[1] for row in rows if row[5] != "music"] or [0.0]),  # (the loudest: knob 8's)
-                      bool(self.play_options["silent"]), "ALL", -1, "all"),)
+            if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 8)
+                rows += (("music", float(music), False, "MUSIC", -1, "music", 15),)
             self._game_mixer_ids = ids
             if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
                 self._game_mixer_sent = rows
@@ -2536,6 +2541,21 @@ class Gui:
                                f"{number:03d} {tone(number).name}") for key, number in tones.items())
             if tone_rows != self._game_tones_sent and self._riff_loop.ktones(tone_rows) is not None:
                 self._game_tones_sent = tone_rows
+
+    def _game_stem_rows(self, parts: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
+        """The game's MIXER's stem mixer page: the game's song's bass and guitar (rearmed-mods' Song Stems: the part
+        played taken out, at its level), as the Launchkey's stems page has them (knobs 2 and 3). The one not played
+        waits its turn (":wait"); without Song Stems on, both off (":off")."""
+        stems = self.game_stems_info()
+        playing = next((a for a in parts if a.get("playing")), None)
+        taken = "bass" if playing is not None and playing.get("kind") == "bass" else "guitar"
+        rows: tuple[tuple[Any, ...], ...] = ()
+        for column, part in ((9, "bass"), (10, "guitar")):
+            on = bool(stems and stems.get("on"))
+            level = float(stems[part]) if on and stems else 0.0
+            state = "" if on and part == taken else ":wait" if on else ":off"
+            rows += ((f"g{part}", level, on and level == 0, part.upper(), -1, f"stem:{part}{state}", column),)
+        return rows
 
     def _next_lights(self, part: str) -> int:
         """A part's lit keys after its bottom pad, as the Launchkey's: on or off (the lit parts share the 4 keys)."""
@@ -2566,6 +2586,15 @@ class Gui:
             drum_part = getattr(self, "_game_mixer_drums", None)
             if key == "page":  # (its page turned there: the Launchkey's mixer to it)
                 self._game_mixer_page = {"turns": self._game_mixer_page["turns"] + 1, "page": value}
+            elif key in ("gbass", "gguitar"):  # (the stem mixer's: the game's song's part, as the Launchkey's
+                stem = key[1:]                        # stems page has it)
+                try:
+                    if value == "mute" and key in sent:
+                        self.set_game_stems({"part": stem, "mute": not sent[key][2]})
+                    elif isinstance(value, float):
+                        self.set_game_stems({"part": stem, "level": round(value)})
+                except GuiError:
+                    pass  # (Song Stems turned off since: its rows say so next)
             elif key == "drums" and drum_part is not None and not drum_part.get("made", True):  # (not made yet: its pad
                 if value == "mute" and not drum_part.get("making"):                         # makes them)
                     self.change_part("drums", {"make": True})

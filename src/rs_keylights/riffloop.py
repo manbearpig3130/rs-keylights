@@ -163,11 +163,13 @@ class RiffLoop:
     def kmix(self, rows: Sequence[tuple[Any, ...]]) -> GameLoop | None:
         """RS-Keylights' mixers in the game (the mod's menus, from Learn a Song's pause menu): its rows, each an id, a
         percent (0 to 100), whether it's muted, a label and (for the Launchkey-like mixer) its lit keys (-1: none to
-        light) and kind (lead, rhythm, bass, drums, keys, music, all); sent as they change (the mod's follow)."""
+        light), kind (lead, rhythm, bass, drums, keys, music, all, stem:bass...) and column (0-7 its tone mixer
+        page, 8-15 its stem mixer page; -1 none); sent as they change (the mod's follow)."""
         def label(text: str) -> str:
             return "".join(c for c in text if c not in ",;\n").strip()[:30] or "?"
         return self._send("kmix " + ";".join(
             f"{row[0]},{row[1]:.1f},{int(row[2])},{label(row[3])}" + (f",{int(row[4])},{label(row[5])}" if len(row) > 5 else "")
+            + (f",{int(row[6])}" if len(row) > 6 else "")
             for row in rows))
 
     def kpage(self, page: str) -> GameLoop | None:

@@ -1700,36 +1700,25 @@ def test_the_guitar_column_is_dark_playing_the_song_and_in_the_mixer():
     assert gui.pedal_calls == []
 
 
-def test_following_knob_6_in_the_mixer_is_the_games_music_volume():
+def test_following_the_games_music_is_on_the_mixers_stems_page_not_knob_6():
     watch, gui, launchkey, clock = watching()
     gui.info["song"], gui.music = gui.song, 76
     watch.step()
-    launchkey.queued = [Button(105)]  # Func: the mixer, the game's music between the arrangements and its keys
+    launchkey.queued = [Button(105)]  # Func: the mixer, the arrangements and its keys
     clock.now = 0.5
     watch.step()
-    names, quiet, lights = ["Lead", "Rhythm", "Bass", "Music", "Keys"], [False, True, True, False, False], [1, 0, 0, 0, 1]
-
-    def mixer(volumes, turned):
-        return mixer_picture(names, volumes, turned, quiet=quiet, lights=lights, tops=[100] * 5).data()
-
-    assert screens(launchkey)[-1] == mixer([79, 79, 79, 76, 79], None)
-    launchkey.queued = [Turn(GUITAR_COLUMN, -3), Turn(GUITAR_COLUMN, -3)]  # knob 6: from where the game has it
+    names, quiet, lights = ["Lead", "Rhythm", "Bass", "Keys"], [False, True, True, False], [1, 0, 0, 1]
+    assert screens(launchkey)[-1] == mixer_picture(names, [79] * 4, None, quiet=quiet, lights=lights,
+                                                   tops=[100] * 4).data()
+    launchkey.queued = [Turn(GUITAR_COLUMN, -3)]  # knob 6: where it went, said
     clock.now = 1.0
     watch.step()
-    assert gui.music == 70 and gui.pedal_calls == [] and screens(launchkey)[-1] == mixer([79, 79, 79, 70, 79], 3)
-    launchkey.queued = [Turn(GUITAR_COLUMN, 60)]  # (100 at most)
+    assert gui.music == 76 and gui.pedal_calls == [] and note(watch) == (None, ("The game's Music:", "▼, then knob 8"))
+    launchkey.queued = [Button(52), Turn(CONTROLS, -3)]  # ▼, knob 8 (without Song Stems: its Music still)
     clock.now = 1.5
     watch.step()
-    assert gui.music == 100
-    launchkey.queued = [Turn(CONTROLS, -5)]  # knob 8: the keyboard's volumes, not the game's
-    clock.now = 2.0
-    watch.step()
-    assert gui.music == 100 and gui.keys["volume"] == 94
-    gui.music = None  # (a mod without it: no slider, and knob 6 says why)
-    launchkey.queued = [Turn(GUITAR_COLUMN, 1)]
-    clock.now = 2.5
-    watch.step()
-    assert " ".join(note(watch)[1]) == "Music volume: update the riffloop mod"
+    assert gui.music == 73 and screens(launchkey)[-1] == mixer_picture(
+        ["Bs", "Gtr", "Music"], [100, 100, 73], 2, quiet=[True, True, False], tops=[100] * 3).data()
     watch, gui, launchkey, clock = watching("play")  # not following: no slider for it, knob 6 nothing
     gui.info["song"], gui.music = gui.song, 76
     watch.step()
@@ -2061,16 +2050,20 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     launchkey.queued = [Button(105), Button(52)]
     clock.now = 0.5
     watch.step()
-    assert watch.mix_knobs and watch.mix_page == "parts"
+    assert watch.mix_knobs and watch.mix_page == "stems"  # (its page still: the game's Music on it)
     assert note(watch) == (None, ("The game's song parts", "need rearmed-mods"))  # (no RSMods.ini)
-    assert pads(launchkey)[(0, 0)] == (9, False)  # (the arrangements' pads still)
+    assert pads(launchkey)[(0, 0)] == (0, False) and pads(launchkey)[(0, 2)] == (0, False)  # (nothing to split
+    launchkey.queued = [Pad(0, 0)]                                                          # here, none to mute)
+    clock.now = 0.7
+    watch.step()
+    assert gui.splits == []
     gui.game_stems = {"on": False, "guitar": 100, "bass": 100}  # (rearmed-mods, its Song Stems off)
     clock.now = 1.0
     watch.step()
     launchkey.queued = [Button(52)]
     clock.now = 1.5
     watch.step()
-    assert watch.mix_page == "parts" and note(watch) == (None, ("Song Stems is off:", "turn it on in the mods"))
+    assert watch.mix_page == "stems" and note(watch) == (None, ("Song Stems is off:", "turn it on in the mods"))
 
 
 def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_and_its_music():

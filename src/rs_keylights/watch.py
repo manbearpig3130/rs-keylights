@@ -829,8 +829,8 @@ class Watch:
                 lambda: warmup_picture(name, speed_said, said, done, sign, WARMUP_HINT, muted))
 
     def _stems_page(self, info: dict[str, Any]) -> bool:
-        """The mixer's on the song's audio's page (following: the game's song's, with the Song Stems mod on)."""
-        return self.mix_page == "stems" and (info.get("mode") != "follow" or self._game_stems(info) is not None)
+        """The mixer's on the song's audio's page (following: the game's song's, and its Music)."""
+        return self.mix_page == "stems"
 
     @staticmethod
     def _game_stems(info: dict[str, Any]) -> dict[str, Any] | None:
@@ -858,10 +858,10 @@ class Watch:
         mutes = audio.get("mutes") or {}
         for column in range(CONTROLS):
             picture[(0, column)], picture[(1, column)] = ("palette", 0, False), ("rgb", 0, 0, 0)
-        if info.get("mode") == "follow":  # (the game's song: its bass and guitar, the one taken out now bright)
-            playing = self._game_part(info)
+        if info.get("mode") == "follow":  # (the game's song: its bass and guitar, the one taken out now bright;
+            playing = self._game_part(info)  # without Song Stems, none)
             for column, (stem, _label, rgb) in enumerate(STEMS):
-                if stem in GAME_STEMS:
+                if stem in GAME_STEMS and self._game_stems(info) is not None:
                     level = 1.0 if stem == playing else GAME_STEM_WAITING
                     picture[(0, column)] = (("palette", MUTED_PAD, False) if self._game_level(stem, info) == 0 else
                                             ("rgb", *(round(c * level) for c in rgb)))
@@ -1547,7 +1547,8 @@ class Watch:
             names = [label for stem, label, _rgb in STEMS if stem in GAME_STEMS] + ["Music"]
             volumes = [self._game_level(stem, info) for stem, _label, _rgb in STEMS if stem in GAME_STEMS]
             volumes.append(self._music_of(info) or 0)
-            quiet = [stem != self._game_part(info) for stem, _label, _rgb in STEMS if stem in GAME_STEMS] + [False]
+            off = self._game_stems(info) is None  # (Song Stems off: both quiet)
+            quiet = [off or stem != self._game_part(info) for stem, _label, _rgb in STEMS if stem in GAME_STEMS] + [False]
             columns = [column for column, (stem, _label, _rgb) in enumerate(STEMS) if stem in GAME_STEMS]
             turned = (len(columns) if self._mix_slider == CONTROLS else
                       columns.index(self._mix_slider) if self._mix_slider in columns else None)
@@ -1564,20 +1565,17 @@ class Watch:
             tops = [100] * len(names)
             return (("mixer", "stems", *volumes, *quiet, turned, muted),
                     lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, tops=tops))
-        if self._picture_of == "mixer":  # the arrangements', the game's music (following), then its keys'
-            music = self._music_of(info)
-            game = [] if music is None else [music]
-            names = [a["name"] for a in arrangements_now] + ["Music"] * len(game) + ["Keys"]
-            volumes = ([_shown(self._volume_of(slot, info)) for slot in range(len(arrangements_now))] + game +
-                       [_shown(self._keys_volume(info))])  # (percent, as the game's music and MIXER have them)
+        if self._picture_of == "mixer":  # the arrangements', then its keys' (the game's Music: the stems page's)
+            names = [a["name"] for a in arrangements_now] + ["Keys"]
+            volumes = ([_shown(self._volume_of(slot, info)) for slot in range(len(arrangements_now))] +
+                       [_shown(self._keys_volume(info))])  # (percent, as the game's MIXER has them)
             keys = info.get("keys") or {}
-            quiet = [not a["play"] for a in arrangements_now] + [False] * len(game) + [not keys.get("sound", True)]
-            lights = [min(self._lights_of(a), 1)
-                      for a in arrangements_now] + [0.0] * len(game) + [1.0 if keys.get("lights") else 0.0]
+            quiet = [not a["play"] for a in arrangements_now] + [not keys.get("sound", True)]
+            lights = [min(self._lights_of(a), 1) for a in arrangements_now] + [1.0 if keys.get("lights") else 0.0]
             tops = [100] * len(names)
-            turned = (None if self._mix_slider == CONTROLS else len(names) - 1 if self._mix_slider == KEYS_COLUMN
-                      else (len(arrangements_now) if game else None) if self._mix_slider == GUITAR_COLUMN
-                      else min(self._mix_slider, len(names) - 1))  # (its keys' slider: the last)
+            turned = (None if self._mix_slider in (CONTROLS, GUITAR_COLUMN) else len(names) - 1
+                      if self._mix_slider == KEYS_COLUMN else min(self._mix_slider, len(names) - 1))  # (its keys'
+            # slider: the last)
             return (("mixer", *names, *volumes, *quiet, *lights, turned, muted),
                     lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, lights=lights, tops=tops))
         if self._picture_of == "playback":
@@ -1866,16 +1864,17 @@ class Watch:
 
     def _mix_page_to(self, page: str, info: dict[str, Any], now: float) -> None:
         """The mixer on one of its pages (kept up): the arrangements' volumes, or the song's audio's parts' (the
-        game's song's, following)."""
+        game's song's and its Music, following)."""
         self._open_mixer(now, kept=True)
-        if page == "stems" and info.get("mode") == "follow" and self._game_stems(info) is None:
-            stems = info.get("game_stems")
-            self._say(now, lines=("Song Stems is off:", "turn it on in the mods") if stems else
-                      ("The game's song parts", "need rearmed-mods"))
-            return
         if page != self.mix_page:
             self._mix_slider, self._mix_strip = CONTROLS, None
         self.mix_page = self._mix_page_last = page
+        if page == "stems" and info.get("mode") == "follow":  # (the game's song's parts, if Song Stems is on; its
+            if self._game_stems(info) is None:               # Music, either way)
+                stems = info.get("game_stems")
+                self._say(now, lines=("Song Stems is off:", "turn it on in the mods") if stems else
+                          ("The game's song parts", "need rearmed-mods"))
+            return
         audio = info.get("audio") or {}
         if page == "stems" and not audio.get("made"):
             self._say(now, lines=self._splitting(audio) if audio.get("making") else
@@ -2010,15 +2009,11 @@ class Watch:
 
     def _turn_volume(self, encoder: int, steps: int, info: dict[str, Any], now: float) -> None:
         """A mixer's knob: 1 to 6 the volume of the arrangement in its place (the same in every song), 7 its keys',
-        8 all of them together; VOLUME_STEP a step, at once (the notes going on). Knob 6, following: the game's Music
-        volume (its mixer's: the song), from where the game has it."""
+        8 all of them together; VOLUME_STEP a step, at once (the notes going on). (Following, the game's Music is
+        the stems page's knob 8.)"""
         if encoder == GUITAR_COLUMN:
-            if info.get("mode") == "follow":
-                def turn() -> None:
-                    level = self.gui.set_game_music({"step": steps * VOLUME_STEP})["music"]
-                    self._pending[("volume", "music")] = int(level)
-                if self._try(turn):
-                    self._mix_slider = GUITAR_COLUMN
+            if info.get("mode") == "follow":  # (the game's Music: on the stems page)
+                self._say(now, lines=("The game's Music:", "▼, then knob 8"))
             return
         arrangements = ((info.get("song") or {}).get("arrangements") or [])[:ARRANGEMENT_KNOBS]
         drummed = next((slot for slot, a in enumerate(arrangements) if a["kind"] == "drums"), None)
