@@ -485,6 +485,29 @@ def test_following_is_quiet_going_on_after_a_pause_not_a_rush_of_notes():
     assert any(lit == [60] for t, lit in played if 10.4 <= t < 11.0)  # (then the song as it is: 10.0's still on)
 
 
+def test_following_held_up_is_traced_and_a_stretch_skipped_too():
+    client, index, keys, trace = FakeClient(), FakeIndex([REF]), FakeKeys(), []
+    game: dict = {"t": 9.5, "screen": "LearnASong_Game"}
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 game_time=lambda: (game["t"], game["screen"], "x_lead"), trace=trace.append)
+    now = 0.0
+    for i in range(100):  # playing from 9.5, steadily
+        now = i * 0.02
+        game["t"] = round(9.5 + now, 4)
+        f.step(now)
+    assert any("playing" in e for e in trace) and not [e for e in trace if "stall" in e or "skipped" in e]
+    now += 0.4  # (this process held up 0.4 s: its notes late, traced)
+    game["t"] = round(9.5 + now, 4)
+    f.step(now)
+    stalls = [e for e in trace if "stall" in e]
+    assert len(stalls) == 1 and stalls[0]["stall"] == 0.4 and not [e for e in trace if "skipped" in e]
+    now += 1.5  # (held up longer than a seek's: what it held up skipped, traced too)
+    game["t"] = round(9.5 + now, 4)
+    f.step(now)
+    skipped = [e for e in trace if "skipped" in e]
+    assert len(skipped) == 1 and skipped[0]["to"] - skipped[0]["skipped"] > 1.0
+
+
 def test_another_songs_playback_far_from_rs_companions_timer_is_set_aside():
     clock = GameClock()
     now = game_reads(clock, 200.0, 1.0, 1.0, 0.0)

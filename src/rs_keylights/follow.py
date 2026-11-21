@@ -15,7 +15,7 @@ from .library import ArrangementRef
 from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .parts import Part, PlanCache, PlannedPart, VoicesFor, plan, player_for
-from .player import Player, Track
+from .player import SEEK_AHEAD, Player, Track
 from .sng import Arrangement
 from .tones import Tone
 
@@ -33,6 +33,8 @@ POLL_INTERVAL = 0.1
 TICK = 0.005
 GAME_TIME_EVERY = 0.02  # seconds between asks of the game's own time (riffloop's)
 TRACE_AFTER_JUMP = 2.0  # seconds of the game's time reads traced after it jumps (a pause gone, a seek, a rewind)
+STALL_TRACED = 0.15  # seconds between steps, while the notes play, that are traced: this process held up (the Mac
+# busy, swapping), its notes coming late, all at once (more than SEEK_AHEAD: those in it skipped, traced too)
 JUST_STRUCK = 0.15  # seconds: starting to play mid-song, notes struck this little before sound; older ones still
 # ringing don't (every part's would come at once: following again, or going on after Rocksmith's resume, 2 s back)
 GAME_TIME_MISSES, GAME_TIME_BACK_OFF = 3, 2.0  # unanswered this many times (no game, or a mod without it): asked
@@ -434,6 +436,7 @@ class Follower:
         self._next_poll = 0.0
         self._connected: bool | None = None
         self._playing = False
+        self._stepped_at: float | None = None  # when it last stepped (a step long after: held up)
 
     def position(self, now: float) -> float | None:
         """The song position, while the song plays: the game's own (riffloop's), while it's read; else as RS
@@ -544,6 +547,7 @@ class Follower:
             self._sleep(TICK)
 
     def step(self, now: float) -> None:
+        late, self._stepped_at = now - (self._stepped_at if self._stepped_at is not None else now), now
         if self._game_time is not None and now >= self._next_game_time:
             self._ask_game_time(now)
         if self._game_says:
@@ -577,6 +581,11 @@ class Follower:
                           "from": "game" if self._game_clock.trusted(now) else "companion"})
             self._player.seek(position + self.offset, sounding=JUST_STRUCK)  # (from about where it is)
         self._player.retime(rate=self._rate(now))  # Riff Repeater's speed: the keys flash for it
+        was = self._player.position if self._playing else None
+        if was is not None and late > STALL_TRACED:  # (held up: its notes late, or skipped)
+            self._record({"t": now, "stall": round(late, 3), "at": round(position, 3)})
+        if was is not None and position + self.offset > was + SEEK_AHEAD:
+            self._record({"t": now, "skipped": round(was, 3), "to": round(position + self.offset, 3)})
         self._player.advance(position + self.offset)
         self._playing = True
 
