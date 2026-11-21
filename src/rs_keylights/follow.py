@@ -32,6 +32,7 @@ DEFAULT_OVERLAY_PORT = 9938
 POLL_INTERVAL = 0.1
 TICK = 0.005
 GAME_TIME_EVERY = 0.02  # seconds between asks of the game's own time (riffloop's)
+TRACE_AFTER_JUMP = 2.0  # seconds of the game's time reads traced after it jumps (a pause gone, a seek, a rewind)
 GAME_TIME_MISSES, GAME_TIME_BACK_OFF = 3, 2.0  # unanswered this many times (no game, or a mod without it): asked
 # again this long after
 # The game's own song time and screen (riffloop's time command: seconds, None without a song's playback seen; and
@@ -259,7 +260,7 @@ class GameClock:
     def reset(self) -> None:
         self._samples: deque[tuple[float, float]] = deque()  # (time, read at)
         self._last: tuple[float, float] | None = None
-        self._changed_at = self._read_at = -math.inf
+        self._changed_at = self._read_at = self.jumped_at = -math.inf
         self._paused = self._going_back = self._settling = False
         self.rate = 1.0
 
@@ -273,10 +274,12 @@ class GameClock:
             if step < 0:  # back: Riff Repeater's rewind, a restart or a seek (dark till it goes on)
                 self._samples.clear()
                 self._going_back = True
+                self.jumped_at = now
             elif abs(step - expected) > self.JUMP:  # on: a seek, or going on after a while
                 self._samples.clear()
                 self._going_back = False
                 self._settling = True
+                self.jumped_at = now
             else:
                 self._going_back = False
         self._last, self._changed_at = (timer, now), now
@@ -603,6 +606,8 @@ class Follower:
             self._game_clock.reset()
             return
         self._game_clock.update(timer, now, paused=bool(screen and screen.endswith("_Pause")))
+        if self._trace is not None and now - self._game_clock.jumped_at < TRACE_AFTER_JUMP:  # (how it goes on)
+            self._record({"t": round(now, 4), "read": timer, "screen": screen, "settled": self._game_clock.settled()})
 
     def _game_arrangement(self, name: str | None, now: float) -> None:
         """The arrangement the game says plays (its .sng's name; None: no song's playback, so none), opened as it

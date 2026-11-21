@@ -421,10 +421,10 @@ def test_going_on_after_a_pause_is_quiet_till_the_games_time_has_settled():
 
 
 def test_following_is_quiet_going_on_after_a_pause_not_a_rush_of_notes():
-    client, index, keys = FakeClient(), FakeIndex([REF]), FakeKeys()
+    client, index, keys, trace = FakeClient(), FakeIndex([REF]), FakeKeys(), []
     game: dict = {"t": 9.5, "screen": "LearnASong_Game"}
     f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
-                 game_time=lambda: (game["t"], game["screen"], "x_lead"))
+                 game_time=lambda: (game["t"], game["screen"], "x_lead"), trace=trace.append)
     for i in range(20):  # playing from 9.5: 9.88 by the pause
         game["t"] = round(9.5 + i * 0.02, 4)
         f.step(i * 0.02)
@@ -437,6 +437,9 @@ def test_following_is_quiet_going_on_after_a_pause_not_a_rush_of_notes():
         game["t"] = round(9.9 + (i - 270) * 0.02, 4)
         f.step(i * 0.02)
         played.append((round(game["t"], 2), sorted(keys.lit)))
+    reads = [e for e in trace if "read" in e]
+    assert reads and reads[0]["read"] == 9.9 and not reads[0]["settled"] and reads[-1]["settled"]  # (traced: how it
+    # went on, for 2 s after the jump)
     quiet = [lit for t, lit in played if t < 10.2]
     assert all(not lit for lit in quiet)  # (the first moments: nothing, though 10.0's note is due)
     assert any(lit == [60] for t, lit in played if 10.4 <= t < 11.0)  # (then the song as it is: 10.0's still on)

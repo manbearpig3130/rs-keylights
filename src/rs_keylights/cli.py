@@ -8,7 +8,7 @@ import sys
 import time
 import wave
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TextIO
 
 from . import dnafxtone, drums, midiexport, pcsongs, sampler, songlistfix
 from .follow import DEFAULT_OVERLAY_PORT, Follower, OverlayClient
@@ -342,6 +342,19 @@ def run_song_tones(args: argparse.Namespace) -> int:
     return 0
 
 
+TRACE_MOST = 20 << 20  # bytes: a trace file bigger than this, as it's opened, is kept as FILE.1 and a new one begun
+
+
+def open_trace(path: Path) -> TextIO:
+    """A trace file to append to (--trace): begun again when it's grown past TRACE_MOST, the last one kept beside it."""
+    try:
+        if path.stat().st_size > TRACE_MOST:
+            path.replace(path.with_name(path.name + ".1"))
+    except OSError:
+        pass
+    return open(path, "a")
+
+
 def run_follow(args: argparse.Namespace) -> int:
     choice = sound_choice(args, args.sound, "needs --sound")
     if choice is None:
@@ -349,7 +362,7 @@ def run_follow(args: argparse.Namespace) -> int:
     index = open_index(args)
     keyboard = Keyboard(args.midi_port, args.channel)
     keyboard.open()
-    trace = open(args.trace, "a") if args.trace else None
+    trace = open_trace(args.trace) if args.trace else None
     print(f"{len(index)} arrangements. Lighting keys{' with sound' if args.sound else ''} on '{args.midi_port}', "
           f"channel {args.channel}. Ctrl-C stops.")
 
@@ -388,7 +401,7 @@ def run_gui(args: argparse.Namespace) -> int:
         overrides["midi_port"] = args.midi_port
     if args.channel != DEFAULT_CHANNEL:
         overrides["channel"] = args.channel
-    trace = open(args.trace, "a") if args.trace else None
+    trace = open_trace(args.trace) if args.trace else None
 
     def record(entry: dict[str, object]) -> None:  # (from the following thread)
         if trace is not None:

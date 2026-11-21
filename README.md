@@ -772,7 +772,7 @@ keyboard. The tone picked on the keyboard's panel is only for the keys you play.
 | `follow --sound` | off | play the notes too, not just light the keys |
 | `follow --offset-ms` | 0 | light the keys this much earlier (negative: later) |
 | `follow --overlay-port` | 9938 | RS Companion's overlay port |
-| `follow --trace FILE` | | log what RS Companion reports, to look into timing (`gui --trace` too) |
+| `follow --trace FILE` | | log following's timing, to look into it (`gui --trace` too): what plays and stops, RS Companion's reads, and the game's own time for 2 s after it jumps (a pause gone, a seek); a file past 20 MB is kept as `FILE.1` and begun again |
 
 Tone options can be for one part (`--tone lead=178 --mute-tone rhythm=77`), or, without `PART=`, for every part. In
 `follow`, they're for the part you play.

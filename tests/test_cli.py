@@ -127,3 +127,17 @@ def test_tones_for_each_part():
     assert choice.voices(rhythm, (14, 15, 16)).mute.channel == 16
     assert choice.voices(lead, (11, 12, 13)).squeal == choice.voices(lead).main.__class__(12, tone(298))  # (default)
     assert choice.voices(rhythm).squeal is None  # (0: the part's own tone)
+
+
+def test_a_trace_file_grown_too_big_is_kept_aside_and_begun_again(tmp_path, monkeypatch):
+    from rs_keylights import cli
+    monkeypatch.setattr(cli, "TRACE_MOST", 10)
+    path = tmp_path / "trace.jsonl"
+    with cli.open_trace(path) as f:  # (none yet: begun)
+        f.write('{"t": 1}\n{"t": 2}\n')
+    with cli.open_trace(path) as f:  # (past its size: kept as .1, a new one)
+        f.write('{"t": 3}\n')
+    assert (tmp_path / "trace.jsonl.1").read_text() == '{"t": 1}\n{"t": 2}\n' and path.read_text() == '{"t": 3}\n'
+    with cli.open_trace(path) as f:  # (small: appended to)
+        f.write('{"t": 4}\n')
+    assert path.read_text() == '{"t": 3}\n{"t": 4}\n'
