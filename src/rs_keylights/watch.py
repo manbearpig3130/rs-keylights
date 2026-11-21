@@ -109,7 +109,8 @@ SECTION_KNOB, SPEED_KNOB, SPEED_STEP = 3, 4, 0.01  # knob 4 a section at a time 
 GAME_SMALL_STEPS, GAME_PHRASES, GAME_STEPS, GAME_BEHIND = ("left", "right"), ("pagedown", "pageup"), 8, 4
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game: the mixer up here too
 GAME_TONES_SCREEN = "RSKeylights_Tones"  # its TONES: a tone stepped there shown here as a knob's turn shows it
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_TONES_SCREEN)  # (and TONES):
+GAME_STEMS_SCREEN = "RSKeylights_Stems"  # its STEM MIXER: the MIXER, opened on its other page (the mixer's stems page)
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, GAME_STEMS_SCREEN, GAME_TONES_SCREEN)  # (and TONES):
 # what's done there, done here at once
 GAME_KEY_TIME = 2 / 60  # seconds the game takes to type a key (pressed a frame, let go the next)
 SECTION_BACK = 2.0  # seconds into a section, knob 3 back goes to its start first
@@ -373,6 +374,7 @@ class Watch:
         self._loop_turned = "a"  # the loop's end last turned (knob 1 or 2)
         self._game_busy_until = -math.inf  # following: until when the game's typing the keys sent it
         self._mixer_by_game = False  # the mixer up because the game's MIXER is (closed with it)
+        self._game_page_seen: dict[str, Any] | None = None  # the game's MIXER's last page turn, as followed here
         self._game_tones_seen: dict[str, int] | None = None  # while the game's TONES shows: each part's tone, and
         # its keys', as last seen
         self._followed_at: float | None = None  # where the game was last (following: its chord stays while it pauses)
@@ -568,11 +570,17 @@ class Watch:
 
     def _game_mixer(self, info: dict[str, Any], now: float) -> None:
         """Following, RS-Keylights' MIXER open in the game (the riffloop mod's, from its pause menu): the mixer
-        up here too, on the arrangements' volumes, until it closes there."""
-        on = info.get("mode") == "follow" and info.get("game_screen") == GAME_MIXER_SCREEN
-        if on and not self._mixer_by_game:
-            self._mixer_by_game = True
-            self._mix_page_to("parts", info, now)
+        up here too, until it closes there, on its page (the arrangements' volumes; the STEM MIXER's, the song's
+        parts'), and turned to each page it's turned to there."""
+        screen, turned = info.get("game_screen"), info.get("game_mixer_page")
+        on = info.get("mode") == "follow" and screen in (GAME_MIXER_SCREEN, GAME_STEMS_SCREEN)
+        if on and not self._mixer_by_game:  # (on its screen's page; its turns from before, not)
+            self._mixer_by_game, self._game_page_seen = True, turned
+            self._mix_page_to("stems" if screen == GAME_STEMS_SCREEN else "parts", info, now)
+        elif on and turned != self._game_page_seen:  # (its page turned there: here too)
+            self._game_page_seen = turned
+            if turned and turned.get("page") in ("parts", "stems"):
+                self._mix_page_to(turned["page"], info, now)
         elif not on and self._mixer_by_game:
             self._mixer_by_game = False
             self._close_mixer()
@@ -1827,6 +1835,9 @@ class Watch:
         if isinstance(event, Button) and event.number in ENCODER_BUTTONS:  # (its pages: up, the arrangements';
             # down, the song's audio's)
             self._mix_page_to("parts" if event.number == ENCODER_BUTTONS[0] else "stems", info, now)
+            if info.get("mode") == "follow" and info.get("game_screen") in (GAME_MIXER_SCREEN, GAME_STEMS_SCREEN):
+                page = self.mix_page  # (the game's MIXER open: on the page this is on now)
+                self._try(lambda: self.gui.set_game_mixer_page(page))
         elif isinstance(event, Button):  # (Func)
             if self._mixer_kept:
                 self._close_mixer()

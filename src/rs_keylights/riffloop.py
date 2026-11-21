@@ -170,6 +170,11 @@ class RiffLoop:
             f"{row[0]},{row[1]:.1f},{int(row[2])},{label(row[3])}" + (f",{int(row[4])},{label(row[5])}" if len(row) > 5 else "")
             for row in rows))
 
+    def kpage(self, page: str) -> GameLoop | None:
+        """Its MIXER on a page ("parts": the tone mixer, "stems": the stem mixer), as the Launchkey's mixer went to
+        it (shown if it's open)."""
+        return self._send(f"kpage {page}")
+
     def ktones(self, rows: Sequence[tuple[str, str, str]]) -> GameLoop | None:
         """Its TONES page: its rows, each an id, a label and the tone it plays (as shown); sent as they change."""
         def text(value: str) -> str:
@@ -177,16 +182,17 @@ class RiffLoop:
         return self._send("ktones " + ";".join(f"{i},{text(label)},{text(value)}" for i, label, value in rows))
 
     def kmixed(self) -> dict[str, float | str] | None:
-        """What was done in the MIXER or TONES since it was last asked: {id: percent} for a slider moved,
-        {id: "mute"} for Return on a slider (its mute to turn over), {id: "tone:N"} for Left/Right on a
-        TONES row (its tone N steps on, the presses added up); None: no answer."""
+        """What was done in the MIXER or TONES since it was last asked: {id: percent} for a fader moved,
+        {id: "mute"} or {id: "lights"} for a pad pressed (to turn over), {"page": "parts" or "stems"} for the
+        MIXER's page turned (the last), {id: "tone:N"} for Left/Right on a TONES row (its tone N steps on, the
+        presses added up); None: no answer."""
         words = (self._ask("kmixed") or "").split()
         if not words or words[0] != "kmixed":
             return None
         moved: dict[str, float | str] = {}
         for word in words[1:]:
             key, _, value = word.partition("=")
-            if value in ("mute", "lights"):
+            if value in ("mute", "lights") or key == "page" and value in ("parts", "stems"):
                 moved[key] = value
                 continue
             if value.startswith("tone:"):

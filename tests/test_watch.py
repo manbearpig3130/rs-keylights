@@ -119,6 +119,9 @@ class FakeGui:
         self.kept = [*getattr(self, "kept", []), slot]
         return "dist: automatic" if back else f"dist: {slot:03d} kept"
 
+    def set_game_mixer_page(self, page):  # (the game's MIXER to the Launchkey mixer's page)
+        self.game_pages = [*getattr(self, "game_pages", []), page]
+
     def game_mixer_step(self):  # (the game's MIXER or TONES showing: asked each time round)
         self.mixer_steps = getattr(self, "mixer_steps", 0) + 1
         return False
@@ -1290,6 +1293,30 @@ def test_the_games_tone_mixer_brings_up_the_mixer_until_it_closes():
     clock.now = 5.5
     watch.step()
     assert not watch.mix_knobs
+
+
+def test_the_games_mixer_and_the_launchkeys_turn_each_others_pages():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.info["position"] = gui.song, 21.0
+    gui.game_stems = {"on": True, "guitar": 100, "bass": 100}  # (the stems page there: Song Stems on)
+    gui.info["game_screen"], gui.info["game_mixer_page"] = "RSKeylights_Stems", {"turns": 3, "page": "parts"}
+    watch.step()  # its STEM MIXER opened: on its stems page (a turn from before, not)
+    assert watch.mix_knobs and watch.mix_page == "stems"
+    gui.info["game_mixer_page"] = {"turns": 4, "page": "parts"}  # ▲ there
+    clock.now = 0.5
+    watch.step()
+    assert watch.mix_page == "parts" and not getattr(gui, "game_pages", [])
+    launchkey.queued = [Button(52)]  # the Launchkey's ▼: there too
+    clock.now = 1.0
+    watch.step()
+    assert watch.mix_page == "stems" and gui.game_pages == ["stems"]
+    gui.info["game_screen"] = "RSKeylights"  # closed there; its MIXER opened: on the parts page
+    clock.now = 1.5
+    watch.step()
+    gui.info["game_screen"] = "RSKeylights_Mixer"
+    clock.now = 2.0
+    watch.step()
+    assert watch.mix_knobs and watch.mix_page == "parts"
 
 
 def test_something_done_in_the_games_mixer_is_looked_at_again_at_once():

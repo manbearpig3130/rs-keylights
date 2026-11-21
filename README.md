@@ -446,11 +446,12 @@ A song clicked in the page's library is highlighted in the game's list too.
 
 ### In the game's pause menu (riffloop mod)
 
-Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens two screens:
+Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens these screens:
 
 | Screen | Does |
 |---|---|
-| MIXER | the Launchkey's mixer page: a column for each arrangement (up to 5), the drum part, the game's Music, the Launchkey keys and all of them, each with a fader and two pads (mute; lit keys, or the drums' beat lights). ← → pick a column, ↑ ↓ move its fader 5%, Return and Space press its pads, and the mouse drags and clicks. A drum part not made yet has its fader greyed: its pad makes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it |
+| MIXER | the Launchkey's mixer page: a column for each arrangement (up to 5), the drum part, the game's Music, the Launchkey keys and all of them, each with a fader and two pads (mute; lit keys, or the drums' beat lights). ← → pick a column, ↑ ↓ move its fader 5%, Return and Space press its pads, and the mouse drags and clicks. A drum part not made yet has its fader greyed: its pad makes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it. ▲ and ▼ at its top right (or Page Up and Page Down) turn it to its stem mixer page and back, as the Launchkey's ▲ and ▼ by its knobs do, and each follows the other |
+| STEM MIXER | the MIXER, opened on its stem mixer page (nothing on it yet) |
 | TONES | each arrangement's tone, the drum kit (on the keyboard) and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
 
 ### Everything else

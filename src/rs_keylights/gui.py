@@ -70,7 +70,8 @@ SLOTS = 8  # a song's arrangements with volumes of their own, by their place in 
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game (from Learn a Song's pause menu: the
 # Launchkey's mixer page, its own movie)
-GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Tones")  # (and TONES: each part's tone)
+GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Stems", "RSKeylights_Tones")  # (its STEM MIXER: the MIXER
+# on its other page; and TONES: each part's tone)
 GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
@@ -497,6 +498,8 @@ class Gui:
         self._riff_song: str | None = None
         self._riff_said: GameLoop | None = None
         self._game_mixer_sent: tuple[tuple[str, float, bool, str], ...] | None = None  # the MIXER's rows sent
+        self._game_mixer_page = {"turns": 0, "page": None}  # the page the MIXER was turned to there last (each turn
+        # counted: the Launchkey's mixer follows each)
         # last
         self._game_mixer_ids: dict[str, str] = {}  # its rows' parts (an arrangement's ID, "drums"), by row
         self._game_tones_sent: tuple[tuple[str, str, str], ...] | None = None  # its TONES' rows sent last
@@ -2297,6 +2300,7 @@ class Gui:
                     "song": followed and {**followed, **self._beats_of(followed["id"])}, "position": None, "length": length,
                     "paused": state == "paused",
                     "state": state, "connected": connected, "game_screen": said.screen if said is not None else None,
+                    "game_mixer_page": dict(self._game_mixer_page),
                     "loop": self.loop_info(followed["id"] if followed else None),
                     "speed": self._riff_settings["speed"] / 100, "riff": dict(self._riff_settings),
                     "music": self.game_music(), "volumes": list(self.settings["volumes"]),
@@ -2560,7 +2564,9 @@ class Gui:
         for key, value in moved.items():
             part = self._game_mixer_ids.get(key)
             drum_part = getattr(self, "_game_mixer_drums", None)
-            if key == "drums" and drum_part is not None and not drum_part.get("made", True):  # (not made yet: its pad
+            if key == "page":  # (its page turned there: the Launchkey's mixer to it)
+                self._game_mixer_page = {"turns": self._game_mixer_page["turns"] + 1, "page": value}
+            elif key == "drums" and drum_part is not None and not drum_part.get("made", True):  # (not made yet: its pad
                 if value == "mute" and not drum_part.get("making"):                         # makes them)
                     self.change_part("drums", {"make": True})
             elif key == "all" and value == "mute":  # (the new mixer's all: the sound on or off, as the Mute pad)
@@ -2681,6 +2687,12 @@ class Gui:
         self.game_time()
         said = self._game_said
         return round(said.music) if said is not None and said.music is not None else None
+
+    def set_game_mixer_page(self, page: str) -> None:
+        """The game's MIXER on a page ("parts" or "stems"), as the Launchkey's mixer went to it (if it's open)."""
+        if page not in ("parts", "stems"):
+            raise GuiError(f"No mixer page {page!r}")
+        self._riff_loop.kpage(page)
 
     def set_game_music(self, body: dict[str, Any]) -> dict[str, Any]:
         """Following, the game's Music volume set, through its riffloop mod: "level" (0 to 100), or "step" (up or

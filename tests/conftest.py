@@ -121,6 +121,10 @@ class FakeRiffLoop:
         self.kmix_rows = tuple(rows)
         return self.status()
 
+    def kpage(self, page):
+        self.sent.append(("kpage", page))
+        return self.status()
+
     def ktones(self, rows):
         self.sent.append(("ktones", tuple(rows)))
         self.ktone_rows = tuple(rows)

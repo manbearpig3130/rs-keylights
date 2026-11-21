@@ -1265,6 +1265,18 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     assert changed[-1] == ("B", {"lights": 0})
 
 
+def test_the_games_mixer_pages_turned_there_are_said_and_the_launchkeys_go_there(server):
+    gui, game = server.gui, server.gui._riff_loop
+    call(server, "/api/follow", {})
+    assert gui.remote_info()["game_mixer_page"] == {"turns": 0, "page": None}
+    game.kmix_moved = {"page": "stems"}  # ▼ there
+    with gui._game_mixer_lock:
+        assert gui._game_mixer_apply()
+    assert gui.remote_info()["game_mixer_page"] == {"turns": 1, "page": "stems"}
+    gui.set_game_mixer_page("parts")  # the Launchkey's ▲
+    assert game.sent[-1] == ("kpage", "parts")
+
+
 def test_the_games_new_mixer_has_a_drum_part_to_make_as_the_launchkeys_pad_makes_it(server):
     gui, game = server.gui, server.gui._riff_loop
     call(server, "/api/follow", {})

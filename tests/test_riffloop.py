@@ -62,12 +62,12 @@ def test_the_new_mixers_rows_have_lit_keys_and_kinds_and_its_bottom_pads_come_ba
         mod.sendto(b"riffloop hook=1 riff=0 loop=-", sender)
         data, sender = mod.recvfrom(1024)
         heard.append(data.decode())
-        mod.sendto(b"kmixed a0=lights all=mute music=40.0", sender)
+        mod.sendto(b"kmixed a0=lights all=mute music=40.0 page=stems page=parts page=other", sender)
 
     Thread(target=answer, daemon=True).start()
     game = RiffLoop(mod.getsockname()[1])
     game.kmix([("a0", 63.0, False, "LEAD", 2, "lead"), ("all", 63.0, True, "ALL", -1, "all")])
-    assert game.kmixed() == {"a0": "lights", "all": "mute", "music": 40.0}
+    assert game.kmixed() == {"a0": "lights", "all": "mute", "music": 40.0, "page": "parts"}  # (its page: the last)
     assert heard == ["kmix a0,63.0,0,LEAD,2,lead;all,63.0,1,ALL,-1,all", "kmixed"]
     mod.close()
 
