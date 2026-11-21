@@ -178,12 +178,13 @@ def test_techniques_sound_besides_the_lights():
     assert extras[-1].rings == (1.6,)
     into = Light(1.6, 2.0, (62,), (62,), mask=CHILD, rings=(2.0,))  # linked to the note it slides into: it sounds that
     assert [x.pitches for x in techniques([slid, into])[1]] == [(61,)]
-    off = Light(1.0, 1.4, (60,), (60,), rings=(2.0,), slide_off=-3)  # held to 1.4 and slid off there, quickly (not
-    assert [round(x.on, 2) for x in techniques([off])[1]] == [1.25, 1.3, 1.35]  # at 2.0, where it would stop ringing)
-    assert techniques([off])[0][0].rings == (1.25,) and techniques([off])[1][-1].rings == (1.43,)  # (and it ends)
+    off = Light(1.0, 1.4, (60,), (60,), rings=(2.0,), slide_off=-3)  # held to 1.4 and slid off there, in its last
+    assert [round(x.on, 2) for x in techniques([off])[1]] == [1.27, 1.31, 1.36]  # third, quickly (not at 2.0, where
+    assert round(techniques([off])[0][0].rings[0], 2) == 1.27  # it would stop ringing), and it ends, for a moment's
+    assert round(techniques([off])[1][-1].rings[0], 2) == 1.52  # ring (SLIDE_OFF_TAIL)
     assert [x.pitches for x in techniques([off])[1]] == [(59,), (58,), (57,)]
     levels = [x.level for x in techniques([off])[1]]
-    assert levels == sorted(levels, reverse=True) and round(levels[-1], 2) == SLIDE_OFF_FADE  # (fading)
+    assert levels == sorted(levels, reverse=True) and SLIDE_OFF_FADE < levels[-1] < 0.7  # (fading)
     far = techniques([replace(off, slide_off=-12)])[1]  # (a long one: a smear, not a run of twelve)
     assert [x.pitches[0] for x in far] == [58, 56, 54, 52, 50, 48] and len(far) == SLIDE_OFF_STEPS
     tremolo = Light(1.0, 1.1, (60,), (60,), mask=TREMOLO, rings=(1.4,))

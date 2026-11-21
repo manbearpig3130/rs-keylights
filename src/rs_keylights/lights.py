@@ -22,7 +22,11 @@ PALM_LEAST, PALM_MOST = 0.05, 0.2  # ...but at least and at most this (seconds)
 GLIDE_LEAST = 0.12  # seconds a slide takes at least (its steps a semitone each, over the note's sustain)
 SLIDE_OFF = 0.15  # seconds a slide off takes at most, at the note's end...
 SLIDE_OFF_STEPS = 6  # ...in this many steps at most (spread over its semitones: a smear, not a run)...
-SLIDE_OFF_FADE = 0.35  # ...fading to this much of the note's loudness, as the hand comes off
+SLIDE_OFF_FADE = 0.55  # ...fading towards this much of the note's loudness, as the hand comes off (its last step: a
+# step's share less, so a fret's slide off fades only halfway)...
+SLIDE_OFF_SHARE = 3  # ...taking at most a third of the note (the rest held: a slide off at its very end)...
+SLIDE_OFF_TAIL = 0.12  # ...and its last step ringing this long past the note's end, as a string does once the hand's
+# off it (unless the next note stops it first)
 TREMOLO_EVERY = 0.075  # seconds between a tremolo-picked note's strikes
 DEAD = 0.05  # seconds a dead note (fret-hand muted) sounds
 # Strums (strums): a chord's strings one after another, down (low to high) on the beat and its eighths, up (high to
@@ -247,10 +251,10 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
             offsets = [k * (1 if light.slide > 0 else -1) for k in range(1, len(times) + 1)]
         elif light.slide_off:
             semitones, steps = abs(light.slide_off), min(abs(light.slide_off), SLIDE_OFF_STEPS)
-            begin = max(held - min(SLIDE_OFF, (held - light.on) / 2), light.on)
+            begin = max(held - min(SLIDE_OFF, (held - light.on) / SLIDE_OFF_SHARE), light.on)
             times = [begin + (held - begin) * k / steps for k in range(steps)]
             offsets = [round(semitones * k / steps) * (1 if light.slide_off > 0 else -1) for k in range(1, steps + 1)]
-            levels = [1.0 - (1.0 - SLIDE_OFF_FADE) * k / steps for k in range(1, steps + 1)]
+            levels = [1.0 - (1.0 - SLIDE_OFF_FADE) * k / (steps + 1) for k in range(1, steps + 1)]
         elif light.mask & TREMOLO:
             count = max(int((end - light.on) / TREMOLO_EVERY) - 1, 0)
             times = [light.on + TREMOLO_EVERY * k for k in range(1, count + 1)]
@@ -264,7 +268,8 @@ def techniques(lights: Sequence[Light], muted: Sequence[Note] = ()) -> tuple[lis
             continue
         out.append(replace(light, rings=tuple(min(ring, times[0]) for ring in ends)))
         for k, (at, offset) in enumerate(zip(times, offsets)):
-            last = held if light.slide_off else end  # (slid off: it ends there; slid: the new note rings on)
+            last = min(held + SLIDE_OFF_TAIL, end) if light.slide_off else end  # (slid off: it ends there, but for
+            # a moment's ringing; slid: the new note rings on)
             until = times[k + 1] if k + 1 < len(times) else max(last, at + MIN_LIGHT)
             mask = light.mask & ~(ACCENT | PINCH_HARMONIC) | (HAMMER_ON if offset else 0)  # (a slide's steps: legato)
             extras.append(Light(at, at, (), tuple(p + offset for p in light.pitches), mask,
