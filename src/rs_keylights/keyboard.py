@@ -100,6 +100,7 @@ class Keyboard:
         self._controls: set[tuple[int, int]] = set()  # another keyboard's pedal down or modulation: (channel, number)
         self._bent: set[int] = set()  # the song's channels bent or with vibrato (put back as everything stops)
         self._ranges: dict[int, int] = {}  # channel -> its pitch-bend range set (none: BEND_RANGE)
+        self._borrowed: dict[int, int] = {}  # a spare channel -> the part's channel it was last made like (borrow)
         self._guitar: tuple[int, ...] = ()  # keys played on a guitar, heard (listen): lit first too
         self._silenced_at = float("-inf")
 
@@ -196,9 +197,24 @@ class Keyboard:
             self._set_volume(channel, volume)
 
     def set_volume(self, channel: int, volume: int) -> None:
-        """A sound channel's volume (Control Change 7: 0 to 127, NORMAL_VOLUME as it starts), at once."""
+        """A sound channel's volume (Control Change 7: 0 to 127, NORMAL_VOLUME as it starts), at once; and the spare
+        channels made like it (borrow)."""
         with self._lock:
             self._set_volume(channel, volume)
+            for spare, like in self._borrowed.items():
+                if like == channel:
+                    self._set_volume(spare, volume)
+
+    def borrow(self, channel: int, like: int) -> None:
+        """A spare channel made like a part's channel, for a note whose pitch moves (a bend or vibrato moves the whole
+        channel): the tone, volume and pitch-bend range that channel has now; its volume following that channel's from
+        now on (set_volume), until it's made like another. Nothing sent that it has already."""
+        with self._lock:
+            voice = self._voices.get(like)
+            if voice is not None:
+                self.set_voice(channel, voice[0], voice[1], volume=self._volumes.get(like, NORMAL_VOLUME))
+            self.bend_range(channel, self._ranges.get(like, BEND_RANGE))
+            self._borrowed[channel] = like
 
     def _set_volume(self, channel: int, volume: int) -> None:
         if self._volumes.get(channel) != volume:

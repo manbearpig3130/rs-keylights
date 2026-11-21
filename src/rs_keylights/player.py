@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import time
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Protocol, Sequence
 
@@ -17,6 +17,7 @@ BEND_STEP = 0.02  # seconds between a bend's pitch bends, as it moves
 BEND_MOVE = 0.15  # seconds a bend takes, at most, to reach each of its points
 VIBRATO_DEPTH = 64  # Modulation, for a note's vibrato
 TOGETHER = 0.03  # seconds: notes struck this close to a bent one are struck with it (they bend with it, as charted)
+OWN_GUARD = 0.25  # seconds a spare channel waits after the note that borrowed it stops (its release dying away)
 # A pinch harmonic's squeal on its note's own channel (none of its own: no pitch of its own, as squeal_bends gives
 # it): Modulation, growing in
 SQUEAL_VIBRATO, SQUEAL_VIBRATO_AFTER, SQUEAL_VIBRATO_GROWS = 90, 0.15, 0.45
@@ -48,6 +49,8 @@ class KeysProtocol(Protocol):
     def modulate(self, channel: int, depth: int) -> None:
         ...
 
+    # (and, on a keyboard with spare channels: borrow(channel, like), a spare channel made like a part's channel for a
+    # note of its own: keyboard.Keyboard's)
 
 
 class VoicesProtocol(Protocol):
@@ -94,8 +97,11 @@ class Player:
 
     def __init__(self, tracks: Sequence[Track], keys: KeysProtocol, rate: float = 1.0, lead: float = 0.0,
                  min_period: float = MIN_PERIOD, most_keys: int | None = None,
-                 cache: dict[int, tuple[Track, Any]] | None = None):
+                 cache: dict[int, tuple[Track, Any]] | None = None, spare: Sequence[int] = ()):
         self.tracks = list(tracks)
+        # the keyboard's channels no part sounds on: a note whose pitch moves borrows one (_borrowing), if the
+        # keyboard can make one like a part's channel
+        self.spare = tuple(spare) if callable(getattr(keys, "borrow", None)) else ()
         self._cache = cache  # each track's sounds, controls and actions, as made for it before (parts.PlanCache's:
         # by the track, the same object when the part's unchanged)
         self.most_keys = most_keys  # the lit tracks' keys pooled: at most this many at once, by their priority (None:
@@ -108,6 +114,7 @@ class Player:
         self._sounding: dict[tuple[int, int], tuple[int, dict[int, int]]] = {}  # (track, light) -> its channel,
         # and each pitch still sounding's note (by its place in the light)
         self._held: dict[tuple[int, int, int], int] = {}  # (what sounds it, channel, note) -> how many sound it
+        self._own = self._borrowing()  # each track's notes on a spare channel: their place in its sounds -> it
         self._build()
 
     def _build(self) -> None:
@@ -115,7 +122,7 @@ class Player:
         self.display: list[KeyLight] = merge_keys([t.lights for t in lit], self.rate, self.lead, self.min_period,
                                                   self.most_keys, [t.priority for t in lit])
         self._display_ons = [k.on for k in self.display]
-        made = [self._made(ti, t) for ti, t in enumerate(self.tracks)]
+        made = [self._made(ti, t, self._own[ti]) for ti, t in enumerate(self.tracks)]
         self._sounds = [m[0] for m in made]  # (what each part sounds: its lights and their extras)
         self._ons = [m[1] for m in made]
         self._longest = [m[2] for m in made]  # (how far back a seek looks for notes still sounding)
@@ -133,17 +140,19 @@ class Player:
         self._times = [action[0] for action in self._actions]
         self._next = 0
 
-    def _made(self, ti: int, t: Track) -> tuple[list[Light], list[float], float, list[Any], list[Any]]:
+    def _made(self, ti: int, t: Track, own: dict[int, int]) -> tuple[list[Light], list[float], float, list[Any],
+                                                                      list[Any]]:
         """A track's sounds (in order), when they start, the longest, its controls, and its actions (in order: tone
-        changes, controls, notes on and off), as its ti'th; as made for it before, if it was (as another's: its
-        actions made its)."""
+        changes, controls, notes on and off), as its ti'th, its notes on spare channels own's; as made for it before,
+        if it was with those (as another's: its actions made its)."""
         got = self._cache.get(id(t)) if self._cache is not None else None
-        if got is not None and got[0] is t:
-            was_ti, made = got[1]
+        owned = tuple(sorted(own.items()))
+        if got is not None and got[0] is t and got[1][1] == owned:
+            was_ti, _owned, made = got[1]
             if was_ti == ti:
                 return made
             return (*made[:4], [(a[0], a[1], ti, a[3], a[4]) for a in made[4]])  # type: ignore[return-value]
-        sounds = self._bends_apart(t, sorted([*t.lights, *t.extras], key=lambda light: light.on))
+        sounds = self._bends_apart(t, self._raw(t), own)
         ons = [light.on for light in sounds]
         longest = max((self._sound_end(t, light) - light.on for light in sounds), default=0.0)
         controls = self._controls_of(t, sounds)
@@ -160,18 +169,76 @@ class Player:
         if self._cache is not None:
             if len(self._cache) >= 64:
                 self._cache.clear()
-            self._cache[id(t)] = (t, (ti, made))
+            self._cache[id(t)] = (t, (ti, owned, made))
         return made
 
-    def _bends_apart(self, track: Track, sounds: list[Light]) -> list[Light]:
+    @staticmethod
+    def _raw(t: Track) -> list[Light]:
+        """What a track sounds, in order: its lights and their extras (as they start)."""
+        return sorted([*t.lights, *t.extras], key=lambda light: light.on)
+
+    @staticmethod
+    def _moves(voices: VoicesProtocol, light: Light) -> bool:
+        """A note whose pitch moves as it sounds (with techniques): bent, with vibrato, or a pinch harmonic's squeal."""
+        return voices.techniques and (bool(light.bends) or light.vibrato or
+                                      (light.extra and bool(light.mask & PINCH_HARMONIC)))
+
+    def _borrowing(self) -> list[dict[int, int]]:
+        """Notes whose pitch moves (_moves), each on a spare channel of its own while it sounds when another of its
+        part's sounds on its channel meanwhile (a pitch bend or Modulation moves the whole channel: else bent with it,
+        or stopped for it, _bends_apart): in turn from the first, each with those struck with it (TOGETHER: they bend
+        with it, as a bent chord's strings), on the spare channel free the longest (OWN_GUARD after the last note on
+        it). None free: on its own channel. On the keyboard only (another device's channels are its own)."""
+        own: list[dict[int, int]] = [{} for _ in self.tracks]
+        if not self.spare:
+            return own
+        raws: list[list[Light]] = []
+        wanted: list[tuple[float, int, int]] = []
+        for ti, t in enumerate(self.tracks):
+            voices = t.voices
+            raw = self._raw(t) if voices is not None and voices.techniques and t.sound is None else []
+            raws.append(raw)
+            wanted += [(light.on, ti, li) for li, light in enumerate(raw) if self._moves(voices, light)]  # type: ignore[arg-type]
+        free_at = dict.fromkeys(self.spare, -math.inf)
+        ons = [[light.on for light in raw] for raw in raws]
+        ends = [[self._sound_end(t, light) for light in raw] for t, raw in zip(self.tracks, raws)]
+        longest = [max((end - on for on, end in zip(o, e)), default=0.0) for o, e in zip(ons, ends)]
+        channels: list[dict[int, int]] = [{} for _ in self.tracks]
+
+        def channel(ti: int, li: int) -> int:
+            if li not in channels[ti]:
+                channels[ti][li] = self.tracks[ti].voices.pick(raws[ti][li])[0]  # type: ignore[union-attr]
+            return channels[ti][li]
+
+        for on, ti, li in sorted(wanted):
+            if li in own[ti]:
+                continue
+            raw, its = raws[ti], channel(ti, li)
+            group = [j for j in range(bisect_left(ons[ti], on - TOGETHER), bisect_right(ons[ti], on + TOGETHER))
+                     if j == li or (not raw[j].extra and j not in own[ti] and channel(ti, j) == its)]
+            start, end = min(ons[ti][j] for j in group), max(ends[ti][j] for j in group)
+            if not any(j not in group and j not in own[ti] and ends[ti][j] > start and channel(ti, j) == its
+                       for j in range(bisect_left(ons[ti], start - longest[ti]), bisect_left(ons[ti], end))):
+                continue  # (alone on its channel meanwhile: nothing else moves with it)
+            free = [c for c in self.spare if free_at[c] <= start]
+            if not free:
+                continue
+            spare = min(free, key=lambda c: free_at[c])
+            for j in group:
+                own[ti][j] = spare
+            free_at[spare] = end + OWN_GUARD
+        return own
+
+    def _bends_apart(self, track: Track, sounds: list[Light], own: dict[int, int]) -> list[Light]:
         """A pitch bend bends its whole channel: a part's other notes on it, still ringing, would bend with a bent
         note, and one struck while it's held would sound out of tune till it stopped. So, on each channel, a bent note
         stops as the next note is struck there (its bend let go with it), and those still ringing there stop as it
-        starts to bend (struck with it, TOGETHER: they bend with it, as a bent chord's strings)."""
+        starts to bend (struck with it, TOGETHER: they bend with it, as a bent chord's strings). Those on a spare
+        channel of their own (own: their places) sound apart."""
         voices = track.voices
         if voices is None or not voices.techniques or not any(light.bends for light in sounds):
             return sounds
-        channels = [voices.pick(light)[0] for light in sounds]
+        channels = [own[i] if i in own else voices.pick(light)[0] for i, light in enumerate(sounds)]
         cuts = [math.inf] * len(sounds)
         for i, light in enumerate(sounds):
             moves = [(at, up) for at, up in light.bends if up]
@@ -353,7 +420,7 @@ class Player:
         _at, li, what, value = self._controls[ti][ci]
         if track.voices is None:
             return
-        channel, _notes, _velocity = track.voices.pick(self._sounds[ti][li])
+        channel = self._own[ti].get(li, track.voices.pick(self._sounds[ti][li])[0])
         if what == "bend":
             self._sound(ti).bend(channel, value)
         else:
@@ -386,6 +453,10 @@ class Player:
         prepare = getattr(voices, "prepare", None)  # (a drum's sound chosen on its device first)
         if prepare is not None:
             prepare(sound, light)
+        if i in self._own[ti]:  # (on a spare channel of its own, made like its own first: its tone, volume, range)
+            if (ti, i) not in self._sounding:
+                sound.borrow(self._own[ti][i], channel)  # type: ignore[attr-defined]
+            channel = self._own[ti][i]
         already = set(self._sounding[(ti, i)][1].values()) if (ti, i) in self._sounding else set()  # (strummed:
         for note in set(sounding.values()) - already:  # a unison's second string, its note held once, as _end lets it go)
             self._held[(id(sound), channel, note)] = self._held.get((id(sound), channel, note), 0) + 1

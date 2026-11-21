@@ -280,7 +280,15 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
                 keyboard.bend_range(channel, semitones)
     tracks = [cache.track(p) if cache is not None else _track(p) for p in planned]
     return Player([*tracks, *extra], keyboard, lead=lead, min_period=min_period, most_keys=MOST_LIT,
-                  cache=cache.player if cache is not None else None)  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
+                  cache=cache.player if cache is not None else None,  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
+                  spare=spare_channels(planned, extra))
+
+
+def spare_channels(planned: Sequence[PlannedPart], extra: Sequence[Track] = ()) -> tuple[int, ...]:
+    """The keyboard's channels no part sounds on (nor a drum part): a note whose pitch moves borrows one (Player)."""
+    used = {c for p in planned for c in p.channels}
+    used |= {t.voices.channel for t in extra if isinstance(t.voices, DrumVoices)}
+    return tuple(c for c in KEYBOARD_CHANNELS if c not in used)
 
 
 def bend_ranges(p: PlannedPart) -> dict[int, int]:

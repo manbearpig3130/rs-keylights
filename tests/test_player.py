@@ -367,3 +367,59 @@ def test_a_squeals_vibrato_only_where_the_chart_has_it_if_so_set():
     for position in (0.9, 1.0, 1.5, 2.1):
         player.advance(position)
     assert not [e for e in keys.events if e[0] == "vibrato"]
+
+
+class BorrowingKeys(FakeKeys):
+    def borrow(self, channel, like):
+        self.events.append(("borrow", channel, like))
+
+
+def test_a_bent_note_with_another_ringing_on_its_channel_bends_on_a_spare_one():
+    keys = BorrowingKeys()  # (a pitch bend bends its whole channel: alone on a spare, nothing else bends or stops)
+    ringing = Light(0.5, 0.6, (55,), (55,), rings=(3.0,))
+    bent = Light(1.0, 1.1, (60,), (60,), rings=(2.0,), bends=((1.5, 2.0),))
+    together = Light(1.0, 1.1, (65,), (65,), rings=(2.0,))  # (struck with it: bent with it, on the spare too)
+    after = Light(1.7, 1.8, (62,), (62,), rings=(2.5,))  # (struck while it's bent: in tune, on the part's own)
+    player = Player([Track([ringing, bent, together, after], FakeVoices())], keys, spare=(5, 6))
+    for position in (0.4, 0.55, 1.0, 1.3, 1.4, 1.6, 1.75, 2.1, 2.6, 3.1):
+        player.advance(position)
+    events = [e for e in keys.events if e[0] in ("play", "stop", "bend", "borrow")]
+    assert events[:5] == [("play", 11, (55,), 100), ("borrow", 5, 11), ("play", 5, (60,), 100), ("borrow", 5, 11),
+                          ("play", 5, (65,), 100)]  # (each made like its part's: the keyboard sends it once)
+    assert {e[1] for e in events if e[0] == "bend"} == {5}
+    assert ("play", 11, (62,), 100) in events and ("stop", 5, (60,)) in events and ("stop", 5, (65,)) in events
+    assert events[-3:] == [("bend", 5, 0.0), ("stop", 11, (62,)), ("stop", 11, (55,))]  # (each rung out)
+
+
+def test_a_bent_note_alone_on_its_channel_stays_on_it():
+    keys = BorrowingKeys()
+    bent = Light(1.0, 1.1, (60,), (60,), rings=(2.0,), bends=((1.5, 2.0),))
+    player = Player([Track([Light(0.2, 0.3, (55,), (55,), rings=(0.9,)), bent], FakeVoices())], keys, spare=(5,))
+    for position in (0.1, 0.25, 1.0, 1.6, 2.1):
+        player.advance(position)
+    assert not [e for e in keys.events if e[0] == "borrow"]
+    assert ("play", 11, (60,), 100) in keys.events and ("bend", 11, 2.0) in keys.events
+
+
+def test_with_no_spare_free_a_bent_note_stays_on_its_channel():
+    keys = BorrowingKeys()  # (one spare, two parts bending at once: the first borrows it, the second as before)
+    lead = [Light(0.5, 0.6, (55,), (55,), rings=(3.0,)), Light(1.0, 1.1, (60,), (60,), rings=(2.0,), bends=((1.5, 2.0),))]
+    rhythm = [Light(0.5, 0.6, (43,), (43,), rings=(3.0,)), Light(1.2, 1.3, (48,), (48,), rings=(2.0,), vibrato=True)]
+    player = Player([Track(lead, FakeVoices()), Track(rhythm, FakeVoices(), lit=False)], keys, spare=(5,))
+    for position in (0.4, 0.55, 1.0, 1.25, 1.6, 2.1, 2.6, 3.1):
+        player.advance(position)
+    assert [e for e in keys.events if e[0] == "borrow"] == [("borrow", 5, 11)]
+    assert ("play", 5, (60,), 100) in keys.events and ("play", 11, (48,), 100) in keys.events
+    assert ("vibrato", 11, 64) in keys.events  # (on the part's own, as before)
+
+
+def test_a_spare_channel_is_borrowed_again_once_its_note_has_died_away():
+    keys = BorrowingKeys()
+    first = Light(1.0, 1.1, (60,), (60,), rings=(1.5,), vibrato=True)
+    soon = Light(1.6, 1.7, (62,), (62,), rings=(2.0,), vibrato=True)  # (its release still going: the other spare)
+    later = Light(2.5, 2.6, (65,), (65,), rings=(3.0,), vibrato=True)  # (the one free the longest)
+    ringing = Light(0.5, 0.6, (55,), (55,), rings=(3.5,))
+    player = Player([Track([ringing, first, soon, later], FakeVoices(), lit=False)], keys, spare=(5, 6))
+    for position in (0.4, 0.55, 1.0, 1.6, 2.1, 2.5, 3.6):
+        player.advance(position)
+    assert [e for e in keys.events if e[0] == "borrow"] == [("borrow", 5, 11), ("borrow", 6, 11), ("borrow", 5, 11)]

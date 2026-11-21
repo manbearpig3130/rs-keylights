@@ -140,17 +140,24 @@ Launchkey shows.
 
 | Technique | How it sounds |
 |---|---|
-| Bends | pitch bend, following the chart's bend curve, to its full size. A pitch bend bends its whole channel, so a bent note stops as the part's next note sounds, and its notes still ringing stop as it starts to bend (those struck with it bend with it) |
+| Bends | pitch bend, following the chart's bend curve, to its full size, on a channel of its own (below) |
 | Slides, slides off | a semitone at a time over the note (slides off fade out) |
-| Vibrato | modulation |
+| Vibrato | modulation, on a channel of its own |
 | Tremolo picking | struck again every 75 ms |
 | Hammer-ons, pull-offs, taps | softer, legato |
 | Slaps, pops, accents | harder |
 | Natural harmonics | at their own pitch (a 7th-fret harmonic sounds an octave and a fifth up), on the harmonics tone |
-| Pinch harmonics | the note, softer, under a squeal an octave and a fifth up: struck slightly flat, scooped up to pitch, with a fast, wide vibrato |
+| Pinch harmonics | the note, softer, under a squeal an octave and a fifth up: struck slightly flat, scooped up to pitch, with a fast, wide vibrato (the squeal on a channel of its own) |
 | Dead notes | a quiet click on the palm-mute tone (or a soft tick without one), stopping what rings on that string |
 | Palm mutes | a little softer, short |
 | Strums | a chord's strings one after another: down on beats and eighths, up (softer) on sixteenths, 7 ms a string |
+
+**A channel of its own**: a pitch bend or vibrato moves every note on its channel. So a note that bends or wobbles
+borrows one of the keyboard's spare channels (those no part uses) while something else of its part sounds meanwhile,
+made like its part's: the same tone, volume and bend range, its volume following the part's fader. The notes struck
+with it go along and bend with it, as a bent chord's strings. The rest ring on in tune. When no spare channel is free,
+it stays on the part's channel: it stops as the part's next note sounds, and the part's notes still ringing stop as it
+starts to bend.
 
 The **Pinch harmonics** card sets the squeal's pitch, loudness, scoop and vibrato, on every pinch harmonic or only
 where the chart has vibrato. **Try it** plays a riff with a quick and a held one.
@@ -798,7 +805,8 @@ channels (main tone, harmonics, palm mutes):
 | 4th | 8, 9, 2 |
 
 That keeps clear of the navigate channels (3, 4), the Launchkey's keys (1) and the drums (10). A chord sounds all its
-notes, even when only some of them light.
+notes, even when only some of them light. The channels no part takes are spare: a note that bends or wobbles borrows
+one while it sounds ([How the parts sound](#how-the-parts-sound)).
 
 **The notes.** Each arrangement's notes are in its `.sng` file in the song's archive. A note's string and fret, the
 tuning and the capo give its pitch. Each phrase is taken at its hardest level, so you see the full part, not your
@@ -816,6 +824,12 @@ other note. The lights also look a little late next to the sound, so the keys li
 the song is and which arrangement is playing (named like its `.sng` file, e.g. `amonamarthwayofvikings_lead`). It
 answers in under a tenth of a millisecond, so the keys are within a frame of the game. The pause screen goes dark at
 once, and Riff Repeater's speed is measured from it. RS Companion isn't read at all then.
+
+**On time while the Mac is busy.** The thread that plays the notes is macOS's most urgent kind (user-interactive:
+the performance cores first), and while a song plays the process tells macOS it's latency-critical work, so App Nap
+doesn't slow its timers (the Dock app has no window to keep it awake). Python hands between its threads every
+millisecond instead of every 5. Following, the trace (`--trace`) sums up every 30 s how many steps came more than 10,
+20, 50 and 100 ms late, and notes any step held up longer than 150 ms.
 
 **The timing, with RS Companion.** RS Companion updates the song timer about 4 times a second. `follow` reads it 10
 times a second and keeps its own clock in between. Each value arrives a little late, never early, so the clock goes

@@ -290,3 +290,23 @@ def test_a_channels_tone_chosen_keeping_its_volume_keeps_the_one_it_has():
     assert out.sent[-3:] == [[0xB9, 0, 120], [0xC9, 16], [0xB9, 7, 60]]
     keyboard.set_voice(12, 5, volume=None)  # (a channel with none yet: the usual)
     assert out.sent[-1] == [0xBB, 7, 100]
+
+
+def test_a_spare_channel_borrowed_is_made_like_the_parts_and_its_volume_follows():
+    out = FakeMidiOut()
+    keyboard = Keyboard(midi_out_factory=lambda: out)
+    keyboard.open()
+    keyboard.set_voice(11, 30, 0, volume=90)
+    keyboard.bend_range(11, 5)
+    sent = len(out.sent)
+    keyboard.borrow(5, 11)  # (a note of its own: its tone, volume and bend range)
+    assert out.sent[sent:sent + 3] == [[0xB4, 0, 0], [0xC4, 30], [0xB4, 7, 90]]
+    assert out.sent[sent + 3:] == [[0xB4, 101, 0], [0xB4, 100, 0], [0xB4, 6, 5], [0xB4, 38, 0], [0xB4, 101, 127],
+                                   [0xB4, 100, 127]]
+    sent = len(out.sent)
+    keyboard.borrow(5, 11)  # (as it is: nothing sent)
+    assert len(out.sent) == sent
+    keyboard.set_volume(11, 50)  # (the part's fader: the note on the spare follows it)
+    assert out.sent[sent:] == [[0xBA, 7, 50], [0xB4, 7, 50]]
+    keyboard.bend(5, 2.5)  # (scaled to the range it was given)
+    assert out.sent[-1] == [0xE4, 0, 96]
