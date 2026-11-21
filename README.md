@@ -408,7 +408,7 @@ Loop points land on the nearest beat. Reaching the end, the song goes back to a 
 | Control | Does |
 |---|---|
 | Knobs 1–5 | the arrangements' volumes (the volume of the part in that place, in every song) |
-| Knob 6, following | nothing: the game's Music volume (its own mixer setting) is knob 8 on the second page |
+| Knob 6, following | nothing: the game's Music volume (its own mixer setting) is knob 7 on the second page |
 | Knob 7 | the Launchkey keys' volume |
 | Knob 8 | all of them together |
 | Pads, top | mute each, as outside the mixer |
@@ -424,8 +424,9 @@ controls depends on whether you're following:
 | What it mixes | the song's own audio from the Mac (🎵) | the game's own song (rearmed-mods' Song Stems mod; without it, just its Music) |
 | Knobs | 1–6: drums, bass, guitar, vocals, keys, other | 2: bass, 3: guitar |
 | Pads, top | mute each part (a song not split yet: a tap splits it) | mute the bass or guitar, and back to its level |
-| Knob 8 | the song audio's volume | the game's Music volume |
-| Right pad, top | the song's audio on or off | Mute |
+| Knob 7, and its pad on top | | the game's Music volume, and muted or back to its level |
+| Knob 8 | the song audio's volume | nothing |
+| Right pad, top | the song's audio on or off | Mute, as on every page |
 
 **While following**, the Song Stems mod takes the part you're playing out of the game's song: the bass with a bass
 tone, else the guitar. Only that part's level is heard; the other's pad is dim and its level waits for its turn. The
@@ -450,7 +451,7 @@ Learn a Song's pause menu gets an **RS-KEYLIGHTS** row, which opens these screen
 
 | Screen | Does |
 |---|---|
-| MIXER | the Launchkey's mixer page: a column for each arrangement (up to 5), the drum part, the Launchkey keys and all of them, each with a fader and two pads (mute; lit keys, or the drums' beat lights). ← → pick a column, ↑ ↓ move its fader 5%, Return and Space press its pads, and the mouse drags and clicks. A drum part not made yet has its fader greyed: its pad makes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it. ▲ and ▼ at its top right (or Page Up and Page Down) turn it to its stem mixer page and back, as the Launchkey's ▲ and ▼ by its knobs do, and each follows the other. The stem mixer page is the Launchkey's second page while following: the game's song's bass and guitar (columns 2 and 3, rearmed-mods' Song Stems: the one you're not playing dim, waiting its turn; greyed with Song Stems off), each with a pad to mute it and back, and the game's Music (column 8) |
+| MIXER | the Launchkey's mixer page: a column for each arrangement (up to 5), the drum part, the Launchkey keys and all of them, each with a fader and two pads (mute; lit keys, or the drums' beat lights). ← → pick a column, ↑ ↓ move its fader 5%, Return and Space press its pads, and the mouse drags and clicks. A drum part not made yet has its fader greyed: its pad makes it. The Launchkey's mixer and the page follow, both ways, and the Launchkey's mixer opens with it. ▲ and ▼ at its top right (or Page Up and Page Down) turn it to its stem mixer page and back, as the Launchkey's ▲ and ▼ by its knobs do, and each follows the other. The stem mixer page is the Launchkey's second page while following: the game's song's bass and guitar (columns 2 and 3, rearmed-mods' Song Stems: the one you're not playing dim, waiting its turn; greyed with Song Stems off), each with a pad to mute it and back, the game's Music (column 7, with its own mute pad), and MASTER (column 8: the sound on or off, as the Launchkey's Mute pad on every page) |
 | STEM MIXER | the MIXER, opened on its stem mixer page |
 | TONES | each arrangement's tone, the drum kit (on the keyboard) and the keys': ← → step it, as the Launchkey's tone knobs do, and the Launchkey's screen shows it |
 

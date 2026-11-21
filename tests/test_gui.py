@@ -1251,7 +1251,8 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     assert rows["a0"][4:] == (1, "lead", 0) and rows["a1"][4:] == (0, "bass", 1) and rows["drums"][4:] == (0, "drums", 2)
     assert rows["keys"][3:] == ("KEYS", 1, "keys", 6)  # (the tone mixer's columns 1 to 8, as the Launchkey's knobs)
     assert rows["all"][1] == max(rows[k][1] for k in ("a0", "a1", "drums", "keys")) and rows["all"][5:] == ("all", 7)
-    assert rows["music"] == ("music", 80.0, False, "MUSIC", -1, "music", 15)  # (the stem mixer's knob 8)
+    assert rows["music"] == ("music", 80.0, False, "MUSIC", -1, "music", 14)  # (the stem mixer's knob 7)
+    assert rows["sound"] == ("sound", 0.0, False, "MASTER", -1, "sound", 15)  # (and its 8th: the sound on or off)
     assert rows["gbass"] == ("gbass", 0.0, False, "BASS", -1, "stem:bass:off", 9)  # (no Song Stems: off)
     game.kmix_moved = {"a1": "lights", "drums": "lights", "keys": "lights", "all": "mute", "music": 55.0}
     with gui._game_mixer_lock:
@@ -1259,6 +1260,10 @@ def test_the_games_new_mixer_gets_lit_keys_kinds_music_and_all_and_its_pads_act_
     assert changed == [("B", {"lights": 1})]  # (lit too: sharing the 4 keys)
     assert gui.settings["beat_lights"] and not gui.settings["keys_lights"] and gui.play_options["silent"]
     assert game.sent[-1] == ("music", 55)
+    game.kmix_moved = {"sound": "mute"}  # (the stem mixer's 8th: the sound back on)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert not gui.play_options["silent"]
     followed["arrangements"][1]["lights"] = 1  # (lit now: its pad turns it off)
     gui._game_mixer(followed, said)
     game.kmix_moved = {"a1": "lights"}
@@ -1288,6 +1293,16 @@ def test_the_games_stem_mixer_has_its_songs_bass_and_guitar_as_song_stems_has_th
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
     assert gui.game_stems_info()["guitar"] == 0
+    game.kmix_moved = {"music": "mute"}  # its Music's pad: muted, then back where it was
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert game.sent[-1] == ("music", 0)
+    gui._game_mixer(followed, game.status())
+    assert next(r for r in game.kmix_rows if r[0] == "music")[1:3] == (0.0, True)
+    game.kmix_moved = {"music": "mute"}
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert game.sent[-1] == ("music", 80)
 
 
 def test_the_games_mixer_pages_turned_there_are_said_and_the_launchkeys_go_there(server):

@@ -72,6 +72,7 @@ GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game 
 # Launchkey's mixer page, its own movie)
 GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Stems", "RSKeylights_Tones")  # (its STEM MIXER: the MIXER
 # on its other page; and TONES: each part's tone)
+GAME_MUSIC_BACK = 80  # the game's Music unmuted, its level before not known: as the game starts it
 GAME_MIXER_SLIDERS = 5  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
@@ -517,6 +518,7 @@ class Gui:
         self._riff_settings: dict[str, Any] = {"speed": 100, "accelerator": False, "passes": 1}  # (as set here)
         self._game_stems_read: tuple[Any, dict[str, Any] | None] = (None, None)  # (RSMods.ini as last read)
         self._game_stems_was: dict[str, int] = {}  # (a part muted: its level before, to go back to)
+        self._game_music_was = GAME_MUSIC_BACK  # (the game's Music muted: its level before)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -2525,8 +2527,10 @@ class Gui:
                       bool(self.play_options["silent"]), "ALL", -1, "all", 7),)                       # loudest: knob 8's)
             rows += self._game_stem_rows(parts)
             music = said.music if said is not None and said.music is not None else None
-            if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 8)
-                rows += (("music", float(music), False, "MUSIC", -1, "music", 15),)
+            if music is not None:  # (the game's Music volume: the stem mixer's, as its knob 7; its pad, muted)
+                rows += (("music", float(music), music == 0, "MUSIC", -1, "music", 14),)
+            rows += (("sound", 0.0, bool(self.play_options["silent"]), "MASTER", -1, "sound", 15),)  # (its 8th:
+            # the sound on or off, as on every page)
             self._game_mixer_ids = ids
             if rows != self._game_mixer_sent and self._riff_loop.kmix(rows) is not None:
                 self._game_mixer_sent = rows
@@ -2598,8 +2602,13 @@ class Gui:
             elif key == "drums" and drum_part is not None and not drum_part.get("made", True):  # (not made yet: its pad
                 if value == "mute" and not drum_part.get("making"):                         # makes them)
                     self.change_part("drums", {"make": True})
-            elif key == "all" and value == "mute":  # (the new mixer's all: the sound on or off, as the Mute pad)
-                self.toggle_sound()
+            elif key in ("all", "sound") and value == "mute":  # (the 8th columns' pad: the sound on or off, as the
+                self.toggle_sound()                             # Launchkey's Mute pad)
+            elif key == "music" and value == "mute" and key in sent:  # (the game's Music muted, or back)
+                try:
+                    self.set_game_music({"mute": not sent[key][2]})
+                except GuiError:
+                    pass
             elif key == "music" and isinstance(value, float):  # (its Music: the game's, as knob 6)
                 self.set_game_music({"level": round(value)})
             elif value == "lights":  # (a bottom pad: as the Launchkey's)
@@ -2724,9 +2733,9 @@ class Gui:
         self._riff_loop.kpage(page)
 
     def set_game_music(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Following, the game's Music volume set, through its riffloop mod: "level" (0 to 100), or "step" (up or
-        down from where the game has it). It's the game's own mixer setting, as its mixer menu sets it. The level
-        it's at."""
+        """Following, the game's Music volume set, through its riffloop mod: "level" (0 to 100), "step" (up or
+        down from where the game has it), or "mute" (true: at 0; false: back where it was). It's the game's own mixer
+        setting, as its mixer menu sets it. The level it's at."""
         with self._lock:
             session = self._session
         if not (isinstance(session, Following) and session.running):
@@ -2741,7 +2750,14 @@ class Gui:
             if now is None:
                 raise GuiError("Rocksmith didn't answer" if self._game_said is None else
                                "Music volume: update the riffloop mod")
-            level = min(max(now + _number(body.get("step", 0), "step", -100, 100), 0), 100)
+            if "mute" in body and body["mute"]:
+                if now > 0:
+                    self._game_music_was = round(now)
+                level = 0
+            elif "mute" in body:
+                level = self._game_music_was if now == 0 else now
+            else:
+                level = min(max(now + _number(body.get("step", 0), "step", -100, 100), 0), 100)
         said = self._riff_loop.music(round(level))
         if said is None:
             raise GuiError("Rocksmith didn't answer: needs its riffloop mod")
