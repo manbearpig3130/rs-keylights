@@ -108,10 +108,11 @@ def test_a_song_as_a_midi_file_its_parts_vocals_drums_key_and_sections():
     assert ons == [(1.0, 64, 100, 0), (1.5, 67, 100, 0), (3.0, 52, 88, 0), (3.007, 59, 88, 0), (4.0, 60, 127, 0),
                    (5.0, 45, 35, 0)]
     offs = {d[0]: round(at(t), 3) for t, s, _k, d in lead_track if s >> 4 == 8}
-    assert offs[64] == 1.62 and offs[67] == 3.12  # (ringing until the next note, overlapping it a little)
+    assert offs[64] == 1.6 and offs[67] == 3.0  # (ringing until the next note, overlapping it a little; but not
+    # into a bend, nor a bent one into the next: a bend bends its channel)
     assert offs[52] == offs[59] == 3.5 and offs[45] == 5.05  # (the palm mute held as charted; the tick)
     bends = [(round(at(t), 3), d[0] | d[1] << 7) for t, s, _k, d in lead_track if s >> 4 == 0xE]
-    assert bends[0][1] == 8192 and (2.0, 16383) in bends and bends[-1] == (3.12, 8192)  # (up 2: the most, back)
+    assert bends[0][1] == 8192 and (2.0, 16383) in bends and bends[-1] == (3.0, 8192)  # (up 2: the most, back)
     assert [round(at(t), 2) for t, s, _k, d in lead_track if s >> 4 == 0xB and d[0] == 1] == [4.0, 5.12]  # vibrato,
     # until the dead note after it (the fretting hand off it)
     assert [(round(at(t), 3), text) for t, text in metas(lead_track, 0x01)] == [
