@@ -35,6 +35,8 @@ GAME_TIME_EVERY = 0.02  # seconds between asks of the game's own time (riffloop'
 TRACE_AFTER_JUMP = 2.0  # seconds of the game's time reads traced after it jumps (a pause gone, a seek, a rewind)
 STALL_TRACED = 0.15  # seconds between steps, while the notes play, that are traced: this process held up (the Mac
 # busy, swapping), its notes coming late, all at once (more than SEEK_AHEAD: those in it skipped, traced too)
+LATE_SUMMED = (10, 20, 50, 100)  # milliseconds a step comes after its TICK that the trace counts while the notes play,
+LATE_SUMMARY = 30.0  # summed up every this many seconds (and as they stop): the process held up, short of a stall
 JUST_STRUCK = 0.15  # seconds: starting to play mid-song, notes struck this little before sound; older ones still
 # ringing don't (every part's would come at once: following again, or going on after Rocksmith's resume, 2 s back)
 GAME_TIME_MISSES, GAME_TIME_BACK_OFF = 3, 2.0  # unanswered this many times (no game, or a mod without it): asked
@@ -437,6 +439,7 @@ class Follower:
         self._connected: bool | None = None
         self._playing = False
         self._stepped_at: float | None = None  # when it last stepped (a step long after: held up)
+        self._late: dict[str, float] = {}  # (the steps' lateness since the last summary: _count_late)
 
     def position(self, now: float) -> float | None:
         """The song position, while the song plays: the game's own (riffloop's), while it's read; else as RS
@@ -574,6 +577,7 @@ class Follower:
             if self._playing:
                 self._player.stop()
                 self._playing = False
+                self._sum_late(now)
                 self._record({"t": now, "stopped": True})
             return
         if not self._playing:
@@ -582,6 +586,8 @@ class Follower:
             self._player.seek(position + self.offset, sounding=JUST_STRUCK)  # (from about where it is)
         self._player.retime(rate=self._rate(now))  # Riff Repeater's speed: the keys flash for it
         was = self._player.position if self._playing else None
+        if was is not None:
+            self._count_late(now, late - TICK)
         if was is not None and late > STALL_TRACED:  # (held up: its notes late, or skipped)
             self._record({"t": now, "stall": round(late, 3), "at": round(position, 3)})
         if was is not None and position + self.offset > was + SEEK_AHEAD:
@@ -785,6 +791,29 @@ class Follower:
                 "pinch": _tone_text(voices.squeal.tone) if voices and voices.squeal else None,
             })
         return out
+
+    def _count_late(self, now: float, behind: float) -> None:
+        """A step behind its time (seconds after its TICK, while the notes play): counted, summed up in the trace
+        every LATE_SUMMARY seconds."""
+        if self._trace is None:
+            return
+        late = self._late
+        late.setdefault("since", now)
+        late["steps"] = late.get("steps", 0) + 1
+        late["worst"] = max(late.get("worst", 0.0), behind)
+        for ms in LATE_SUMMED:
+            if behind * 1000 > ms:
+                late[f">{ms}ms"] = late.get(f">{ms}ms", 0) + 1
+        if now - late["since"] >= LATE_SUMMARY:
+            self._sum_late(now)
+
+    def _sum_late(self, now: float) -> None:
+        """The steps' lateness since the last summary, in the trace: how many, how many later than each of
+        LATE_SUMMED, and the latest (seconds)."""
+        late, self._late = self._late, {}
+        if late.get("steps"):
+            self._record({"t": now, "steps": int(late["steps"]), "worst": round(late["worst"], 3),
+                          **{f">{ms}ms": int(late.get(f">{ms}ms", 0)) for ms in LATE_SUMMED}})
 
     def _record(self, entry: dict[str, object]) -> None:
         if self._trace is not None:

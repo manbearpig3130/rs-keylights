@@ -13,6 +13,7 @@ from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .parts import VoicesFor
 from .player import Player, Track
+from .priority import Activity, playing_thread
 
 # Sessions that run in the background and can be stopped: playing a song (pause, seek, speed and an A-B loop
 # while it plays) and following the game.
@@ -29,6 +30,11 @@ SWITCH_INTERVAL = 0.001
 def _quick_switches() -> None:
     if sys.getswitchinterval() > SWITCH_INTERVAL:
         sys.setswitchinterval(SWITCH_INTERVAL)
+
+
+# And macOS told: the song's thread the most urgent kind, and the process latency-critical while it runs (no App Nap
+# for the Dock app, whose window isn't seen; timers as precise as they go: priority's)
+PLAYING = "Playing a song's notes in time"
 
 
 class Playback:
@@ -64,6 +70,7 @@ class Playback:
         self._show: KeyShow | None = None  # a show on the keys where the song leaves them free
         self._quit = threading.Event()
         self._thread: threading.Thread | None = None
+        self._activity = Activity(PLAYING)
 
     @property
     def position(self) -> float:
@@ -76,6 +83,7 @@ class Playback:
 
     def start(self) -> None:
         _quick_switches()
+        self._activity.begin()
         self._since = self._clock()
         self._thread = threading.Thread(target=self._run, name="rs-keylights playback", daemon=True)
         self._thread.start()
@@ -168,6 +176,7 @@ class Playback:
         return min(self._from + (self._clock() - self._since) * self.speed, self.length)
 
     def _run(self) -> None:
+        playing_thread()
         try:
             while not self._quit.is_set():
                 with self._lock:
@@ -195,6 +204,7 @@ class Playback:
                         wait = 0.05 if upcoming is None else min(max(upcoming - position, 0.0) / self.speed, 0.05)
                 self._sleep(wait)
         finally:
+            self._activity.end()
             with self._lock:
                 self._end_show()
                 self.player.stop()
@@ -230,6 +240,7 @@ class Following:
         self._lock = threading.Lock()
         self._quit = threading.Event()
         self._thread: threading.Thread | None = None
+        self._activity = Activity(PLAYING)
 
     @property
     def running(self) -> bool:
@@ -270,6 +281,7 @@ class Following:
 
     def start(self) -> None:
         _quick_switches()
+        self._activity.begin()
         self._thread = threading.Thread(target=self._run, name="rs-keylights follow", daemon=True)
         self._thread.start()
 
@@ -279,12 +291,14 @@ class Following:
             self._thread.join(timeout=2)
 
     def _run(self) -> None:
+        playing_thread()
         try:
             while not self._quit.is_set():
                 with self._lock:
                     self.follower.step(self._clock())
                 self._sleep(TICK)
         finally:
+            self._activity.end()
             with self._lock:
                 self.follower.close()
             self.keyboard.close()

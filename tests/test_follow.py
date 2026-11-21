@@ -508,6 +508,27 @@ def test_following_held_up_is_traced_and_a_stretch_skipped_too():
     assert len(skipped) == 1 and skipped[0]["to"] - skipped[0]["skipped"] > 1.0
 
 
+def test_following_sums_up_how_late_its_steps_come_in_the_trace():
+    client, index, keys, trace = FakeClient(), FakeIndex([REF]), FakeKeys(), []
+    game: dict = {"t": 9.5, "screen": "LearnASong_Game"}
+    f = Follower(client, index, keys, status=lambda _m: None, load=lambda ref: NOTES,  # type: ignore[arg-type]
+                 game_time=lambda: (game["t"], game["screen"], "x_lead"), trace=trace.append)
+    now, i = 0.0, 0
+    while now < 31.0:  # (each step 5 ms apart, as it sleeps, and now and then later: 15, 30 and 60 ms after it)
+        now += {500: 0.02, 1000: 0.035, 1500: 0.065}.get(i, 0.005)
+        game["t"] = round(9.5 + now, 4)
+        f.step(now)
+        i += 1
+    summaries = [e for e in trace if "steps" in e]
+    assert len(summaries) == 1 and summaries[0][">10ms"] == 3 and summaries[0][">20ms"] == 2
+    assert summaries[0][">50ms"] == 1 and summaries[0][">100ms"] == 0 and summaries[0]["worst"] == 0.06
+    game["screen"] = "LearnASong_Pause"  # (and what's left of it as the notes stop)
+    for _ in range(40):
+        now += 0.005
+        f.step(now)
+    assert len([e for e in trace if "steps" in e]) == 2
+
+
 def test_another_songs_playback_far_from_rs_companions_timer_is_set_aside():
     clock = GameClock()
     now = game_reads(clock, 200.0, 1.0, 1.0, 0.0)
