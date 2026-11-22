@@ -3,15 +3,18 @@
 # the page's Make drum part), in ~/Library/Application Support/rs-keylights/drums ($RS_KEYLIGHTS_DRUMS_TOOLS):
 #
 #   rs-stems-drums  rearmed-mods' Song Stems helper (from its source, REARMED_MODS: default ~/git/rearmed-mods), built
-#                   with three more parts to take out, the drums, the vocals and the piano: it decodes the song's audio
-#                   and separates it with Song Stems' Demucs model (installed with rearmed-mods: ~/Library/Application
-#                   Support/RS Re-ARMed/stems), for a drum part and for a song's parts (the page's Split into parts)
+#                   with three more parts to take out, the drums, the vocals and the piano, and with every part at once
+#                   (separate-all, tools/stems-all.inc: one pass of the model instead of one a part): it decodes the
+#                   song's audio and separates it with Song Stems' Demucs model (installed with rearmed-mods:
+#                   ~/Library/Application Support/RS Re-ARMed/stems), for a drum part and for a song's parts (the
+#                   page's Split into parts)
 #   venv            a Python with ADTOF's PyTorch port (github.com/xavriley/ADTOF-pytorch, at the commit below), which
 #                   transcribes the drums
 #
 # Needs the Xcode command line tools, uv, and rearmed-mods' Song Stems installed (its model). Run it again to
 # rebuild; the game's codebooks (for decoding its audio) are made from your game as the first drum part is.
 set -eu
+here=$(cd "$(dirname "$0")" && pwd)
 mods=${1:-$HOME/git/rearmed-mods}
 tools=${RS_KEYLIGHTS_DRUMS_TOOLS:-$HOME/Library/Application Support/rs-keylights/drums}
 adtof_commit=85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9
@@ -24,8 +27,9 @@ command -v uv >/dev/null || { echo "uv is needed (https://docs.astral.sh/uv/)" >
 build="$tools/build"
 mkdir -p "$build"
 for f in rs_stems.m wwise_vorbis.c wwise_vorbis.h stems_dsp.c stems_dsp.h; do cp "$mods/stems/$f" "$build/"; done
+cp "$here/stems-all.inc" "$build/"
 # The helper takes out the guitar or the bass; three more parts, drums, vocals and piano (htdemucs_6s's sources 0, 3
-# and 5), as they are
+# and 5), as they are; and every part from one pass, separate-all (stems-all.inc)
 /usr/bin/python3 - "$build/rs_stems.m" <<'EOF'
 import sys
 path = sys.argv[1]
@@ -37,7 +41,12 @@ for old, new in (('enum { PART_GUITAR, PART_BASS };',
                  ('static const int PART_SOURCE[] = {4, 1};', 'static const int PART_SOURCE[] = {4, 1, 0, 3, 5};'),
                  ('!strcmp(s, "bass") ? PART_BASS : -1;',
                   '!strcmp(s, "bass") ? PART_BASS : !strcmp(s, "drums") ? PART_DRUMS : !strcmp(s, "vocals") ? '
-                  'PART_VOCALS : !strcmp(s, "piano") ? PART_PIANO : -1;')):
+                  'PART_VOCALS : !strcmp(s, "piano") ? PART_PIANO : -1;'),
+                 ('int main(int argc, char **argv) {', '#include "stems-all.inc"\n\nint main(int argc, char **argv) {'),
+                 ('    if (argc == 4 && !strcmp(argv[1], "decode")) return decode_once(argv[2], argv[3]);',
+                  '    if (argc == 4 && !strcmp(argv[1], "decode")) return decode_once(argv[2], argv[3]);\n'
+                  '    if (argc >= 5 && !strcmp(argv[1], "separate-all"))\n'
+                  '      return separate_all(argv[2], argv[3], argc - 4, argv + 4);')):
     if s.count(old) != 1:
         sys.exit(f"rearmed-mods' rs_stems.m has changed (no {old!r}): rs-keylights' drums-setup.sh needs updating")
     s = s.replace(old, new)

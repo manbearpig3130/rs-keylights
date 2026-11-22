@@ -583,7 +583,9 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
 The **Song's audio** card sets its volume and output.
 
 **Split into parts** separates it into drums, bass, guitar, vocals, keys and other (ambience, synths, effects), with
-Song Stems' Demucs model: about 20 s a part for a 4-minute song, once. The parts are kept as AAC in
+Song Stems' Demucs model (htdemucs_6s): about 35 s for a 4-minute song, once, all five parts from one pass of the
+model (a separator built before that takes one pass a part, about two minutes: run `tools/drums-setup.sh` again).
+The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
 and mute, the same for every song. This needs the `drums` and `listen` extras and `tools/drums-setup.sh`.
 

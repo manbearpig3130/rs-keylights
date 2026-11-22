@@ -30,7 +30,8 @@ def as_int16(x):
     return np.round(x * 32767).astype(np.int16)
 
 
-def test_a_songs_parts_are_made_kept_and_read_back_and_what_is_left_is_other(tmp_path, monkeypatch):
+@pytest.mark.parametrize("one_pass", [True, False])  # (separate-all; a separator built before it: each in turn)
+def test_a_songs_parts_are_made_kept_and_read_back_and_what_is_left_is_other(tmp_path, monkeypatch, one_pass):
     song = sum(parts().values())
     tools, home = tmp_path / "tools", tmp_path / "stems-home"
     (home / "htdemucs_6s.mlmodelc").mkdir(parents=True)
@@ -42,12 +43,20 @@ def test_a_songs_parts_are_made_kept_and_read_back_and_what_is_left_is_other(tmp
     each = tmp_path / "each.npz"
     np.savez(each, **{stem: as_int16(part) for stem, part in parts().items()})
     helper = tools / "rs-stems-drums"  # (the separator: the song, and the song less a part, as it gives them)
+    every = f"""
+elif args[0] == "separate-all":
+    parts = np.load({str(each)!r})
+    for stem in args[3:]:
+        open(f"{{args[2]}}/{{stem}}.raw", "wb").write(parts[stem].tobytes())
+    open(f"{{args[2]}}/progress", "w").write("45 45")
+""" if one_pass else ""
     helper.write_text(f"""#!{sys.executable}
 import shutil, struct, sys
 import numpy as np
 args = sys.argv[1:]
 if args[0] == "decode":
     shutil.copy({str(song_wav)!r}, args[2])
+{every}
 else:
     parts = np.load({str(each)!r})
     rest = sum(parts[s].astype(np.int32) for s in parts.files if s != args[3]).astype(np.int16)
@@ -63,6 +72,7 @@ else:
     far = []
     stems.make(song_ref, tmp_path, tools=tools, stems_home=home, progress=far.append)
     assert stems.made(song_ref) and far[-1] == 1.0 and far == sorted(far)
+    assert stems._does(helper)[1] == one_pass
     got = stems.load(song_ref, as_int16(song))
     assert set(got) == set(stems.SEPARATED)  # (other: the song less them, not kept apart)
     got["other"] = as_int16(song) - sum(got[s].astype(np.int32) for s in stems.SEPARATED)

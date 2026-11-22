@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import wave
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,8 +16,9 @@ from . import drums
 from .library import ArrangementRef
 
 # A song's parts (stems), for its own audio with each part at a volume of its own (songaudio): Song Stems' Demucs
-# model (htdemucs_6s, by drums-setup.sh's rs-stems-drums) takes each of five out of the song in turn, the part being
-# the song less what's left; "other" is what's left of the song without the five (ambience, synths, effects...).
+# model (htdemucs_6s, by drums-setup.sh's rs-stems-drums) takes all five out of the song in one pass (separate-all;
+# a separator built before it, each in turn, the part being the song less what's left); "other" is what's left of the
+# song without the five (ambience, synths, effects... and what the model's parts don't add up to).
 # Kept as AAC (afconvert: sample-aligned, a few MB a part), the least played first gone over CACHE_MOST.
 
 STEMS = ("drums", "bass", "guitar", "vocals", "piano", "other")
@@ -25,6 +26,7 @@ SEPARATED = STEMS[:-1]  # (each taken out by the separator; other: what's left)
 STEMS_VERSION = 1
 BITRATE = 256000  # a part's AAC
 CACHE_MOST = 2_000_000_000  # bytes of parts kept, at most
+SEPARATING = 0.85  # of making them: the separating (the rest, keeping each as AAC)
 
 
 class StemsError(Exception):
@@ -49,29 +51,35 @@ def made(ref: ArrangementRef, cache: Path | None = None) -> bool:
         all((_folder(ref, cache) / f"{stem}.m4a").exists() for stem in SEPARATED)
 
 
-_can: dict[Path, tuple[float, int, bool]] = {}  # (separators looked at: as each was then, its time and size)
+_seen: dict[Path, tuple[float, int, bool, bool]] = {}  # (separators looked at: as each was then, its time and size,
+# and what it does)
+
+
+def _does(helper: Path) -> tuple[bool, bool]:
+    """What a separator does: take out every part (drums-setup.sh run again since it took out drums alone), and all of
+    them in one pass (since separate-all). (Asked often: it's read once, again only when it changes.)"""
+    try:
+        stat = helper.stat()
+        seen = _seen.get(helper)
+        if seen is not None and seen[:2] == (stat.st_mtime, stat.st_size):
+            return seen[2], seen[3]
+        made = helper.read_bytes()
+    except OSError:
+        return False, False
+    does = b"\x00piano\x00" in made, b"separate-all" in made
+    _seen[helper] = (stat.st_mtime, stat.st_size, *does)
+    return does
 
 
 def can_make(tools: Path | None = None) -> bool:
-    """Whether the separator takes out every part (drums-setup.sh run again since it took out drums alone). (Asked
-    often: it's read once, again only when it changes.)"""
-    helper = (tools or drums.tools_dir()) / "rs-stems-drums"
-    try:
-        stat = helper.stat()
-        seen = _can.get(helper)
-        if seen is not None and seen[:2] == (stat.st_mtime, stat.st_size):
-            return seen[2]
-        can = b"\x00piano\x00" in helper.read_bytes()
-    except OSError:
-        return False
-    _can[helper] = (stat.st_mtime, stat.st_size, can)
-    return can
+    """Whether the separator takes out every part (drums-setup.sh run again since it took out drums alone)."""
+    return _does((tools or drums.tools_dir()) / "rs-stems-drums")[0]
 
 
 def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_home: Path | None = None,
          cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None) -> None:
-    """A song's parts made and kept (a few times its drum part's separating: about 20 s a part for 4 minutes of song),
-    how far along going to progress (0 to 1)."""
+    """A song's parts made and kept (about 20 s for 4 minutes of song: its drum part's separating; a separator built
+    before separate-all, five times that), how far along going to progress (0 to 1)."""
     import numpy as np
     tools = tools or drums.tools_dir()
     stems_home = stems_home or Path.home() / "Library" / "Application Support" / "RS Re-ARMed" / "stems"
@@ -93,27 +101,57 @@ def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_h
             mix = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, channels)
         made_now = work / "made"
         made_now.mkdir()
+        one_pass, each = _does(helper)[1], work / "parts"
+        if one_pass:  # (every part from one pass of the model, each as it is)
+            each.mkdir()
+
+            def along_all(_took: float) -> None:
+                try:
+                    k, n = (int(v) for v in (each / "progress").read_text().split())
+                except (OSError, ValueError):
+                    return
+                progress(SEPARATING * k / max(n, 1))
+
+            _run([str(helper), "separate-all", str(work / "song.wem"), str(each), *SEPARATED], env,
+                 "Taking out the parts", along_all)
         for k, stem in enumerate(SEPARATED):
-            rest = work / f"{stem}.pcm"
+            if one_pass:
+                part = np.fromfile(each / f"{stem}.raw", dtype=np.int16)
+                if part.size != mix.size:
+                    raise StemsError(f"Taking out the {stem} didn't finish")
+                part = part.reshape(-1, channels)
+                (each / f"{stem}.raw").unlink()
+            else:  # (each in turn: the song less what's left)
+                rest = work / f"{stem}.pcm"
 
-            def along(_took: float, k: int = k, rest: Path = rest) -> None:
-                done = drums._ready(rest)
-                if done is not None:
-                    progress((k + min(max(done, 0.0), 1.0)) / len(SEPARATED))
+                def along(_took: float, k: int = k, rest: Path = rest) -> None:
+                    done = drums._ready(rest)
+                    if done is not None:
+                        progress((k + min(max(done, 0.0), 1.0)) / len(SEPARATED) * SEPARATING)
 
-            _run([str(helper), "separate", str(work / "song.wem"), "1", stem, str(rest)], env,
-                 f"Taking out the {stem}", along)
-            raw = rest.read_bytes()
-            total, state = struct.unpack_from("<I", raw, 24)[0], struct.unpack_from("<I", raw, 28)[0]
-            if state != 1:
-                raise StemsError(f"Taking out the {stem} didn't finish")
-            left = np.frombuffer(raw, dtype=np.int16, offset=64, count=total * channels).reshape(-1, channels)
-            part = np.clip(mix[:len(left)].astype(np.int32) - left, -32768, 32767).astype(np.int16)
+                _run([str(helper), "separate", str(work / "song.wem"), "1", stem, str(rest)], env,
+                     f"Taking out the {stem}", along)
+                raw = rest.read_bytes()
+                total, state = struct.unpack_from("<I", raw, 24)[0], struct.unpack_from("<I", raw, 28)[0]
+                if state != 1:
+                    raise StemsError(f"Taking out the {stem} didn't finish")
+                left = np.frombuffer(raw, dtype=np.int16, offset=64, count=total * channels).reshape(-1, channels)
+                part = np.clip(mix[:len(left)].astype(np.int32) - left, -32768, 32767).astype(np.int16)
+                rest.unlink()
+                progress((k + 1) / len(SEPARATED) * SEPARATING)
             _write_wav(work / f"{stem}.wav", part, rate)
+            del part
+
+        def keep(stem: str) -> None:
             _run(["afconvert", "-f", "m4af", "-d", "aac", "-b", str(BITRATE), str(work / f"{stem}.wav"),
                   str(made_now / f"{stem}.m4a")], env, f"Keeping the {stem}")
-            rest.unlink()
-            progress((k + 1) / len(SEPARATED))
+            (work / f"{stem}.wav").unlink()
+
+        with ThreadPoolExecutor(len(SEPARATED), thread_name_prefix="rs-keylights stems") as pool:
+            # (all at once: afconvert's one core each)
+            for k, kept in enumerate(as_completed([pool.submit(keep, stem) for stem in SEPARATED])):
+                kept.result()
+                progress(SEPARATING + (1 - SEPARATING) * (k + 1) / len(SEPARATED))
         (made_now / "done.json").write_text(json.dumps({"version": STEMS_VERSION, "song": ref.title, "rate": rate}))
         if folder.exists():
             shutil.rmtree(folder)
