@@ -1572,10 +1572,13 @@ class Gui:
         session = self._session
         if not isinstance(session, Playback) or not session.running or not self._playing or self._playing["id"] != sid:
             return
+        started = time.monotonic()
         planned, length = self._plan(sid)
         session.replace(player_for(planned, session.keyboard, *self._light_timing(), **self._drums_extra(sid),
                                   cache=self._made),
                         length)
+        if self._trace is not None:  # (played again: everything sounding stopped and struck again)
+            self._trace({"t": round(started, 3), "replayed": sid, "took": round(time.monotonic() - started, 4)})
         self._playing, self._planned_now = self._describe(sid, planned), planned
 
     def _drums_extra(self, sid: str) -> dict[str, Any]:
@@ -1620,12 +1623,17 @@ class Gui:
                     return False
                 if not chosen["play"]:
                     muted.add(chosen["part"])
-            if self._drum_settings(sid)["play"]:
-                if DRUMS not in session.player.names and self._drum_tracks(sid):
-                    return False
-            else:
+            tracks = self._drum_tracks(sid, muted_too=True)  # (the drum part: the same tracks, else made again since)
+            have = [t for t, name in zip(session.player.tracks, session.player.names) if name == DRUMS]
+            if len(have) != len(tracks) or any(a is not b for a, b in zip(have, tracks)):
+                return False
+            if not self._drum_settings(sid)["play"]:
                 muted.add(DRUMS)
+            started = time.monotonic()
             session.mute(muted)
+            if self._trace is not None:
+                self._trace({"t": round(started, 3), "muted": sorted(muted),
+                             "took": round(time.monotonic() - started, 4)})
             planned = [replace(pp, part=replace(pp.part, muted=pp.part.ref.part in muted)) for pp in self._planned_now]
             self._playing, self._planned_now = self._describe(sid, planned), planned
             self.play_version += 1
@@ -3998,7 +4006,18 @@ class Gui:
 
     # State and settings
 
+    def _trace_audio(self) -> None:
+        """What the song's audio did to keep with the song since last asked (its jumps and catch-ups), to the trace
+        (--trace): written here, not on the sound device's thread."""
+        audio = self._song_audio
+        if audio is None or self._trace is None:
+            return
+        while audio.events:
+            at, what, off = audio.events.popleft()
+            self._trace({"t": round(at, 3), "audio": what, "off": off, "position": self.song_position()})
+
     def state(self) -> dict[str, Any]:
+        self._trace_audio()
         game_list = self.game_songs() is not None  # (asked first: not while it's locked)
         with self._lock:
             session = self._session

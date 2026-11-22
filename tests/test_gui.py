@@ -2176,3 +2176,20 @@ def test_stop_goes_back_to_the_songs_start_and_the_page_hears_how_far_things_bei
     kit = next(program for _name, program in DRUM_SETS if program != gui.settings["drum_set"])
     gui.set_drums({"song": sid, "kit": kit})  # (the Launchkey's knob: every page shows it)
     assert gui.play_version > version and gui.drums_info(sid)["kit"] == kit
+
+
+def test_a_drum_part_made_again_as_its_song_plays_is_played_with_its_new_hits(server):
+    from rs_keylights import drums
+    gui, sid = server.gui, first_song(server)
+    ref = gui._load(sid)[0][0]
+    drums.keep(ref, [drums.Hit(2.0, drums.KICK, 110)])
+    gui.set_drums({"song": sid, "play": True})
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    player = gui._session.player
+    assert gui._mute_now(sid) and gui._session.player is player  # (the same drum part: muted or not, at once)
+    drums.keep(ref, [drums.Hit(2.0, drums.KICK, 110), drums.Hit(2.5, drums.SNARE, 90)])  # (made again)
+    gui._drums_on(sid)
+    assert gui._session.player is not player  # (played again with its new hits, not the old ones)
+    assert sum(len(t.lights) for t, name in zip(gui._session.player.tracks, gui._session.player.names)
+               if name == "drums") == 2
+    call(server, "/api/stop", {})

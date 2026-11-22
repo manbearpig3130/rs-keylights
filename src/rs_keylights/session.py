@@ -187,17 +187,20 @@ class Playback:
     def replace(self, player: Player, length: float | None = None) -> None:
         """Plays on with another player (other parts, tones or lights), from where the song is."""
         with self._lock:
-            position = self._now()
+            measured = self._clock()  # (where the song is then: the time stopping and retiming take isn't lost to it,
+            position = self._from if self.paused else min(  # the song's audio and the game ahead of it after)
+                self._from + (measured - self._since) * self.speed, self.length)
             self.player.stop()
             self.player = player
             player.retime(rate=self.speed)
             if length is not None:
                 self.length = length
-                position = min(position, length)
-                self._from, self._since = position, self._clock()
+                if position > length:
+                    position, measured = length, self._clock()
+                self._from, self._since = position, measured
                 self._timed()
             if not self.paused:
-                player.seek(position)
+                player.seek(self._now())  # (where it is now: on from it)
 
     def stop(self) -> None:
         self._quit.set()

@@ -159,3 +159,18 @@ def test_parts_are_mixed_at_their_weights_as_it_plays():
     assert np.allclose(later[-2205:], (low + high)[4410 + 8820 - 2205:4410 + 8820], atol=1e-5)
     as_ints = Stretcher({"song": (x * 32767).astype(np.int16)})  # (int16: kept so, read as -1 to 1)
     assert np.allclose(as_ints.read(1000, 1.0), x[:1000], atol=1e-3)
+
+
+def test_off_all_at_once_it_jumps_there_and_says_so_only_a_drift_is_caught_up():
+    x = tones()
+    song = Song()
+    audio = SongAudio(x, RATE, song.where)
+    audio.fill(4410, at=0.0)
+    assert not audio.events  # (from silence: just where it is, not said)
+    song.position = 0.1  # (100 ms on, all at once: a stall, not a drift)
+    audio.fill(441, at=0.1)
+    assert abs(audio._stretcher.position - (0.2 * RATE + 441)) < 2 and not audio._catching  # (there at once)
+    assert [what for _at, what, _off in audio.events] == ["jump"] and abs(audio.events[0][2] - 0.1) < 0.002
+    song.position = 0.1 + DRIFT * 1.5  # (a drift: caught up, and said)
+    audio.fill(441, at=0.11)
+    assert audio._catching and audio.events[-1][1] == "catching" and JUMP > DRIFT * 1.5

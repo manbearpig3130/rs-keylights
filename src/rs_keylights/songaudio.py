@@ -22,11 +22,14 @@ FRAME = 2048  # samples a frame of it (46 ms at 44.1 kHz), overlapped by half
 HOP = FRAME // 2
 SEEK = 512  # samples either way each frame's searched for where it fits best...
 DECIMATE = 4  # ...on every 4th sample of it, mono
-JUMP = 0.15  # seconds the audio's off where the song is to jump there (a seek, a loop); less, from DRIFT on...
+JUMP = 0.045  # seconds the audio's off where the song is to jump there (a seek, a loop; a stall: off all at once,
+# not drifting, so spliced in at once: caught up at MOST_CATCH, 100 ms would take 5 s of stretched, slower or
+# quicker sound); less, from DRIFT on...
 DRIFT = 0.02  # (the sound device's clock and the Mac's drift a few ms a minute apart; a block it missed, more)
 CAUGHT = 0.002  # ...is caught up to this close by playing up to MOST_CATCH faster or slower: this much faster a
 CATCH = 1.0  # second it's behind
 MOST_CATCH = 0.02
+EVENTS_KEPT = 64  # jumps and catch-ups kept for the trace (SongAudio.events)
 SKIPPED = 0.001  # seconds later than the last block's end a block's heard: blocks between missed
 BLOCK = 512  # samples the sound device's asked for at once (12 ms: steady, the delay made up for where it's heard)
 
@@ -162,6 +165,9 @@ class SongAudio:
         self._catching = False
         self._next: float | None = None  # (when the next block's heard, on the sound device's clock)
         self._silent = True  # (the last block: silence, the song not playing)
+        # what it did to keep with the song, for the trace (taken by the page's state: nothing written here, on the
+        # sound device's thread): (when, "jump" or "missed" and how far off it was, seconds; "catching", off; "caught")
+        self.events: deque[tuple[float, str, float]] = deque(maxlen=EVENTS_KEPT)
 
     @property
     def channels(self) -> int:
@@ -187,8 +193,13 @@ class SongAudio:
             off = (wanted - self._stretcher.position) / self.rate
             if silent or abs(off) > JUMP * max(speed, 1.0) or (missed and abs(off) > CAUGHT):  # (from silence: from
                 self._stretcher.seek(wanted)  # just where it is)
+                if not silent:
+                    self.events.append((time.monotonic(), "missed" if missed else "jump", round(off, 4)))
                 off = 0.0
-            self._catching = abs(off) > (CAUGHT if self._catching else DRIFT)
+            catching = abs(off) > (CAUGHT if self._catching else DRIFT)
+            if catching != self._catching:
+                self.events.append((time.monotonic(), "catching" if catching else "caught", round(off, 4)))
+            self._catching = catching
             catch = min(max(off * CATCH, -MOST_CATCH), MOST_CATCH) if self._catching else 0.0
             return self._stretcher.read(frames, speed * (1 + catch)) * self.volume
 

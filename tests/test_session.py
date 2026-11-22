@@ -264,3 +264,19 @@ def test_a_loop_goes_back_to_a_little_before_its_start_on_reaching_its_end():
     assert p.position == 12.0 and p._last == 12.0
     p.set_loop((4.0, 6.0))  # set while past it: back at once
     assert p.position == 4.0 - LOOP_LEAD_IN
+
+
+def test_replace_taking_a_while_loses_none_of_it_from_where_the_song_is():
+    now = [100.0]
+    k, _out = keyboard()
+
+    class Slow(Player):  # (stopping it takes 50 ms: as many notes sounding, or another speed's keys made again)
+        def stop(self):
+            now[0] += 0.05
+            super().stop()
+
+    p = Playback(Slow([Track([Light(1.0, 9.0, (60,))])], k), k, length=10.0, start=2.0, clock=lambda: now[0])
+    p.player.advance(2.0)
+    now[0] = 101.0
+    p.replace(Player([Track([Light(1.0, 9.0, (64,))])], k), length=10.0)
+    assert abs(p.position - 3.05) < 1e-9  # (the song went on meanwhile: not held back 50 ms behind its audio)
