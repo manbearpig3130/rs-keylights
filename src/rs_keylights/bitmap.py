@@ -464,6 +464,25 @@ def with_note(picture: Bitmap, lines: tuple[str, ...], muted: bool = False, bott
     return picture
 
 
+def with_progress(picture: Bitmap, label: str, done: float | None, muted: bool = False, bottom: int = 51) -> Bitmap:
+    """Something going on, kept at a picture's bottom left (where a note goes: notes come over it a while) until it's
+    done: its label, a small bar as far as it's got and the percent (done None: how far isn't known, the label
+    alone)."""
+    right = WIDTH - 13 if muted else WIDTH
+    picture.fill(0, bottom - 2, right, HEIGHT - bottom + 2, on=False)
+    x = picture.text(1, bottom, label) + 3
+    if done is None:
+        return picture
+    done = min(max(done, 0.0), 1.0)
+    percent = f"{round(done * 100)}%"
+    end = right - text_width(percent) - 4
+    if end - x >= 12:
+        picture.frame(x, bottom, end - x, 7)
+        picture.fill(x + 2, bottom + 2, round((end - x - 4) * done), 3)
+    picture.text(right - text_width(percent) - 1, bottom, percent)
+    return picture
+
+
 def _speed_bar(picture: Bitmap, speed: float, left: int, right: int, bar: int, top: int, height: int) -> None:
     """A song's progress line (from left to right, the bar 3 high from bar) turned into its speed: 25% at the left,
     100% in the middle (marked, top to top + height), 150% at the right."""

@@ -10,7 +10,7 @@ import math
 
 from .bitmap import (FASTEST, SLOWEST, WIDTH, Bitmap, arrangements_picture, keys_picture, lyrics_picture, mixer_picture,
                      parts_picture, pedal_picture, playback_picture, song_bar, song_picture, warmup_picture, with_note,
-                     wrap)
+                     with_progress, wrap)
 from .launchkey import (ENCODER_BUTTONS, PLAY, RECORD, SIDE_BUTTONS, STATIONARY, TEMPORARY, TRACK_BUTTONS, Button,
                         Launchkey, Pad, ScaleMode, Strip, Turn, step_at)
 from .chords import NAMES, chord_name
@@ -94,6 +94,7 @@ SECONDS_PER_STEP = 1.0  # knob 8
 # take in a picture (1.2 KB), and what's sent after it waits (the pads' lights too: the beat lights), so this keeps
 # it busy a third of the time at most, a knob turning
 PICTURE_SHOWN, PICTURE_GAP = 3.0, 0.1
+PROGRESS = "progress"  # (what's said over the screen: something going on, kept there till it's done)
 ARRANGEMENT_KNOBS = 5  # knobs (and pad columns) 1 to 5: the arrangements (one after the 5th has none: songs seldom
 # have 6)
 MIXER_ARRANGEMENTS = 6  # in the mixer, one more: knob 6 and its pads a 6th arrangement's (the guitar's outside it)
@@ -1706,8 +1707,8 @@ class Watch:
         if shows == self._screen_shown or (draw is not None and now - self._screen_at < PICTURE_GAP):
             return
         (picture, note), (was, said) = shows, self._screen_shown or (("",), None)
-        if picture[0] in TIMED and was[0] != picture[0] or note is not None and note != said:
-            launchkey.hide(TEMPORARY)  # just asked for: over anything shown for a while
+        if picture[0] in TIMED and was[0] != picture[0] or note is not None and note != said and note[0] != PROGRESS:
+            launchkey.hide(TEMPORARY)  # just asked for: over anything shown for a while (not a split's progress)
         if draw is None:
             launchkey.show(STATIONARY, *picture[1:])
         else:
@@ -1716,15 +1717,38 @@ class Watch:
         self._screen_shown = shows
 
     def _screen(self, now: float) -> tuple[tuple[Any, ...], Callable[[], Bitmap] | None]:
-        """What the screen shows now (the picture, and what's said over it), and how to draw it (None: text)."""
+        """What the screen shows now (the picture, and what's said over it), and how to draw it (None: text). Said a
+        while, over it; else something going on (a song being split, its drum part made), kept there till it's done."""
         picture, draw = self._picture_shown(now)
-        if draw is None or now >= self._note_until:
+        if draw is None:
             return (picture, None), draw
-        line, lines = self._note
-        said = lines if lines is not None else (line or "",)
         muted, bottom = not (self._info or {}).get("sound", True), 54 if picture[0] == "mixer" else 51
         drawn = draw
-        return (picture, said), lambda: with_note(drawn(), said, muted, bottom)
+        if now < self._note_until:
+            line, lines = self._note
+            said = lines if lines is not None else (line or "",)
+            return (picture, said), lambda: with_note(drawn(), said, muted, bottom)
+        working = self._working(self._info or {})
+        if working is None or picture[0] == "warmup" or (picture[0] == "mixer" and picture[1] not in ("stems", "game")):
+            return (picture, None), draw  # (the MIDI mixer: its names there)
+        label, done = working
+        shown = (PROGRESS, label, None if done is None else round(done * 50))  # (redrawn every 2%)
+        return (picture, shown), lambda: with_progress(drawn(), label, done, muted, bottom)
+
+    @staticmethod
+    def _working(info: dict[str, Any]) -> tuple[str, float | None] | None:
+        """Something going on to show, and how far it is (0 to 1; None: not known): the song being split (or waiting
+        its turn), else its drum part being made; None: nothing."""
+        audio = info.get("audio") or {}
+        if audio.get("waiting"):
+            return "Split: waiting", None
+        if audio.get("making"):
+            return "Splitting", float(audio.get("progress") or 0.0)
+        drum_part = next((a for a in (info.get("song") or {}).get("arrangements") or [] if a.get("kind") == "drums"),
+                         None)
+        if drum_part is not None and drum_part.get("making"):
+            return "Making drums", float(drum_part.get("progress") or 0.0)
+        return None
 
     def _picture_shown(self, now: float) -> tuple[tuple[Any, ...], Callable[[], Bitmap] | None]:
         """The picture the screen shows now, and how to draw it (None: it's text)."""
@@ -2066,15 +2090,8 @@ class Watch:
                           ("The game's song parts", "need rearmed-mods"))
             return
         audio = info.get("audio") or {}
-        if page == "stems" and not audio.get("made"):
-            self._say(now, lines=self._splitting(audio) if audio.get("making") else
-                      ("Song not split yet:", "a pad on top splits it"))
-
-    @staticmethod
-    def _splitting(audio: dict[str, Any]) -> tuple[str, str]:
-        if audio.get("waiting"):  # (another song's being split first)
-            return ("Waiting to split:", "another song's first")
-        return ("Splitting the song", f"into its parts: {round((audio.get('progress') or 0) * 100)}%")
+        if page == "stems" and not audio.get("made") and not audio.get("making"):  # (splitting: its progress shows)
+            self._say(now, lines=("Song not split yet:", "a pad on top splits it"))
 
     def _mix_stems(self, event: Pad | Turn | Button | ScaleMode | Strip, info: dict[str, Any], now: float) -> None:
         """The mixer's stems page: knobs 1 to 6 the song's parts' volumes (in its own audio), 7 its Music (the
@@ -2145,14 +2162,13 @@ class Watch:
         """The song split into its parts (a part's pad, on a song not split): started, or how far it is, said."""
         audio, song = info.get("audio") or {}, info.get("song")
         if audio.get("making"):
-            self._say(now, lines=self._splitting(audio))
-        elif song is None:
+            return  # (its progress shows, at the bottom)
+        if song is None:
             self._say(now, line="No song to split")
         elif not audio.get("can"):
             self._say(now, lines=("To split songs, run", "tools/drums-setup.sh"))
         elif self._try(lambda: self.gui.set_stems({"song": song["id"], "make": True})):
-            self._info = {**info, "audio": {**audio, "making": True, "progress": 0.0}}
-            self._say(now, lines=("Splitting the song", "into its parts..."))
+            self._info = {**info, "audio": {**audio, "making": True, "progress": 0.0}}  # (its progress shows at once)
 
     def _turn_stem(self, encoder: int, steps: int, info: dict[str, Any], now: float) -> None:
         """A knob of the stems page: 1 to 6 a part's volume, 7 its Music (the song's audio's volume), 8 its parts
@@ -2171,8 +2187,8 @@ class Watch:
         if encoder > CONTROLS or len(STEMS) <= encoder < CONTROLS:
             return
         if not audio.get("made"):
-            self._say(now, lines=self._splitting(audio) if audio.get("making") else
-                      ("Song not split yet:", "a pad on top splits it"))
+            if not audio.get("making"):  # (splitting: its progress shows)
+                self._say(now, lines=("Song not split yet:", "a pad on top splits it"))
             return
         if encoder == CONTROLS:  # (its parts together, as the parts page's knob 8)
             volumes = {stem: min(max(self._stem_volume(stem, info) + steps * STEM_STEP, 0), 100)

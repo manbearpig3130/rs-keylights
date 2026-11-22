@@ -445,6 +445,10 @@ controls depends on whether you're following:
 
 A thin line on the screen sets the Music apart from the parts.
 
+While a song is being split (from a pad here or from the page), the bottom of the screen shows how far it is, a
+small bar with its percent, on the song's screen and the stems page alike, until it's done; then its drum part being
+made, if a BS-RoFormer SW split makes it again. Anything said meanwhile shows over it for a few seconds as ever.
+
 **While following a song split here** (either separator), its parts play in the game's own song: the riffloop mod
 mixes them into it as it plays, at this page's levels, the same levels as playing the song here. As the song starts,
 rs-keylights writes its parts into one file the mod maps (`~/Library/Caches/rs-keylights/game-parts`, one song's kept:

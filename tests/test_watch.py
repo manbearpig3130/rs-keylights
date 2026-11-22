@@ -2136,14 +2136,14 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     clock.now = 1.5
     watch.step()
     assert gui.splits == [{"song": "song", "make": True}] and pads(launchkey)[(0, 3)] == (3, True)
-    assert note(watch) == (None, ("Splitting the song", "into its parts..."))
-    gui.audio["progress"] = 0.42
+    assert note(watch) is None and watch._screen_shown[1] == ("progress", "Splitting", 0)  # (its progress, at once,
+    gui.audio.update(making=True, progress=0.42)                                           # kept at the bottom)
     clock.now = 2.0
     watch.step()  # (what the page has now)
-    launchkey.queued = [Pad(0, 3)]  # again: how far it is (not started twice)
+    launchkey.queued = [Pad(0, 3)]  # again: not started twice, nothing said over it
     clock.now = 2.1
     watch.step()
-    assert len(gui.splits) == 1 and note(watch) == (None, ("Splitting the song", "into its parts: 42%"))
+    assert len(gui.splits) == 1 and note(watch) is None and watch._screen_shown[1] == ("progress", "Splitting", 21)
     launchkey.queued = [Turn(KEYS_COLUMN, -10)]  # (its Music, the song's own volume: split or not)
     clock.now = 2.5
     watch.step()
@@ -2339,3 +2339,29 @@ def test_play_and_stop_leave_the_mixer_up_and_stop_drops_a_move_not_made_yet():
     clock.now = 5.0
     watch.step()
     assert gui.stopped == 1 and watch._moving_to is None and 90.0 not in gui.seeks  # (back to the start, not there)
+
+
+def test_a_split_and_its_drum_part_show_how_far_they_are_at_the_bottom_till_theyre_done_notes_coming_over_it():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    gui.audio.update(made=False, making=True, progress=0.3)  # (split from the page: shown anyway)
+    watch.step()
+    assert watch._screen_shown[1] == ("progress", "Splitting", 15)  # (the song's own screen)
+    watch._say(clock.now, line="Lead: muted")  # (said a while: over it)
+    clock.now = 0.5
+    watch.step()
+    assert watch._screen_shown[1] == ("Lead: muted",)
+    clock.now = 4.0  # (said: back to how far it is)
+    watch.step()
+    assert watch._screen_shown[1] == ("progress", "Splitting", 15)
+    gui.audio.update(made=True, making=False)  # (split: its drum part made again from it)
+    drums = {"id": "drums", "name": "Drums", "kind": "drums", "play": False, "made": True, "making": True,
+             "progress": 0.6, "lights": 0, "tones": {}, "volume": 100, "playing": False}
+    gui.song["arrangements"] = [*gui.song["arrangements"], drums]
+    clock.now = 4.5
+    watch.step()
+    assert watch._screen_shown[1] == ("progress", "Making drums", 30)
+    drums["making"] = False  # (done: what was there before)
+    clock.now = 5.0
+    watch.step()
+    assert watch._screen_shown[1] is None

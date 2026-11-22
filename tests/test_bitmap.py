@@ -60,3 +60,18 @@ def test_a_note_goes_over_the_bottom_left_and_leaves_the_muted_speaker():
     assert lit(said, 0, 40, WIDTH, 47) == lit(plain, 0, 40, WIDTH, 47)  # the key line too
     two = with_note(song_picture("Song", "Band", "C major", "C D E F G A B"), ("Pick a song", "on the page"))
     assert lit(two, 0, 40, WIDTH, 47) == lit(with_note(Bitmap(), ("Pick a song", "")), 0, 40, WIDTH, 47)
+
+
+def test_something_going_on_is_kept_at_the_bottom_its_bar_as_far_as_its_got():
+    from rs_keylights.bitmap import HEIGHT, WIDTH, Bitmap, text_width, with_progress
+    lit = lambda b, x0, x1, y: sum(b.pixels[y][x] for x in range(x0, x1))  # noqa: E731
+    half = with_progress(Bitmap(), "Splitting", 0.5)
+    left = 1 + text_width("Splitting") + 1 + 3  # (after its label, and a gap)
+    end = WIDTH - text_width("50%") - 4
+    assert half.pixels[51][left] and half.pixels[57][left] and half.pixels[51][end - 1]  # (its bar's frame)
+    inside = end - left - 4
+    assert lit(half, left + 2, end - 2, 53) == round(inside * 0.5)  # (filled as far as it's got)
+    full, end = with_progress(Bitmap(), "Splitting", 1.0), WIDTH - text_width("100%") - 4  # (its percent wider)
+    assert lit(full, left + 2, end - 2, 53) == end - left - 4
+    alone = with_progress(Bitmap(), "Split: waiting", None)  # (how far not known: its label alone)
+    assert not any(alone.pixels[53][x] for x in range(text_width("Split: waiting") + 4, WIDTH)) and HEIGHT == 64
