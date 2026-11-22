@@ -28,7 +28,8 @@ from typing import Any, Callable, cast
 from urllib.parse import ParseResult, parse_qs, quote, urlparse
 
 from .follow import DEFAULT_OVERLAY_PORT, OverlayClient, PartsFor
-from .keyboard import DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, Keyboard, KeyboardError, Synth, keyboard_name
+from .keyboard import (DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, PROGRAMS, Keyboard, KeyboardError, Synth,
+                       keyboard_name)
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light
@@ -243,8 +244,9 @@ def _arrangement_id(value: str) -> str:
 
 def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
     """The MIDI device sounding each kind of part (lead, rhythm, bass; and a song's drums) other than the keyboard,
-    with a change, checked: its port, channel, and whether it plays a note at a time (drums: its drums' notes,
-    DRUM_MAPS) (a change of None: the keyboard again)."""
+    with a change, checked: its port, channel, and whether it plays a note at a time; its program and how many it
+    has (a remote's knob goes round them) (drums: its drums' notes, DRUM_MAPS) (a change of None: the keyboard
+    again)."""
     if not isinstance(change, dict):
         raise GuiError("Expected a MIDI device for each kind of part")
     out = dict(table)
@@ -256,12 +258,13 @@ def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
             continue
         if not isinstance(chosen, dict) or not str(chosen.get("port") or "").strip():
             raise GuiError("Choose a MIDI output for the part")
-        program = chosen.get("program")
+        programs = int(_number(chosen.get("programs") or PROGRAMS, "programs", 1, PROGRAMS))
         out[part] = {"port": str(chosen["port"]).strip(),
                      "channel": int(_number(chosen.get("channel", drums.DRUM_CHANNEL if part == "drums" else 1),
                                             "channel", 1, 16)),
                      "mono": bool(chosen.get("mono", True)),
-                     "program": None if program in (None, "") else int(_number(program, "program", 0, 127)),
+                     "program": _program(chosen.get("program"), programs),
+                     "programs": programs,
                      "octave": int(_number(chosen.get("octave", 0), "octave", -2, 2))}
         if part == "drums":
             if chosen.get("map", "gm") not in DRUM_MAPS:
@@ -269,6 +272,16 @@ def _outputs(table: dict[str, Any], change: Any) -> dict[str, dict[str, Any]]:
             out[part]["map"] = chosen.get("map", "gm")
             out[part]["kit"] = _circuit_kit(chosen.get("kit") or (table.get(part) or {}).get("kit") or {})
     return out
+
+
+def _program(program: Any, programs: int) -> int | None:
+    """A MIDI device's program (0: its first), checked against how many it has; None (or empty): its own sound."""
+    if program in (None, ""):
+        return None
+    number = int(_number(program, "program", 0, PROGRAMS - 1))
+    if number >= programs:
+        raise GuiError(f"It has {programs} programs: 1 to {programs}")
+    return number
 
 
 def _recalled(table: dict[str, Any], change: Any, known: Any) -> tuple[Any, dict[str, dict[str, Any]]]:
@@ -4177,7 +4190,10 @@ class Gui:
             chosen = self.settings["outputs"].get(part)
             if chosen is None:
                 raise GuiError(f"The {part} parts sound on the {self._keyboard_name}")
-            chosen = {**chosen, "program": int(_number(program, "program", 0, 127))}
+            number = _program(program, chosen.get("programs", PROGRAMS))
+            if number is None:
+                raise GuiError("Expected one of its programs")
+            chosen = {**chosen, "program": number}
             self.settings["outputs"] = self._kept["outputs"] = {**self.settings["outputs"], part: chosen}
             self._save()
         synth = self._synth(chosen["port"])
@@ -4185,9 +4201,11 @@ class Gui:
             synth.program(chosen["channel"], chosen["program"])
 
     def _output_of(self, part: str) -> dict[str, Any] | None:
-        """For a remote: the MIDI device a kind of part sounds on (its name, and program), if it isn't the keyboard."""
+        """For a remote: the MIDI device a kind of part sounds on (its name, program and how many it has), if it isn't
+        the keyboard."""
         chosen = self.settings["outputs"].get(part)
-        return {"port": chosen["port"], "program": chosen.get("program")} if chosen else None
+        return ({"port": chosen["port"], "program": chosen.get("program"),
+                 "programs": chosen.get("programs", PROGRAMS)} if chosen else None)
 
     def _synth(self, port: str) -> Synth | None:
         """Another MIDI device, opened (once: it stays open); None if it isn't there (or it's the keyboard). One

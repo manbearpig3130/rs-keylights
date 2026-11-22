@@ -26,6 +26,7 @@ ALL_NOTES_OFF = 123
 SUSTAIN = 64
 MAX_LIT = 4  # keys lit at once, at most (on both navigate channels together)
 NORMAL_VOLUME = 100
+PROGRAMS = 128  # another MIDI device's programs, unless it's said to have fewer (a Korg monologue: 100)
 VELOCITY = 100
 SILENCE_EVERY = 5.0  # seconds; the keyboard forgets the volume when it's switched off and on
 BEND_RANGE = 2  # semitones a pitch bend goes either way (as General MIDI keyboards start, the LK-170 too)...

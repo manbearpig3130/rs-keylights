@@ -14,6 +14,7 @@ from .bitmap import (FASTEST, SLOWEST, WIDTH, Bitmap, arrangements_picture, keys
 from .launchkey import (ENCODER_BUTTONS, PLAY, RECORD, SIDE_BUTTONS, STATIONARY, TEMPORARY, TRACK_BUTTONS, Button,
                         Launchkey, Pad, ScaleMode, Strip, Turn, step_at)
 from .chords import NAMES, chord_name
+from .keyboard import PROGRAMS
 from .lyrics import Line
 from .pedal import SLOTS as PEDAL_SLOTS
 from .sng import Chord, note_name
@@ -274,6 +275,14 @@ def stepped_tone(number: int, steps: int, by_group: bool, choices: list[int] | N
         return numbers[(at + steps) % len(numbers)]
     group = max(i for i, start in enumerate(starts) if start <= at)
     return numbers[starts[(group + steps) % len(starts)]]
+
+
+def stepped_program(program: int | None, steps: int, programs: int = PROGRAMS) -> int:
+    """Another MIDI device's program some steps on, round from its last to its first and back, as a synth's own
+    knob goes (a Korg monologue's 100); from its own sound (None), going up the first, going down the last."""
+    if program is None:
+        program = -1 if steps > 0 else programs
+    return (program + steps) % programs
 
 
 def tone_shown(arrangement: dict[str, Any], field: str, kind: dict[str, Any],
@@ -2346,9 +2355,9 @@ class Watch:
             self._part_turned = column
             self._show_for_a_while("parts", now)
             return
-        if a.get("output"):  # (on another MIDI device: its programs, ten a step with knob 8)
-            program = self._program_of(a)
-            program = min(max((-1 if program is None else program) + steps * (10 if by_group else 1), 0), 127)
+        if a.get("output"):  # (on another MIDI device: its programs, ten a step with knob 8, round and round)
+            program = stepped_program(self._program_of(a), steps * (10 if by_group else 1),
+                                      a["output"].get("programs") or PROGRAMS)
             self._pending[(a["id"], "program")] = program
             self._try(lambda: self.gui.set_program(a["kind"], program))
             self._part_turned = column

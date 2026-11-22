@@ -1675,6 +1675,41 @@ def test_an_arrangement_on_another_device_its_knob_steps_its_programs():
     assert gui.programs[-1] == ("bass", 20)
 
 
+def test_a_device_with_fewer_programs_its_knob_goes_round_them():
+    watch, gui, launchkey, clock = watching("play")
+    bass = gui.song["arrangements"][2]
+    bass["output"] = {"port": "monologue SOUND", "program": 98, "programs": 100}  # (a Korg monologue: 100)
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Turn(2, 1)]  # knob 3, the bass's: its last program
+    clock.now = 0.5
+    watch.step()
+    launchkey.queued = [Turn(2, 1)]  # past it: its first again
+    clock.now = 1.0
+    watch.step()
+    assert gui.programs == [("bass", 99), ("bass", 0)] and screens(launchkey)[-1] == parts_picture(
+        "Bass program", 1, "Program", "monologue SOUND", 3, 0).data()
+    launchkey.queued = [Turn(2, -1)]  # and back before the first: its last
+    clock.now = 1.5
+    watch.step()
+    launchkey.queued = [Turn(CONTROLS, 1)]  # knob 8: ten at a time, round too
+    clock.now = 2.0
+    watch.step()
+    assert gui.programs[-2:] == [("bass", 99), ("bass", 9)]
+    bass["output"] = {"port": "monologue SOUND", "program": None, "programs": 100}  # its own sound: going down, the
+    watch._pending.clear()                                                           # last
+    launchkey.queued = [Turn(2, -1)]
+    clock.now = 2.5
+    watch.step()
+    assert gui.programs[-1] == ("bass", 99)
+    bass["output"] = {"port": "IAC Driver Bus 1", "program": 127}  # (how many not said: MIDI's 128)
+    watch._pending.clear()
+    launchkey.queued = [Turn(2, 1)]
+    clock.now = 3.0
+    watch.step()
+    assert gui.programs[-1] == ("bass", 0)
+
+
 def test_picked_with_no_chords_an_arrangements_notes_show():
     from rs_keylights.sng import Note
     watch, gui, launchkey, clock = watching("play")  # at 0:30

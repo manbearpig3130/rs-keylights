@@ -1037,7 +1037,7 @@ def test_a_kind_of_part_can_sound_on_another_midi_device(tmp_path):
               synth_factory=lambda port: Synth(port, midi_out_factory=lambda: synth_out if there[0] else FakeMidiOut()))
     gui.set_settings({"outputs": {"bass": {"port": "monologue SOUND", "channel": 1}}})
     assert gui.settings["outputs"] == {"bass": {"port": "monologue SOUND", "channel": 1, "mono": True, "program": None,
-                                                "octave": 0}}
+                                                "programs": 128, "octave": 0}}
     sid = gui.library()["songs"][0]["id"]
     gui.set_song({"song": sid, "parts": {"bass": {"play": True, "lights": 2}, "lead": {"lights": 2}}})
     gui.play({"song": sid})
@@ -1055,6 +1055,15 @@ def test_a_kind_of_part_can_sound_on_another_midi_device(tmp_path):
     played = [m[1] for m in synth_out.sent[sent:] if m[0] == 0x90]
     assert min(played) == first + 12  # (an octave up)
     gui.stop()
+    gui.set_settings({"outputs": {"bass": {"port": "monologue SOUND", "channel": 1, "program": 11, "programs": 100}}})
+    assert gui.settings["outputs"]["bass"]["programs"] == 100  # how many it has (a Korg monologue's): the remote
+    assert gui._output_of("bass") == {"port": "monologue SOUND", "program": 11, "programs": 100}  # goes round them
+    with pytest.raises(GuiError, match="100 programs"):  # (one it hasn't got)
+        gui.set_program("bass", 100)
+    with pytest.raises(GuiError, match="100 programs"):
+        gui.set_settings({"outputs": {"bass": {"port": "monologue SOUND", "program": 120, "programs": 100}}})
+    gui.set_program("bass", 99)  # its last
+    assert synth_out.sent[-1] == [0xC0, 99]
     assert gui.output_status() == {"bass": True}
     gui.close()  # (closed with the page)
     there[0] = False

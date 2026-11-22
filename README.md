@@ -198,7 +198,9 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
   Novation Circuit, an app on the Mac through the IAC Driver). The Casio still lights the keys. You choose:
   - the output and channel;
   - whether it plays one note at a time (for a monophonic synth; on by default);
-  - its program, and octaves up or down.
+  - its program, and octaves up or down;
+  - how many programs it has (128 if left empty; a Korg monologue has 100): the Launchkey's knob goes round them,
+    past the last to the first and back.
 
   Notes, bends, vibrato, the program and volume go to the device, but tones don't. If it isn't connected, the Casio
   plays the part.
@@ -375,7 +377,7 @@ While a warm-up runs, it has the Launchkey instead (see [On the Launchkey](#on-t
 
 Palm-mute and harmonics tones start with "Same tone" and, where their kind has one, "Default", so knob 8 gets back
 to them in a step. For a part on another MIDI device, its knob steps through the device's programs instead (knob 8:
-ten at a time).
+ten at a time), round from the last to the first (as many as Other MIDI devices says it has: 128 unless told).
 
 ### The guitar and the keys (columns 6 and 7)
 

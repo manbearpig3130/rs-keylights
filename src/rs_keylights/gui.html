@@ -4523,15 +4523,26 @@ function showOutputs(s) {
     monoBox.type = "checkbox";
     monoBox.checked = chosen ? chosen.mono : true;
     mono.append(monoBox, " a note at a time");
+    const programs = document.createElement("input");  // (how many it has: the knob goes round them)
+    programs.type = "number";
+    programs.min = "1";
+    programs.max = "128";
+    programs.placeholder = "128";
+    programs.style.width = "60px";
+    programs.value = chosen && chosen.programs && chosen.programs !== 128 ? String(chosen.programs) : "";
     const program = document.createElement("input");
     program.type = "number";
     program.min = "1";
-    program.max = "128";
+    program.max = programs.value || "128";
     program.placeholder = "its own";
     program.style.width = "72px";
     program.title = "Its program (1 the first; empty: the one it's on). The Launchkey's knob for the arrangement " +
       "steps through them too. (A Korg monologue takes them with its Global MIDI program change receive on)";
     program.value = chosen && chosen.program != null ? String(chosen.program + 1) : "";
+    const of = document.createElement("label");
+    of.title = "How many programs it has (empty: 128, as many as MIDI has; a Korg monologue has 100): the " +
+      "Launchkey's knob goes round them, past the last to the first again, and back";
+    of.append("of ", programs);
     const octave = document.createElement("select");
     octave.title = "Octaves its notes sound up or down (where they'd sound: as lit, or at the real pitch)";
     octave.innerHTML = [-2, -1, 0, 1, 2].map((n) =>
@@ -4546,15 +4557,17 @@ function showOutputs(s) {
     const send = (event) => act(async () => {
       await api("/api/settings", {outputs: {[part]: !port.value ? null : event.target === port ? {port: port.value} :
         {port: port.value, channel: Number(channel.value) || 1, mono: monoBox.checked,
-         program: program.value ? Number(program.value) - 1 : null, octave: Number(octave.value),
-         ...(part === "drums" ? {map: notes.value} : {})}}});
+         program: program.value ? Number(program.value) - 1 : null, programs: Number(programs.value) || null,
+         octave: Number(octave.value), ...(part === "drums" ? {map: notes.value} : {})}}});
       showOutputs(await api("/api/settings"));
     });
-    for (const control of [port, channel, monoBox, program, octave, notes]) control.addEventListener("change", send);
+    for (const control of [port, channel, monoBox, program, programs, octave, notes]) {
+      control.addEventListener("change", send);
+    }
     channel.hidden = !port.value;
-    mono.hidden = program.hidden = octave.hidden = !port.value || part === "drums";
+    mono.hidden = program.hidden = of.hidden = octave.hidden = !port.value || part === "drums";
     notes.hidden = !port.value || part !== "drums";
-    box.append(port, channel, program, octave, mono, notes);
+    box.append(port, channel, program, of, octave, mono, notes);
     if (chosen && (s.outputs_there || {})[part] === false) {
       const missing = document.createElement("span");
       missing.className = "missing";
