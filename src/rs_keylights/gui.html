@@ -1626,7 +1626,7 @@ function makeRollCard(spec) {
         shown = "";
         const kinds = [...new Set(d.parts.map((p) => p.kind))];
         r("legend").innerHTML = d.parts.map((p) =>
-          `<span><span class="swatch" style="background: var(--${p.kind})"></span>${esc(p.name)}${p.lights ? "" : " (sounds, not lit)"}</span>`).join("") +
+          `<span><span class="swatch" style="background: var(--${p.kind})"></span>${esc(p.name)}${p.muted ? " (lit, not heard)" : p.lights ? "" : " (sounds, not lit)"}</span>`).join("") +
           (kinds.length ? `<span>bright: lights the key · faint: sounds only</span>` : `<span>no part playing</span>`);
       }).catch(() => { if (wanted === asked) wanted = ""; });
     },
