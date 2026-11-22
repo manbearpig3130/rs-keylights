@@ -4,8 +4,8 @@ where it can't (another system, or macOS saying no): the notes play as before.
 - playing_thread(): the thread that steps through the notes is of the most urgent kind (QoS user-interactive, as a
   game's or an app's main thread): the performance cores first, ahead of the rest of the Mac's work.
 - Activity: while a song plays, the process says it's latency-critical work the user started (NSProcessInfo's
-  activity): no App Nap, which slows the timers of an app whose window isn't seen (the Dock app has none), and timers
-  as precise as they go.
+  activity): no App Nap, which slows the timers of an app whose window isn't seen (the Dock app's, closed or
+  hidden), and timers as precise as they go.
 """
 from __future__ import annotations
 

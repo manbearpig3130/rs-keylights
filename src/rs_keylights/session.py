@@ -33,7 +33,7 @@ def _quick_switches() -> None:
 
 
 # And macOS told: the song's thread the most urgent kind, and the process latency-critical while it runs (no App Nap
-# for the Dock app, whose window isn't seen; timers as precise as they go: priority's)
+# for the Dock app, its window closed or hidden; timers as precise as they go: priority's)
 PLAYING = "Playing a song's notes in time"
 
 

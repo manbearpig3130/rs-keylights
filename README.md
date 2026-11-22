@@ -4,7 +4,7 @@ Rocksmith 2014 songs on a light-up keyboard and the gear around it. rs-keylights
 song's notes and plays its parts on the Casio or other MIDI devices. It can do this along with the game, or on its
 own from the song files. Around that it adds:
 
-- a page in the browser with the song's fretboard, tab, chords, theory and lyrics;
+- a page (in the browser, or a window of its own) with the song's fretboard, tab, chords, theory and lyrics;
 - a Novation Launchkey as a remote for rs-keylights and for Rocksmith itself;
 - drum parts transcribed from the song's audio, for the Casio or a Novation Circuit;
 - the song's own audio, split into parts you can turn up and down;
@@ -61,10 +61,13 @@ Then start the page:
 .venv/bin/rs-keylights gui
 ```
 
-Or run `tools/dock-app.sh` once to make `~/Applications/rs-keylights.app` and put it in the Dock after RS Re-ARMed.
-Clicking it starts the page (with `--lan`; give other arguments to the script to change that), and quitting it gives
-the Launchkey back. Its output goes to `~/Library/Logs/rs-keylights.log`. macOS asks once for the microphone, which
-the Guitar card and warm-ups use.
+Or run `tools/dock-app.sh` once to make `~/Applications/rs-keylights.app` and put it in the Dock after RS Re-ARMed
+(it takes Xcode's Command Line Tools, `xcode-select --install`). Clicking it starts the server (with `--lan`; give
+other arguments to the script to change that) and shows the page in a window of its own, apart from the browser
+(WebKit, as Safari has it). Closing the window leaves the server running, so the Launchkey and the game's menu go on
+working, and clicking the app shows it again; quitting the app gives the Launchkey back. Exports save to Downloads,
+and the View menu zooms the page (⌘+, ⌘-, ⌘0). Its output goes to `~/Library/Logs/rs-keylights.log`. macOS asks once
+for the microphone, which the Guitar card and warm-ups use.
 
 ## The page
 
@@ -827,7 +830,7 @@ once, and Riff Repeater's speed is measured from it. RS Companion isn't read at 
 
 **On time while the Mac is busy.** The thread that plays the notes is macOS's most urgent kind (user-interactive:
 the performance cores first), and while a song plays the process tells macOS it's latency-critical work, so App Nap
-doesn't slow its timers (the Dock app has no window to keep it awake). Python hands between its threads every
+doesn't slow its timers (the Dock app's window may be closed or hidden). Python hands between its threads every
 millisecond instead of every 5. Following, the trace (`--trace`) sums up every 30 s how many steps came more than 10,
 20, 50 and 100 ms late, and notes any step held up longer than 150 ms.
 
