@@ -2011,3 +2011,29 @@ def test_following_a_part_muted_and_back_goes_at_once_in_the_player_playing(serv
     call(server, "/api/follow/settings", {"parts": {"L": {"R": {"play": True}}}})  # (back, at once)
     assert follower._player is player and player.muted == frozenset()
     call(server, "/api/stop", {})
+
+
+def test_a_key_clicked_on_the_page_plays_as_the_launchkeys_and_the_keys_held_are_told_as_they_change(server):
+    gui = server.gui
+    first = call(server, "/api/keys/held?since=-1")[1]  # (at once: its version not the one asked for)
+    assert first["keys"] == []
+    answered = []
+    asking = threading.Thread(target=lambda: answered.append(call(server, f"/api/keys/held?since={first['version']}")[1]))
+    asking.start()  # (waits for a change)
+    time.sleep(0.2)
+    assert not answered
+    assert call(server, "/api/keys/press", {"key": 60, "down": True})[1] == {"held": [60]}
+    asking.join(timeout=5)
+    assert answered and answered[0]["keys"] == [60]
+    gui._keys_queue.join()
+    assert [0x90, 60, 100] in server.outs[-1].sent  # (on the keys' channel, as the Launchkey's)
+    gui.play_keys([0x95, 64, 80])  # (the Launchkey's own: held too)
+    assert gui.held_keys(wait=0)["keys"] == [60, 64]
+    gui.play_keys([0xB5, 64, 127])  # (its sustain pedal: not a key)
+    assert gui.held_keys(wait=0)["keys"] == [60, 64]
+    call(server, "/api/keys/press", {"key": 60, "down": False})
+    gui._keys_queue.join()
+    assert [0x80, 60, 0] in server.outs[-1].sent and gui.held_keys(wait=0)["keys"] == [64]
+    gui.release_keys()  # (the Launchkey gone: none held)
+    assert gui.held_keys(wait=0)["keys"] == []
+    assert call(server, "/api/keys/press", {"key": 200})[0] == 400

@@ -299,7 +299,7 @@
   .circuit-kit .name { flex: 1; color: var(--muted); }
   .circuit-kit input { width: 52px; }
   .drumkit text { font-size: 11px; fill: var(--muted); text-anchor: middle; pointer-events: none; }
-  .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; }
+  .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; user-select: none; -webkit-user-select: none; }
   .roll-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .fret-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
@@ -1414,6 +1414,36 @@ function rollLitAt(d, at) {
 
 let rollAhead = Number(store.get("rsk.rollAhead", 4)) || 4;  // (a new keys card's seconds ahead: the last chosen)
 
+// The keys held down now: the Launchkey's, and those clicked on a keys card's keyboard (red on its keys). Asked again
+// as soon as they change (GET /api/keys/held answers then); a key clicked plays as the Launchkey's do (POST
+// /api/keys/press), each in turn (a key's let go never overtakes its press)
+const held = {keys: new Set(), version: -1};
+let pressing = Promise.resolve();
+function pressKey(key, down) {
+  if (down) held.keys.add(key); else held.keys.delete(key);  // (shown at once, before the answer)
+  heldDrawn++;
+  pressing = pressing.then(() => api("/api/keys/press", {key, down})).catch(() => {});
+}
+let heldDrawn = 0;  // (one more each time the keys held change: the keys cards drawn again)
+(async function followHeld() {
+  for (;;) {
+    if (!document.querySelector('section[data-kind="keys"]:not([hidden])')) {  // (no keys card showing: later)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      continue;
+    }
+    try {
+      const d = await api(`/api/keys/held?since=${held.version}`);
+      if (d.version !== held.version) {
+        held.version = d.version;
+        held.keys = new Set(d.keys);
+        heldDrawn++;
+      }
+    } catch (e) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+})();
+
 function makeRollCard(spec) {
   const {root, r} = cardFrom("rollTemplate");
   let data = null, wanted = "", shown = "";
@@ -1449,12 +1479,51 @@ function makeRollCard(spec) {
       const {at} = songNow(s), seconds = ahead();
       const ratio = window.devicePixelRatio || 1, width = Math.round(canvas.clientWidth), height = Math.round(canvas.clientHeight);
       const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-      const now = `${Math.round(at * 60)}|${width}|${height}|${ratio}|${seconds}|${dark}`;
+      const now = `${Math.round(at * 60)}|${width}|${height}|${ratio}|${seconds}|${dark}|${heldDrawn}`;
       if (now === shown || !width) return;
       shown = now;
       drawRoll(canvas, d, at, seconds, width, height, ratio);
     },
   };
+  // Its keyboard plays: a key pressed (and dragged across others) sounds as the Launchkey's keys do, red while held
+  const canvas = r("canvas");
+  let down = null;  // (the key the pointer holds)
+  const keyAt = (e) => {
+    if (!data) return null;
+    const box = canvas.getBoundingClientRect(), x = e.clientX - box.left, y = e.clientY - box.top;
+    const width = Math.round(canvas.clientWidth), floor = Math.round(canvas.clientHeight) - ROLL.KEYS_HIGH;
+    if (y < floor) return null;
+    let white = null;
+    for (const [key, place] of rollKeys(data, width)) {
+      if (x < place.x || x >= place.x + place.w) continue;
+      if (!place.black) white = key;
+      else if (y <= floor + ROLL.KEYS_HIGH * ROLL.BLACK_HIGH) return key;  // (a black key, over the white ones)
+    }
+    return white;
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    const key = e.button === 0 ? keyAt(e) : null;
+    if (key === null) return;
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    down = key;
+    pressKey(key, true);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    const key = keyAt(e);
+    canvas.style.cursor = key === null ? "" : "pointer";
+    if (down === null || key === null || key === down) return;
+    pressKey(down, false);
+    down = key;
+    pressKey(key, true);
+  });
+  const letGo = () => {
+    if (down !== null) pressKey(down, false);
+    down = null;
+  };
+  canvas.addEventListener("pointerup", letGo);
+  canvas.addEventListener("pointercancel", letGo);
+  canvas.addEventListener("lostpointercapture", letGo);
   r("ahead").value = String(ahead());
   r("ahead").addEventListener("change", () => {
     card.spec.ahead = rollAhead = Number(r("ahead").value) || 4;
@@ -1518,7 +1587,10 @@ function drawRoll(canvas, d, at, seconds, width, height, ratio) {
       g.fillStyle = colour(black ? "black-key" : "white-key");
       g.fillRect(place.x + 0.5, floor + 1, place.w - 1, high - 1);
       const by = lit.has(key) ? lit.get(key) : sounding.get(key);
-      if (by !== undefined && d.parts[by]) {
+      if (held.keys.has(key)) {  // (held down: the Launchkey's, or clicked here)
+        g.fillStyle = colour("accent");
+        g.fillRect(place.x + 0.5, floor + 1, place.w - 1, high - 1);
+      } else if (by !== undefined && d.parts[by]) {
         g.globalAlpha = lit.has(key) ? 1 : 0.35;
         g.fillStyle = colour(d.parts[by].kind);
         g.fillRect(place.x + 0.5, floor + 1, place.w - 1, high - 1);

@@ -341,6 +341,8 @@ def _drum_voicing(output: dict[str, Any] | None) -> dict[str, Any]:
             patches[note] = (CIRCUIT_PATCH_SELECT[drum], int(sample) - 1)
     return {"notes": notes, "patches": patches, "shared": shared, "pool": pool}
 DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
+PRESSED_VELOCITY = 100  # a key clicked on the page: how hard it's struck
+HELD_WAIT = 20.0  # seconds the page's ask for the keys held waits for a change, at most
 SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
 WARMUP_LOG = "warmups.jsonl"  # the warm-up's progress log, beside the settings: a line a drill played
@@ -563,6 +565,9 @@ class Gui:
         # Played by a thread of their own: the remote's MIDI thread only hands them on (CoreMIDI can deadlock if
         # it waits, or opens ports); [] lets go of them all, None ends it
         self._keys_queue: queue.Queue[list[int] | None] = queue.Queue()
+        self._held: dict[int, int] = {}  # the keys held down (the remote's, the page's clicks): each one's velocity
+        self._held_version = 0  # (one more each time they change)
+        self._held_changed = threading.Condition()
         self._keys_thread: threading.Thread | None = None
         self._replays: dict[str, Callable[[], None]] = {}  # the parts to play again once a remote's changes pause
         self._replay_timer: threading.Timer | None = None
@@ -3619,11 +3624,43 @@ class Gui:
                 self._keys_thread = threading.Thread(target=self._keys_run, name="rs-keylights keys", daemon=True)
                 self._keys_thread.start()
         self._keys_queue.put(list(message))
+        self._held_now(message)
 
     def release_keys(self) -> None:
         """A remote gone: its keys let go, its notes stopped (after the ones it sent)."""
         if self._keys_thread is not None:
             self._keys_queue.put([])
+        self._held_now([])
+
+    def _held_now(self, message: list[int]) -> None:
+        """The keys held down after a key's message (none: all let go), for the page (held_keys)."""
+        status = message[0] & 0xF0 if message else None
+        if status not in (None, 0x80, 0x90):
+            return  # (the sustain pedal, the modulation strip)
+        with self._held_changed:
+            if status is None:
+                self._held.clear()
+            elif status == 0x90 and message[2] > 0:
+                self._held[message[1]] = message[2]
+            else:
+                self._held.pop(message[1], None)
+            self._held_version += 1
+            self._held_changed.notify_all()
+
+    def press_key(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A key pressed on the page ("key", a MIDI note; "down": true, or false let go; "velocity", 1 to 127): played
+        as the Launchkey's keys are (where they play, with their tone, lighting it)."""
+        key = int(_number(body.get("key"), "key", 0, 127))
+        velocity = int(_number(body.get("velocity", PRESSED_VELOCITY), "velocity", 1, 127))
+        self.play_keys([0x90, key, velocity] if body.get("down", True) else [0x80, key, 0])
+        return {"held": sorted(self._held)}
+
+    def held_keys(self, since: int = -1, wait: float = HELD_WAIT) -> dict[str, Any]:
+        """The keys held down now, and their version: once it isn't since any more (a key going down or up), or
+        after wait seconds (the page asks again)."""
+        with self._held_changed:
+            self._held_changed.wait_for(lambda: self._held_version != since, timeout=wait)
+            return {"version": self._held_version, "keys": sorted(self._held)}
 
     def _keys_run(self) -> None:
         while True:
@@ -4475,6 +4512,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.song_key(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/tones":
                 self._json(200, gui.tones())
+            elif url.path == "/api/keys/held":  # (answered once they change: the page asks again then)
+                since = parse_qs(url.query).get("since", ["-1"])[0]
+                self._json(200, gui.held_keys(int(since) if since.lstrip("-").isdigit() else -1))
             elif url.path == "/api/state":
                 self._json(200, gui.state())
             elif url.path == "/api/follow":
@@ -4526,6 +4566,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/settings": lambda: gui.set_settings(body),
             "/api/pinch/try": lambda: gui.try_pinch(body),
             "/api/keys": lambda: gui.set_keys(body),
+            "/api/keys/press": lambda: gui.press_key(body),
             "/api/volumes": lambda: gui.set_volumes(body.get("volumes") or {}),
             "/api/loop": lambda: gui.set_loop(body),
             "/api/pedal": lambda: gui.set_pedal(body),
