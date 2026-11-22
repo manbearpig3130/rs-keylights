@@ -37,7 +37,7 @@ from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, Planne
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import gamestems, splitserver, stems, warmup
+from . import gameparts, gamestems, splitserver, stems, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -71,6 +71,11 @@ PART_FIELDS = (*TONE_FIELDS, "follow_tones")  # and whether its tone follows the
 SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over a default for them)
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
+GAME_PARTS_AGAIN = 2.0  # seconds before the song's parts are handed to the game's mod again, if it's lost them
+GAME_PART_LABELS = {"drums": "DRUMS", "bass": "BASS", "guitar": "GUITAR", "vocals": "VOCALS", "piano": "KEYS",
+                    "other": "OTHER"}  # (the game's MIXER's stem page's columns, the song's parts)
+GAME_PART_KINDS = {"drums": "drums", "bass": "bass", "guitar": "guitar", "vocals": "vocals", "piano": "keys",
+                   "other": "other"}  # (their colours there)
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game (from Learn a Song's pause menu: the
 # Launchkey's mixer page, its own movie)
 GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Stems", "RSKeylights_Tones")  # (its STEM MIXER: the MIXER
@@ -530,6 +535,17 @@ class Gui:
         self._game_stems_read: tuple[Any, dict[str, Any] | None] = (None, None)  # (RSMods.ini as last read)
         self._game_stems_was: dict[str, int] = {}  # (a part muted: its level before, to go back to)
         self._game_music_kept: int | None = None  # (the game's Music muted: at 0 there, its level kept here)
+        # Following, the song's parts in the game's own song (gameparts, riffloop's): its song, file, the parts in it
+        # and by which separator; what they're made for (the song, the separator chosen, the splits done), when they
+        # were last handed to the mod, why not (the last time), and Song Stems' levels while they play (both at 100,
+        # these kept, and its muted parts')
+        self._game_parts: dict[str, Any] | None = None
+        self._game_parts_wanted: tuple[Any, ...] | None = None
+        self._game_parts_sent = -math.inf
+        self._game_parts_error: str | None = None
+        self._game_parts_lock = threading.Lock()
+        self._song_stems_kept: tuple[dict[str, int], dict[str, int]] | None = None
+        self._splits_done = 0
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -1522,6 +1538,8 @@ class Gui:
             if audio is not None and changed & {"stem_volumes", "stem_mutes"} and len(audio.weights) > 1:  # (heard
                 # at once; a song not split, the song alone: as it is)
                 audio.weights.update(stems.mix_weights(_stem_weights(options, stems.STEMS)))
+            if changed & {"stem_volumes", "stem_mutes"} and self._game_parts is not None:  # (the game's song's, at once)
+                self._game_parts_gains()
             if isinstance(session, Playback) and session.running and self._playing:
                 if changed & {"audio", "audio_device", "separator"}:  # (another separator: its parts, if made)
                     self._audio_on(self._playing["id"])
@@ -1957,6 +1975,7 @@ class Gui:
                 self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}
             with self._lock:
                 self.play_version += 1
+                self._splits_done += 1  # (following it: its parts to the game's song)
                 if self._playing and self._playing["id"] == sid and self._song_audio is not None:
                     self._audio_on(sid)  # (its parts, at their volumes, from now)
 
@@ -2454,6 +2473,7 @@ class Gui:
                     length = None
             state = self.game_state()  # (its song playing or paused: None, neither, or not known)
             said = self._game_said
+            self._game_parts_follow(followed, said)
             self._game_mixer(followed, said)
             if said is not None and said.speed is not None:  # (Riff Repeater's speed as the game has it: its own
                 # slider's moves too)
@@ -2470,9 +2490,11 @@ class Gui:
                     "music": self.game_music(), "music_muted": self.game_music_muted(),
                     "volumes": list(self.settings["volumes"]),
                     "game_stems": self.game_stems_info(),
+                    "game_parts": self._game_parts_now(followed),
                     "audio": self.audio_info(followed["id"] if followed else None),
                     "keys": self.keys_info(), "listen": bool(self.settings["listen"]), "pedal": self.pedal_info(),
                     "beat_lights": bool(self.settings["beat_lights"])}
+        self._game_parts_follow(None, None)  # (not following: none in the game's song)
         sid, song = playing or self.play_options.get("song"), None
         position = length = None
         if sid:
@@ -2741,10 +2763,22 @@ class Gui:
         self._tone_field = {**self._tone_field, "field": int(field) % len(TONE_PAGES)}
 
     def _game_stem_rows(self, parts: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
-        """The game's MIXER's stem mixer page: the game's song's bass and guitar (rearmed-mods' Song Stems: the part
-        played taken out, at its level), as the Launchkey's stems page has them (knobs 2 and 3). The one not played
-        waits its turn (":wait"); without Song Stems on, both off (":off")."""
-        stems = self.game_stems_info()
+        """The game's MIXER's stem mixer page: the song's parts in the game's song (riffloop's, the song split here:
+        each part's volume and mute, the stem mixer's, columns 1 to 6, as the Launchkey's knobs); else the game's
+        song's bass and guitar (rearmed-mods' Song Stems: the part played taken out, at its level), as the Launchkey's
+        stems page has them (knobs 2 and 3). The one not played waits its turn (":wait"); without Song Stems on, both
+        off (":off")."""
+        if self._game_parts is not None:
+            options = self.play_options
+            return tuple((f"p{stem}", float(options["stem_volumes"].get(stem, 100)),
+                          bool(options["stem_mutes"].get(stem)), GAME_PART_LABELS[stem], -1,
+                          f"stem:{GAME_PART_KINDS[stem]}", 8 + column) for column, stem in enumerate(stems.STEMS))
+        stems_info = self.game_stems_info()
+        return self._song_stem_rows(parts, stems_info)
+
+    @staticmethod
+    def _song_stem_rows(parts: list[dict[str, Any]], stems: dict[str, Any] | None) -> tuple[tuple[Any, ...], ...]:
+        """The game's song's bass and guitar rows (Song Stems': stems, game_stems_info's)."""
         playing = next((a for a in parts if a.get("playing")), None)
         taken = "bass" if playing is not None and playing.get("kind") == "bass" else "guitar"
         rows: tuple[tuple[Any, ...], ...] = ()
@@ -2810,11 +2844,21 @@ class Gui:
                     self.change_part("drums", {"make": True})
             elif key == "all" and value == "mute":  # (the tone mixer's 8th: the sound on or off, as the Mute pad)
                 self.toggle_sound()
+            elif key == "smaster" and value == "mute" and self._game_parts is not None:  # (the song's parts, all
+                mutes = self.play_options["stem_mutes"]                                     # muted or back)
+                muting = not all(mutes.get(stem) for stem in stems.STEMS)
+                self.set_play_options({"stem_mutes": {stem: muting for stem in stems.STEMS}})
             elif key == "smaster" and value == "mute":  # (the stem mixer's: its parts, as the Mute pad there)
                 try:
                     self.toggle_game_stems()
                 except GuiError:
                     pass
+            elif key[:1] == "p" and key[1:] in stems.STEMS:  # (a part of the song's in the game's song: as the
+                stem = key[1:]                                 # Launchkey's stems page)
+                if value == "mute":
+                    self.set_play_options({"stem_mutes": {stem: not self.play_options["stem_mutes"].get(stem)}})
+                elif isinstance(value, float):
+                    self.set_play_options({"stem_volumes": {stem: round(value)}})
             elif key == "music" and value == "mute" and key in sent:  # (the game's Music muted, or back)
                 try:
                     self.set_game_music({"mute": not sent[key][2]})
@@ -2886,6 +2930,130 @@ class Gui:
         self.game_time()
         said = self._game_said
         return "playing" if said is not None and said.playing else "paused" if said is not None and said.paused else None
+
+    # The song's parts in the game's own song (gameparts: riffloop mixes them), following
+
+    def _game_parts_now(self, followed: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Following, the song's parts in the game's song, for a remote and the page: which play there (its stem
+        mixer's: the parts', at the page's levels), by which separator; being made ready; or why not. None: none."""
+        parts = self._game_parts
+        if followed is not None and parts is not None and parts["sid"] == followed["id"]:
+            return {"on": True, "names": list(parts["names"]), "by": parts["by"]}
+        if followed is not None and self._game_parts_wanted and self._game_parts_lock.locked():
+            return {"on": False, "making": True}
+        return {"on": False, "error": self._game_parts_error} if followed is not None and self._game_parts_error else None
+
+    def _game_parts_follow(self, followed: dict[str, Any] | None, said: GameLoop | None) -> None:
+        """Following, the song played's parts in the game's own song (riffloop mixes them as it plays, at the stem
+        mixer's levels): made ready in the background as the song starts (its parts read and written as the mod maps
+        them: a few seconds; kept, played again, they're there at once), then handed to the mod, Song Stems' guitar
+        and bass put at 100 meanwhile (it changes the song too). A song not split (or none): none. The mod lost them
+        (loaded again, the game started again): handed to it again."""
+        sid = followed["id"] if followed else None
+        wanted = (sid, self.play_options["separator"], self._splits_done) if sid else None
+        if wanted != self._game_parts_wanted:
+            self._game_parts_wanted = wanted
+            if wanted is None:
+                threading.Thread(target=self._game_parts_off, name="rs-keylights game parts", daemon=True).start()
+            else:
+                threading.Thread(target=self._game_parts_ready, args=(wanted,), name="rs-keylights game parts",
+                                 daemon=True).start()
+            return
+        parts = self._game_parts
+        if parts is not None and said is not None and said.parts is not None and said.parts[0] != parts["file_id"] \
+                and time.monotonic() - self._game_parts_sent > GAME_PARTS_AGAIN:
+            self._game_parts_hand(parts)
+
+    def _game_parts_ready(self, wanted: tuple[Any, ...]) -> None:
+        """(Its own thread.) A song's parts made ready for the game and handed to it, if it's still the one wanted
+        (one at a time: one song's in memory at most)."""
+        import tempfile
+        with self._game_parts_lock:
+            if wanted != self._game_parts_wanted:
+                return
+            sid = wanted[0]
+            try:
+                loaded = self._load(sid)
+                ref = next((r for r, _a in loaded if r.artist), loaded[0][0])
+                which = self._parts_by(ref)
+                if which is None:  # (not split)
+                    self._game_parts_error = None
+                    self._game_parts_off()
+                    return
+                path = gameparts.path_for(ref, which)
+                file_id, data = drums.song_audio_file(ref, self.index.game_dir)
+                if file_id is None:
+                    raise GuiError("The song's audio has no file ID the game streams it by")
+                rate, _channels = gameparts.wem_format(data)
+                del data
+                head = gameparts.header(path)
+                if head is not None and head["file_id"] == file_id and head["rate"] == rate:
+                    names = head["names"]  # (made before: there at once)
+                else:
+                    with tempfile.TemporaryDirectory(prefix="rs-keylights-game-parts-") as work:
+                        wavs = stems.decode(ref, Path(work), separator=which)
+                        if wavs is None:
+                            self._game_parts_off()
+                            return
+                        names = gameparts.write(path, file_id, rate, wavs)
+            except Exception as exc:  # (said on the page; the game's song as it is)
+                self._game_parts_error = f"The song's parts in the game: {exc}"
+                self._game_parts_off()
+                return
+            if wanted != self._game_parts_wanted:
+                return
+            parts = {"sid": sid, "path": str(path), "file_id": file_id, "names": names, "by": which}
+            self._game_parts, self._game_parts_error = parts, None
+            self._song_stems_aside()
+            self._game_parts_hand(parts)
+            self.play_version += 1
+
+    def _game_parts_hand(self, parts: dict[str, Any]) -> None:
+        """The song's parts handed to the game's mod, and their weights."""
+        self._game_parts_sent = time.monotonic()
+        if self._riff_loop.kparts(parts["path"]) is not None:
+            self._game_parts_gains()
+
+    def _game_parts_gains(self) -> None:
+        """The song's parts' weights in the game's song, from the stem mixer's levels (the parts' volumes and mutes:
+        playing's, the same as the song's audio here)."""
+        parts = self._game_parts
+        if parts is not None:
+            self._riff_loop.kgains(gameparts.weights(_stem_weights(self.play_options, stems.STEMS), parts["names"]))
+
+    def _game_parts_off(self) -> None:
+        """None of the song's parts in the game's song (and Song Stems' levels back)."""
+        was, self._game_parts = self._game_parts, None
+        if was is not None:
+            self._riff_loop.kparts(None)
+            self.play_version += 1
+        self._song_stems_back()
+
+    def _song_stems_aside(self) -> None:
+        """Song Stems' guitar and bass at 100 (the song as it is: the parts mix it now), their levels (and which were
+        muted here) kept to put back."""
+        if self._song_stems_kept is not None:
+            return
+        path = gamestems.ini_path(self.index.game_dir)
+        read = gamestems.read(path)
+        if read is None or not read["on"] or all(read[part] == gamestems.FULL for part in gamestems.PARTS):
+            return
+        self._song_stems_kept = ({part: int(read[part]) for part in gamestems.PARTS}, dict(self._game_stems_was))
+        try:
+            gamestems.write(path, {part: gamestems.FULL for part in gamestems.PARTS})
+        except OSError:
+            self._song_stems_kept = None
+
+    def _song_stems_back(self) -> None:
+        """Song Stems' levels as they were before the song's parts played in the game."""
+        kept, self._song_stems_kept = self._song_stems_kept, None
+        if kept is None:
+            return
+        try:
+            gamestems.write(gamestems.ini_path(self.index.game_dir), kept[0])
+        except OSError:
+            return
+        self._game_stems_was = dict(kept[1])
 
     def game_stems_info(self) -> dict[str, Any] | None:
         """The game's song's guitar and bass (rearmed-mods' Song Stems mod, gamestems): the mod on or off ("on"),

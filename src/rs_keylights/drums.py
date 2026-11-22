@@ -313,6 +313,12 @@ def song_audio(ref: ArrangementRef, game_dir: Path) -> bytes:
     """A song's audio (its Wwise .wem): the one its sound bank names, from the archive with that bank (its own, else
     songs.psarc: on-disc songs and Rocksmith 1's, whose charts are in a pack of their own, else any other); an archive
     with just one song's audio and no bank, its longer (the other is its preview)."""
+    return song_audio_file(ref, game_dir)[1]
+
+
+def song_audio_file(ref: ArrangementRef, game_dir: Path) -> tuple[int | None, bytes]:
+    """A song's audio (song_audio) and its file ID: the .wem's name, the number Wwise streams it by (None: not a
+    number)."""
     import struct
     bank = f"audio/mac/{_song_bank(ref)}".lower()
     own = Path(ref.archive)
@@ -329,14 +335,16 @@ def song_audio(ref: ArrangementRef, game_dir: Path) -> bytes:
                         if name.lower().endswith(".wem") and Path(name).stem.isdigit()}
                 named = {struct.unpack_from("<I", data, i)[0] for i in range(len(data) - 3)} & wems.keys()
                 if named:
-                    return max((archive.read(wems[i]) for i in named), key=len)
+                    return max(((i, archive.read(wems[i])) for i in named), key=lambda got: len(got[1]))
         except (OSError, ArchiveError):
             continue
     with Archive(own) as archive:  # (no bank found: its own audio, if it's just one song's: one bank at most)
         wems = [name for name in archive.names if name.lower().endswith(".wem")]
         banks = [name for name in archive.names if name.lower().endswith(".bnk") and "preview" not in name.lower()]
         if 0 < len(wems) <= 2 and len(banks) <= 1:
-            return max((archive.read(name) for name in wems), key=len)
+            longest = max(((name, archive.read(name)) for name in wems), key=lambda got: len(got[1]))
+            stem = Path(longest[0]).stem
+            return (int(stem) if stem.isdigit() else None), longest[1]
     raise DrumsError(f"No audio found for this song (its sound bank, {_song_bank(ref)}, isn't in the game's files)")
 
 

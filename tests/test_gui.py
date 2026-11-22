@@ -2037,3 +2037,67 @@ def test_a_key_clicked_on_the_page_plays_as_the_launchkeys_and_the_keys_held_are
     gui.release_keys()  # (the Launchkey gone: none held)
     assert gui.held_keys(wait=0)["keys"] == []
     assert call(server, "/api/keys/press", {"key": 200})[0] == 400
+
+
+def test_following_a_split_song_its_parts_play_in_the_games_song_at_the_stem_mixers_levels(server, monkeypatch, tmp_path):
+    import struct
+    import wave as wave_module
+
+    import numpy as np
+    from rs_keylights import drums, gameparts, stems
+    gui, game, sid = server.gui, server.gui._riff_loop, first_song(server)
+    monkeypatch.setattr(gameparts, "folder", lambda: tmp_path / "game-parts")
+    monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator == "roformer")
+    fmt = struct.pack("<HHIIHH", 0xFFFF, 2, 48000, 0, 0, 0)
+    wem = b"RIFF" + struct.pack("<I", 0) + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+    monkeypatch.setattr(drums, "song_audio_file", lambda ref, game_dir: (4242, wem))
+    decoded = []
+
+    def decode(ref, work, cache=None, separator="demucs", parts=stems.SEPARATED):
+        decoded.append(separator)
+        out = {}
+        for k, stem in enumerate(parts):
+            out[stem] = work / f"{stem}.wav"
+            with wave_module.open(str(out[stem]), "wb") as w:
+                w.setnchannels(2)
+                w.setsampwidth(2)
+                w.setframerate(48000)
+                w.writeframes((np.ones((4800, 2)) * (k + 1) * 100).astype(np.int16).tobytes())
+        return out
+    monkeypatch.setattr(stems, "decode", decode)
+    ini = gui.index.game_dir / "RSMods.ini"
+    ini.write_text("[Toggle Switches]\nSongStems = on\n\n[Mod Settings]\nSongStemsGuitarLevel = 0\nSongStemsBassLevel = 60\n")
+    followed = {"id": sid, "arrangements": [
+        {"id": "L", "name": "Lead", "kind": "lead", "play": True, "playing": True, "lights": 1, "tones": {}}]}
+    gui._game_parts_follow(followed, game.status())  # (the song started: made ready, in the background)
+    assert wait_for(lambda: gui._game_parts, bool)["names"] == list(stems.SEPARATED) and decoded == ["roformer"]
+    path = gui._game_parts["path"]
+    assert ("kparts", path) in game.sent and game.gains == (1.0, 0.0, 0.0, 0.0, 0.0, 0.0)  # (as it is, all up)
+    assert gameparts.header(tmp_path / "game-parts" / path.rsplit("/", 1)[-1])["file_id"] == 4242
+    assert "SongStemsGuitarLevel = 100" in ini.read_text() and "SongStemsBassLevel = 100" in ini.read_text()  # (aside)
+    assert gui._game_parts_now(followed) == {"on": True, "names": list(stems.SEPARATED), "by": "roformer"}
+    gui.set_play_options({"stem_mutes": {"drums": True}, "stem_volumes": {"guitar": 50}})  # (the stem mixer: at once)
+    assert game.gains == (1.0, -1.0, 0.0, -0.5, 0.0, 0.0)
+    gui._game_mixer(followed, game.status())  # (the game's STEM MIXER: the song's parts, as the Launchkey's knobs)
+    rows = {r[0]: r for r in game.kmix_rows}
+    assert rows["pdrums"] == ("pdrums", 100.0, True, "DRUMS", -1, "stem:drums", 8)
+    assert rows["ppiano"][3:] == ("KEYS", -1, "stem:keys", 12) and rows["pother"][6] == 13 and "gguitar" not in rows
+    game.kmix_moved = {"pvocals": "mute", "pbass": 30.0}  # (there: a pad pressed, a fader moved)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert gui.play_options["stem_mutes"]["vocals"] and gui.play_options["stem_volumes"]["bass"] == 30
+    game.kmix_moved = {"smaster": "mute"}  # (MASTER's pad: all of them muted)
+    with gui._game_mixer_lock:
+        gui._game_mixer_apply()
+    assert all(gui.play_options["stem_mutes"].values()) and game.gains[0] == 0.0
+    game.parts_id = 0  # (the mod loaded again: lost them; handed to it again)
+    gui._game_parts_sent = -math.inf
+    sent = len(game.sent)
+    gui._game_parts_follow(followed, game.status())
+    assert ("kparts", path) in game.sent[sent:]
+    again = len(decoded)
+    gui._game_parts_follow(None, None)  # (following stopped: none, and Song Stems' levels back)
+    assert wait_for(lambda: ("kparts", None) in game.sent, bool)
+    assert wait_for(lambda: "SongStemsGuitarLevel = 0" in ini.read_text(), bool) and gui._game_parts is None
+    gui._game_parts_follow(followed, game.status())  # (played again: made before, there at once)
+    assert wait_for(lambda: gui._game_parts, bool) and len(decoded) == again

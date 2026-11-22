@@ -113,8 +113,10 @@ Launchkey shows.
   played, with chord names above and techniques as tab writes them (h, p, t, / \, b, ~, <7>, x; palm mutes in
   italics).
 - **Keys**: the notes falling onto a drawing of the Casio's 61 keys, 2 to 8 seconds ahead. It shows every part
-  playing, or one part.
-- **Drums**: a drum kit that lights as the drum part strikes it. Click a drum to hear it. See [Drums](#drums).
+  playing, or one part. Its keyboard plays: click a key (or drag across them) and it sounds as the Launchkey's keys
+  do, where they play (Plays on, in Launchkey keys). Keys held down show red, the Launchkey's too.
+- **Drums**: a drum kit that lights as the drum part strikes it. Click a drum to hear it (it sounds as you press, and
+  fast clicks don't select the page's text). See [Drums](#drums).
 - **Song's audio**: the song's own audio and its parts. See [The song's own audio](#the-songs-own-audio).
 - **Theory**: follows the song from its charts:
   - the chord now as a Roman numeral (written against the major scale whatever the mode, so i–♭VI–♭VII, as rock
@@ -333,6 +335,9 @@ Starting the warm-up stops a song playing or following, and playing a song stops
 - The song you play in the game shows in the middle, with each of its arrangements.
 - The arrangement you play lights the keys and sounds (unless muted).
 - Unmute the others to have a backing band. Your choices are kept for each song and arrangement.
+- Muting an arrangement (or the drum part) while it plays takes effect at once, here or playing a song: its notes
+  stop and its keys go out, and nothing else is cut off or struck again. It stays in what plays, muted, so unmuting
+  it is just as quick: its notes still ringing are struck again (only its own), in its tone.
 - The speed, loops and position are the game's.
 
 It knows where the game is in one of two ways:
@@ -431,8 +436,8 @@ controls depends on whether you're following:
 
 | | Playing a song | Following |
 |---|---|---|
-| What it mixes | the song's own audio from the Mac (🎵) | the game's own song (rearmed-mods' Song Stems mod; without it, just its Music) |
-| Knobs | 1–6: drums, bass, guitar, vocals, keys, other | 2: bass, 3: guitar |
+| What it mixes | the song's own audio from the Mac (🎵) | a song split here: its parts, in the game's own song (riffloop mod), as when playing it. Otherwise the game's own song's bass and guitar (rearmed-mods' Song Stems mod; without it, just its Music) |
+| Knobs | 1–6: drums, bass, guitar, vocals, keys, other | a split song: 1–6 as when playing it. Otherwise 2: bass, 3: guitar |
 | Pads, top | mute each part, its volume kept (greyed, its pad dimmed; a song not split yet: a tap splits it) | mute the bass or guitar, its level kept (greyed, dimmed), and back to it |
 | Knob 7, and its pad on top | the Music: the song audio's volume, and its audio on or off | the game's Music volume, and muted or back to its level |
 | Knob 8 | the song's parts together (the Music apart) | the bass and guitar together (the Music apart) |
@@ -440,7 +445,15 @@ controls depends on whether you're following:
 
 A thin line on the screen sets the Music apart from the parts.
 
-**While following**, the Song Stems mod takes the part you're playing out of the game's song: the bass with a bass
+**While following a song split here** (either separator), its parts play in the game's own song: the riffloop mod
+mixes them into it as it plays, at this page's levels, the same levels as playing the song here. As the song starts,
+rs-keylights writes its parts into one file the mod maps (`~/Library/Caches/rs-keylights/game-parts`, one song's kept:
+a few seconds, about 58 MB a minute of song; a part the song hasn't, a silent one, is left out). Until then the song
+plays as it is. A change is heard within 50 ms: the mod mixes each block of the song as the game decodes it, before
+Riff Repeater's speed and the game's own sliders. Song Stems' bass and guitar levels go to 100 while the parts play
+(it changes the song too), and back after. The game's MIXER's stem page has the six parts too.
+
+**While following a song not split**, the Song Stems mod takes the part you're playing out of the game's song: the bass with a bass
 tone, else the guitar. Only that part's level is heard; the other's pad is dim and its level waits for its turn. The
 levels are the mod's own settings in the game's `RSMods.ini`, the same as its in-game slider, and the mod reads them
 about once a second.

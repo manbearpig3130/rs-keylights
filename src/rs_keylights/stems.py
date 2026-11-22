@@ -198,8 +198,9 @@ def store(ref: ArrangementRef, wavs: dict[str, Path], rate: int, separator: str 
 def load(ref: ArrangementRef, mix: Any, cache: Path | None = None, parts: Sequence[str] = SEPARATED,
          separator: str = DEMUCS) -> dict[str, Any] | None:
     """A song's parts taken out of it by a separator (SEPARATED, or those of them asked for: samples x channels, int16,
-    as long as mix, the song's own, decoded); None if they aren't made. Other, what's left, isn't kept apart: it's the
-    song less them (mix_weights). (Used: kept longer, the least played going first.)"""
+    as long as mix, the song's own, decoded; mix None: each as it's kept); None if they aren't made. Other, what's
+    left, isn't kept apart: it's the song less them (mix_weights). (Used: kept longer, the least played going
+    first.)"""
     import numpy as np
     if not made(ref, cache, separator):
         return None
@@ -212,7 +213,7 @@ def load(ref: ArrangementRef, mix: Any, cache: Path | None = None, parts: Sequen
              f"Reading the {stem}")
         with wave.open(str(wav)) as w:
             part = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, w.getnchannels())
-        if part.shape == mix.shape:
+        if mix is None or part.shape == mix.shape:
             return part  # (as long as the song, as it should be: not copied; read-only, as it's only read)
         fitted = np.zeros(mix.shape, dtype=np.int16)
         n = min(len(part), len(mix))
@@ -224,6 +225,27 @@ def load(ref: ArrangementRef, mix: Any, cache: Path | None = None, parts: Sequen
         # (all at once: afconvert's one core each, about a fifth of the time)
         reading = {stem: pool.submit(read, stem, Path(work)) for stem in parts}
         out = {stem: part.result() for stem, part in reading.items()}
+    os.utime(folder)
+    return out
+
+
+def decode(ref: ArrangementRef, work: Path, cache: Path | None = None, separator: str = DEMUCS,
+           parts: Sequence[str] = SEPARATED) -> dict[str, Path] | None:
+    """A song's parts by a separator decoded to 16-bit WAVs in work (all at once: afconvert's one core each); None if
+    they aren't made."""
+    if not made(ref, cache, separator):
+        return None
+    folder = _folder(ref, cache, separator)
+    env = dict(os.environ)
+
+    def one(stem: str) -> Path:
+        wav = work / f"{stem}.wav"
+        _run(["afconvert", "-f", "WAVE", "-d", "LEI16", str(folder / f"{stem}.m4a"), str(wav)], env,
+             f"Reading the {stem}")
+        return wav
+
+    with ThreadPoolExecutor(len(parts), thread_name_prefix="rs-keylights stems") as pool:
+        out = dict(zip(parts, pool.map(one, parts)))
     os.utime(folder)
     return out
 

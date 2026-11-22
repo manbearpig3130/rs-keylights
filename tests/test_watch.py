@@ -67,6 +67,7 @@ class FakeGui:
                 "volumes": list(self.volumes), "loop": dict(self.loop), "listen": self.listen, "pedal": dict(self.pedal),
                 "riff": dict(self.riff), "music": self.music, "music_muted": getattr(self, "music_muted", False),
                 "game_stems": dict(self.game_stems) if self.game_stems else self.game_stems,
+                "game_parts": getattr(self, "game_parts", None),
                 "audio": {**self.audio, "volumes": dict(self.audio["volumes"]), "mutes": dict(self.audio["mutes"])}}
 
     def toggle_listen(self):
@@ -2293,3 +2294,24 @@ def test_a_warm_up_takes_the_launchkey_its_drills_on_top_its_notes_below():
     watch.step()
     assert screens(launchkey)[-1] != warmup_picture("Spider (1-3, 2-4)", "", "", 0.0, "playing", WARMUP_HINT).data()
     assert pads(launchkey)[(1, CONTROLS)] != (WARMUP_STOP, False)
+
+
+def test_following_a_split_song_whose_parts_play_in_the_game_the_stems_page_has_them_and_knob_7_its_music():
+    watch, gui, launchkey, clock = watching()
+    gui.info["song"], gui.music = gui.song, 76
+    gui.game_stems = {"on": True, "guitar": 80, "bass": 60}  # (Song Stems there: the parts instead)
+    gui.game_parts, gui.audio["made"] = {"on": True, "names": ["drums", "bass", "guitar", "vocals"], "by": "roformer"}, True
+    watch.step()
+    launchkey.queued = [Button(105), Button(52)]  # Func, ▼: the stems page
+    clock.now = 0.5
+    watch.step()
+    launchkey.queued = [Turn(0, -5), Pad(0, 3), Turn(KEYS_COLUMN, -3)]  # knob 1: the drums down; the vocals' pad;
+    clock.now = 1.0                                                     # knob 7: the game's Music
+    watch.step()
+    assert gui.audio["volumes"]["drums"] == 100 - 5 * watch_module.STEM_STEP and gui.audio["mutes"]["vocals"]
+    assert gui.game_stem_calls == [] and gui.music == 73  # (not Song Stems': the song's parts in the game)
+    shown = screens(launchkey)[-1]
+    names = [label for _stem, label, _rgb in watch_module.STEMS] + ["Music"]
+    volumes = [100 - 5 * watch_module.STEM_STEP, 100, 100, 100, 100, 100, 73]
+    quiet = [False, False, False, True, False, False, False]
+    assert shown == mixer_picture(names, volumes, 6, muted=False, quiet=quiet, tops=[100] * 7, divider=6).data()

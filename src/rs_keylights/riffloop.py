@@ -32,6 +32,8 @@ class GameLoop:
     speed: float | None = None  # Riff Repeater's speed, percent, as the game has it (None: not known)
     accelerator: bool | None = None  # its Accelerator, as the game has it (its menu's switch; None: not known)
     music: float | None = None  # the game's Music volume (its mixer's, 0 to 100); None: not known (yet), or an older mod
+    parts: tuple[int, int] | None = None  # the song's parts mapped (kparts): their file ID (0: none) and the blocks of
+    # the game's song mixed with them so far; None: an older mod
 
     @property
     def playing(self) -> bool:
@@ -115,9 +117,11 @@ def parse(answer: str) -> GameLoop | None:
         speed = float(fields["speed"])
     except (KeyError, ValueError):
         speed = -1.0
+    file_id, _, mixed = fields.get("parts", "").partition(":")
+    parts = (int(file_id), int(mixed)) if file_id.isdigit() and mixed.isdigit() else None
     return GameLoop(fields.get("hook") == "1", fields.get("riff") == "1", (ends[0], ends[1]) if len(ends) == 2 else None,
                     at, screen if screen and screen != "-" else None, int(keys) if keys.isdigit() else 0,
-                    speed if speed > 0 else None, {"1": True, "0": False}.get(fields.get("accel", "")), music)
+                    speed if speed > 0 else None, {"1": True, "0": False}.get(fields.get("accel", "")), music, parts)
 
 
 class RiffLoop:
@@ -225,6 +229,15 @@ class RiffLoop:
 
     def status(self) -> GameLoop | None:
         return self._send("status")
+
+    def kparts(self, path: str | None) -> GameLoop | None:
+        """The song's parts mixed into the game's song as it plays (gameparts' file at path, mapped there; None: none)."""
+        return self._send(f"kparts {path}" if path else "kparts off")
+
+    def kgains(self, weights: Sequence[float]) -> GameLoop | None:
+        """The weights the song's parts are mixed at (gameparts.weights: the song's, then each part's), moving to them
+        over 50 ms."""
+        return self._send("kgains " + " ".join(f"{w:.4f}" for w in weights))
 
     def time(self, wait: float = TIME_WAIT) -> tuple[float | None, str | None, str | None] | None:
         """Where the game's song is, exactly (its playback's own time; None: no song's playback seen), its screen

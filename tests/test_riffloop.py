@@ -128,3 +128,25 @@ def test_the_games_time_asked_for_alone():
     assert game.time() == (1.5, "LearnASong_Game", "")
     assert game.time() is None
     mod.close()
+
+
+def test_the_songs_parts_go_to_the_mod_and_its_state_says_whose_are_mapped():
+    assert parse("riffloop hook=1 riff=0 loop=- parts=4242:17").parts == (4242, 17)
+    assert parse("riffloop hook=1 riff=0 loop=-").parts is None  # (an older mod)
+    mod = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mod.bind(("127.0.0.1", 0))
+    heard = []
+
+    def answer():
+        for _ in range(3):
+            data, sender = mod.recvfrom(1024)
+            heard.append(data.decode())
+            mod.sendto(b"riffloop hook=1 riff=0 loop=- parts=4242:0", sender)
+
+    Thread(target=answer, daemon=True).start()
+    game = RiffLoop(mod.getsockname()[1])
+    assert game.kparts("/tmp/song parts.pcm").parts == (4242, 0)
+    game.kgains([1.0, -0.5, 0.25])
+    game.kparts(None)
+    assert heard == ["kparts /tmp/song parts.pcm", "kgains 1.0000 -0.5000 0.2500", "kparts off"]
+    mod.close()

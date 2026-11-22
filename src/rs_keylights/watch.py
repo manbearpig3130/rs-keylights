@@ -983,6 +983,12 @@ class Watch:
         return self.mix_page == "stems"
 
     @staticmethod
+    def _game_song_stems(info: dict[str, Any]) -> bool:
+        """Following a song whose parts aren't in the game's song (not split here): the stems page has the game's
+        song's own (Song Stems' bass and guitar). Its parts there (riffloop's), it has them as playing does."""
+        return info.get("mode") == "follow" and not (info.get("game_parts") or {}).get("on")
+
+    @staticmethod
     def _game_stems(info: dict[str, Any]) -> dict[str, Any] | None:
         """Following, the game's song's guitar and bass levels (rearmed-mods' Song Stems mod), if the mod's on."""
         stems = info.get("game_stems")
@@ -1022,7 +1028,7 @@ class Watch:
         mutes = audio.get("mutes") or {}
         for column in range(CONTROLS):
             picture[(0, column)], picture[(1, column)] = ("palette", 0, False), ("rgb", 0, 0, 0)
-        if info.get("mode") == "follow":  # (the game's song: its bass and guitar, the one taken out now bright;
+        if self._game_song_stems(info):  # (the game's song: its bass and guitar, the one taken out now bright;
             playing = self._game_part(info)  # without Song Stems, none)
             for column, (stem, _label, rgb) in enumerate(STEMS):
                 if stem in GAME_STEMS and self._game_stems(info) is not None:  # (muted: dimmed, its level kept)
@@ -1048,7 +1054,10 @@ class Watch:
             else:
                 picture[(0, column)] = ("rgb", *rgb)
         picture[(0, KEYS_COLUMN)] = ("rgb", *MUSIC_RGB) if audio.get("on") else ("palette", MUTED_PAD, False)  # (its
-        # Music: the song's audio on or off)
+        # Music: the song's audio on or off; following, the game's Music)
+        if info.get("mode") == "follow":
+            picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if info.get("music_muted") or \
+                self._music_of(info) is None else ("rgb", *MUSIC_RGB)
         if audio.get("made"):  # (the page's master mute: its parts, green any sounding, red all muted)
             sounding = not all(mutes.get(stem) for stem, _label, _rgb in STEMS)
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if sounding else SOUND_OFF, False)
@@ -1721,7 +1730,7 @@ class Watch:
         warming = _warming(info)
         if warming is not None:
             return self._warmup_screen(warming, muted)
-        if self._picture_of == "mixer" and self._stems_page(info) and info.get("mode") == "follow":  # (the game's
+        if self._picture_of == "mixer" and self._stems_page(info) and self._game_song_stems(info):  # (the game's
             # song: its bass and guitar, then its Music volume, knob 7's)
             names = [label for stem, label, _rgb in STEMS if stem in GAME_STEMS] + ["Music"]
             volumes = [self._game_level(stem, info) for stem, _label, _rgb in STEMS if stem in GAME_STEMS]
@@ -1741,6 +1750,8 @@ class Watch:
             names = [label for _stem, label, _rgb in STEMS] + ["Music"]
             volumes = [self._stem_volume(stem, info) for stem, _label, _rgb in STEMS] + [self._audio_volume(info)]
             quiet = [not split or bool(mutes.get(stem)) for stem, _label, _rgb in STEMS] + [not audio.get("on")]
+            if info.get("mode") == "follow":  # (the song's parts in the game's song: its Music, the game's)
+                volumes[-1], quiet[-1] = self._music_of(info) or 0, bool(info.get("music_muted"))
             turned = (len(STEMS) if self._mix_slider == KEYS_COLUMN else None if self._mix_slider == CONTROLS
                       else min(self._mix_slider, len(STEMS) - 1))
             tops, divider = [100] * len(names), len(STEMS)
@@ -2044,7 +2055,7 @@ class Watch:
         if page != self.mix_page:
             self._mix_slider, self._mix_strip = CONTROLS, None
         self.mix_page = self._mix_page_last = page
-        if page == "stems" and info.get("mode") == "follow":  # (the game's song's parts, if Song Stems is on; its
+        if page == "stems" and self._game_song_stems(info):  # (the game's song's parts, if Song Stems is on; its
             if self._game_stems(info) is None:               # Music, either way)
                 stems = info.get("game_stems")
                 self._say(now, lines=("Song Stems is off:", "turn it on in the mods") if stems else
@@ -2069,8 +2080,8 @@ class Watch:
         the same with the game's song's: its bass and guitar, and its Music."""
         audio = info.get("audio") or {}
         self._open_mixer(now, kept=self._mixer_kept)
-        if info.get("mode") == "follow" and isinstance(event, Pad) and event.column == CONTROLS:  # (the page's
-            def mute_stems() -> None:                                                            # master mute)
+        if self._game_song_stems(info) and isinstance(event, Pad) and event.column == CONTROLS:  # (the page's
+            def mute_stems() -> None:                                                             # master mute)
                 self._game_stems_set(self.gui.toggle_game_stems())
             if self._try(mute_stems):
                 self._mix_slider = CONTROLS
@@ -2085,7 +2096,7 @@ class Watch:
             if self._try(mute_music):
                 self._mix_slider = KEYS_COLUMN
             return
-        if info.get("mode") == "follow" and isinstance(event, Pad):  # (the game's song: its bass and guitar)
+        if self._game_song_stems(info) and isinstance(event, Pad):  # (the game's song: its bass and guitar)
             stem = STEMS[event.column][0] if event.column < len(STEMS) else None
             if stem not in GAME_STEMS:
                 self._say(now, lines=("In the game's song:", "just the bass and guitar"))
@@ -2143,8 +2154,8 @@ class Watch:
         """A knob of the stems page: 1 to 6 a part's volume, 7 its Music (the song's audio's volume), 8 its parts
         together (0 to 100), at once. Following, the game's song's: 2 and 3 its bass and guitar, 7 the game's Music
         volume, 8 both."""
-        if info.get("mode") == "follow":
-            self._turn_game_stem(encoder, steps, info, now)
+        if self._game_song_stems(info) or (info.get("mode") == "follow" and encoder == KEYS_COLUMN):  # (the game's
+            self._turn_game_stem(encoder, steps, info, now)  # song's, or its Music)
             return
         audio = info.get("audio") or {}
         if encoder == KEYS_COLUMN:  # (its Music)

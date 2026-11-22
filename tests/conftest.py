@@ -84,6 +84,8 @@ class FakeRiffLoop:
         self.game_time = None  # (the game's own song time and screen, as its time command says; None: no answer)
         self.note_counts = None  # (the player's note counts, as its notes command says; None: no answer)
         self.kmix_rows, self.kmix_moved = None, {}  # (its MIXER's rows, as sent; what was done there in the game)
+        self.parts_path, self.parts_id, self.gains = None, 0, None  # (the song's parts mapped: their file, its file
+        # ID; their weights, as sent)
         self.ktone_rows = None  # (its TONES' rows, as sent)
 
     def loop(self, a, b):
@@ -103,7 +105,21 @@ class FakeRiffLoop:
         return self.note_counts
 
     def status(self):
-        return GameLoop(True, False, self.range, None, self.screen, 0, self.riff_speed, self.riff_accelerator, self.music_level)
+        return GameLoop(True, False, self.range, None, self.screen, 0, self.riff_speed, self.riff_accelerator, self.music_level,
+                        (self.parts_id, 0))
+
+    def kparts(self, path):
+        from rs_keylights import gameparts
+        self.sent.append(("kparts", path))
+        self.parts_path = path
+        head = gameparts.header(Path(path)) if path else None
+        self.parts_id = head["file_id"] if head else 0
+        return self.status()
+
+    def kgains(self, weights):
+        self.sent.append(("kgains", tuple(round(w, 4) for w in weights)))
+        self.gains = tuple(round(w, 4) for w in weights)
+        return self.status()
 
     def music(self, level):
         self.sent.append(("music", level))
