@@ -82,7 +82,7 @@ CODE_URL = ("https://raw.githubusercontent.com/ZFTurbo/Music-Source-Separation-T
 CODE = {  # (ZFTurbo's files: SHA-256)
     "models/bs_roformer/bs_roformer.py": "a6f670325cdb8a7a212914f62602119b23eb888df9bcfe4a85f9be74728b3ef4",
     "models/bs_roformer/attend.py": "c7abbc40a3fd20ff7f6001fa9f8ee9ad5df6452272712a5e719b8f8468bf2223",
-    "models/mdx23c_tfc_tdf_v3.py": "45b29c37cbba4b06e49dcd6bef668d372501df2517392b71b93804355cb7d535e",
+    "models/mdx23c_tfc_tdf_v3.py": "5b29c37cbba4b06e49dcd6bef668d372501df2517392b71b93804355cb7d535e",
     "LICENSE": "3282dc057695ef5b9a64909a7092ca40b2c292c232580fc6ace6e5d665cc0207",
 }
 # In place of ZFTurbo's utils/model_utils.py (which brings in their training's packages too): the one function the

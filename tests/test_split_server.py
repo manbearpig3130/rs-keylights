@@ -254,3 +254,9 @@ def test_bs_roformer_on_a_server_with_drumsep_brings_the_kits_pieces_too_kept_ap
     assert sorted(p.name for p in kit.iterdir()) == sorted(f"{p}.wav" for p in stems.KIT)
     assert stems.load(ref(tmp_path), song(), tmp_path / "stems", separator=stems.ROFORMER) is not None
     assert not any(p.name.startswith("kick") for p in (tmp_path / "stems").rglob("*"))  # (not kept as parts)
+
+
+def test_every_file_the_server_downloads_is_pinned_by_a_whole_sha256():
+    import re
+    pinned = {**server_script.CODE, **server_script.MODEL, **server_script.KIT_MODEL}
+    assert pinned and all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in pinned.values()), pinned
