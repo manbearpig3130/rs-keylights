@@ -956,13 +956,17 @@ class Gui:
 
     def drums_info(self, sid: str) -> dict[str, Any]:
         """A song's drum part, for the page: whether it's made (its hits), played and how loud, being made (the
-        step) or failed (why), and whether the tools to make one are there."""
+        step) or failed (why), and whether the tools to make one are there; the keyboard's drum kit and its kits,
+        and the device the drums play on instead (none: the keyboard, its kit)."""
         ref = self._load(sid)[0][0]
         hits = drums.kept(ref)
         making = self._making.get(sid, {})
+        output = self.settings["outputs"].get("drums")
+        elsewhere = output["port"] if output and self._synth(output["port"]) is not None else None
         return {**self._drum_settings(sid), "made": hits is not None, "hits": len(hits) if hits else 0,
                 "making": making.get("step"), "progress": making.get("progress") if making.get("step") else None,
-                "error": making.get("error"), "tools": drums.setup_done(), "kit": int(self.settings["drum_set"])}
+                "error": making.get("error"), "tools": drums.setup_done(), "kit": int(self.settings["drum_set"]),
+                "drum_sets": [[program, name.title()] for name, program in DRUM_SETS], "device": elsewhere}
 
     def _with_drums(self, sid: str, arrangements: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """A remote's arrangements of a song, with its drum part as one more: after them, in DRUMS_PLACE_MOST at
@@ -4054,6 +4058,8 @@ class Gui:
                                               "hearing": self._warmup_heard()}
                                    if self._warmup is not None else None,
                                    "launchkey": self._watch.status if self._watch is not None else None,
+                                   "tone_field": self._tone_field["field"],  # (the knobs' tones' page: the song
+                                   # card's rows show that tone)
                                    "making": {"stems": {sid: making.get("progress") or 0.0
                                                         for sid, making in list(self._splitting.items())
                                                         if making.get("making")},

@@ -1254,6 +1254,10 @@ def test_following_the_games_tones_page_is_sent_the_tones_and_steps_them(server,
     game.kmix_moved = {"field": 1.0}  # its up arrow: palm mutes (the Launchkey's page too)
     gui.game_mixer_step()
     assert gui.remote_info()["tone_field"] == {"turns": 1, "field": 1} and game.ktone_rows[0][6] == 1
+    assert call(server, "/api/state")[1]["tone_field"] == 1  # (the page's rows show their palm mutes' tones)
+    gui.set_tone_field(2)  # (the Launchkey's up arrow: harmonics)
+    assert call(server, "/api/state")[1]["tone_field"] == 2
+    gui.set_tone_field(1)
     game.kmix_moved = {"a0": "tone:1"}  # (a step on that page: its palm mutes' tone, from where its knob is)
     gui.game_mixer_step()
     assert "mute_tone" in gui.remote_info()["song"]["arrangements"][0]["tones"]
@@ -1500,7 +1504,9 @@ def test_a_songs_drum_part_plays_along_on_the_drum_channel_and_making_one_says_w
     gui = server.gui
     _, song = call(server, f"/api/song?id={urllib.request.quote(sid)}")
     assert song["drums"] == {"play": False, "volume": 100, "made": False, "hits": 0, "making": None, "progress": None, "error": None,
-                             "tools": False, "kit": gui.settings["drum_set"]}
+                             "tools": False, "kit": gui.settings["drum_set"], "device": None,
+                             "drum_sets": [[0, "Standard Set"], [8, "Room Set"], [16, "Power Set"], [25, "Synth Set"],
+                                           [40, "Brush Set"], [48, "Orchestra Set"]]}
     ref = gui._load(sid)[0][0]
     drums.keep(ref, [drums.Hit(1.5, drums.KICK, 110), drums.Hit(1.75, drums.SNARE, 90)])
     status, info = call(server, "/api/drums", {"song": sid, "play": True, "volume": 90})
