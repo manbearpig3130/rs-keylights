@@ -655,3 +655,10 @@ def test_rs_companion_is_read_on_a_thread_of_its_own():
             break
     assert f.current is REF
     f.close()
+
+
+def test_a_songs_parts_follow_the_game_that_much_later_as_its_audio_is_after_its_chart():
+    follower = Follower(None, None, None, offset=0.02, song_offset=lambda ref: 0.05)  # type: ignore[arg-type]
+    assert follower._shift() == 0.02  # (no song: the offset set alone)
+    follower.current = object()
+    assert abs(follower._shift() - (0.02 - 0.05)) < 1e-9  # (its audio 50 ms after its chart: its parts 50 ms later)

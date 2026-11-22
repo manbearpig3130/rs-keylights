@@ -1718,7 +1718,8 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
                              "making_by": None, "progress": None, "waiting": False, "error": None, "can": False,
                              "can_by": {"roformer": False, "demucs": False}, "names": list(stems.STEMS),
                              "separators": [{"id": "roformer", "name": "BS-RoFormer SW"},
-                                            {"id": "demucs", "name": "Demucs"}], "server": None}
+                                            {"id": "demucs", "name": "Demucs"}], "server": None,
+                             "chart_offset": None}
     made, loaded = [], []  # (the separators it's split by; whose parts are read)
     monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None:
                         made.append(separator) or progress(1.0) or [])

@@ -403,11 +403,14 @@ class Follower:
         sleep: Callable[[float], None] = time.sleep,
         game_time: GameTime | None = None,
         overlay_thread: bool = False,
+        song_offset: Callable[[ArrangementRef], float] | None = None,
     ):
         self.client = client
         self.index = index
         self.keyboard = keyboard
         self.offset = offset
+        # how far the song's audio is after its chart (chartsync's: the parts played that much later, with it)
+        self.song_offset = song_offset
         self._status = status
         self._load = load
         self._voices_for = voices_for  # with sound: the voices (channels and tones) for each arrangement
@@ -570,7 +573,7 @@ class Follower:
         if position is not None and self._game_says and self._game_clock.trusted(now) and not self._game_clock.settled():
             position = None  # (going on again after a pause, or after a seek ahead: quiet a moment, not in a rush)
         if self._show is not None:
-            self._show.step(self.keyboard, now, self._player, None if position is None else position + self.offset)
+            self._show.step(self.keyboard, now, self._player, None if position is None else position + self._shift())
             if self._show.done:
                 self._show = None
         if self._player is None:
@@ -585,17 +588,24 @@ class Follower:
         if not self._playing:
             self._record({"t": now, "playing": round(position, 3), "rate": self._rate(now),
                           "from": "game" if self._game_clock.trusted(now) else "companion"})
-            self._player.seek(position + self.offset, sounding=JUST_STRUCK)  # (from about where it is)
+            self._player.seek(position + self._shift(), sounding=JUST_STRUCK)  # (from about where it is)
         self._player.retime(rate=self._rate(now))  # Riff Repeater's speed: the keys flash for it
         was = self._player.position if self._playing else None
         if was is not None:
             self._count_late(now, late - TICK)
         if was is not None and late > STALL_TRACED:  # (held up: its notes late, or skipped)
             self._record({"t": now, "stall": round(late, 3), "at": round(position, 3)})
-        if was is not None and position + self.offset > was + SEEK_AHEAD:
-            self._record({"t": now, "skipped": round(was, 3), "to": round(position + self.offset, 3)})
-        self._player.advance(position + self.offset)
+        if was is not None and position + self._shift() > was + SEEK_AHEAD:
+            self._record({"t": now, "skipped": round(was, 3), "to": round(position + self._shift(), 3)})
+        self._player.advance(position + self._shift())
         self._playing = True
+
+    def _shift(self) -> float:
+        """Where the chart is against the game's time: the offset set, less how far the song's audio is after its
+        chart (its parts played that much later)."""
+        current = self.current
+        late = self.song_offset(current) if self.song_offset is not None and current is not None else 0.0
+        return self.offset - late
 
     def _ask_game_time(self, now: float) -> None:
         """The game's own time read (riffloop's); unanswered a few times (no game, or a mod without it), asked

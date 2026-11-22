@@ -266,13 +266,14 @@ class Following:
         sleep: Callable[[float], None] = time.sleep,
         trace: Callable[[dict[str, object]], None] | None = None,
         game_time: GameTime | None = None,
+        song_offset: Callable[[ArrangementRef], float] | None = None,
     ):
         self.messages: deque[str] = deque(maxlen=40)
         self.keyboard = keyboard
         self.follower = Follower(client, index, keyboard, offset=offset, status=self.messages.append,
                                  voices_for=voices_for, parts_for=parts_for, lights_early=lights_early,
                                  fastest_flash=fastest_flash, clock=clock, sleep=sleep, trace=trace,
-                                 game_time=game_time, overlay_thread=True)
+                                 game_time=game_time, overlay_thread=True, song_offset=song_offset)
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()

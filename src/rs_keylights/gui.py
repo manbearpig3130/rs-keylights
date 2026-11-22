@@ -39,7 +39,7 @@ from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, Planne
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import gameparts, gamestems, splitserver, stems, warmup
+from . import chartsync, gameparts, gamestems, splitserver, stems, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -560,6 +560,10 @@ class Gui:
         self._game_parts_lock = threading.Lock()
         self._song_stems_kept: tuple[dict[str, int], dict[str, int]] | None = None
         self._splits_done = 0
+        # how far each song's audio is after its chart (chartsync: seconds; measured in the background as it's first
+        # played or followed), and the songs being measured
+        self._chart_offsets: dict[str, float] = {}
+        self._measuring: set[str] = set()
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -1804,9 +1808,39 @@ class Gui:
                        "lights": pp.part.lights} for pp in planned if not pp.part.muted],
         }
 
+    def chart_offset(self, sid: str) -> float:
+        """How far a song's audio is after its chart (seconds; 0: in time, or not known yet): measured in the
+        background the first time it's asked for (chartsync: a second or two; kept), the page told once it is."""
+        got = self._chart_offsets.get(sid)
+        if got is not None:
+            return got
+        with self._lock:
+            if sid in self._measuring or sid in self._chart_offsets:
+                return self._chart_offsets.get(sid, 0.0)
+            self._measuring.add(sid)
+
+        def run() -> None:
+            found = 0.0
+            try:
+                loaded = self._load(sid)
+                ref = next((r for r, _a in loaded if r.artist), loaded[0][0])
+                beats = next((a.beats for _r, a in loaded if a.beats), ())
+                found = chartsync.offset_for(ref, beats, self.index.game_dir).offset
+            except Exception:  # (no decoder, a song gone: in time, as it is)
+                found = 0.0
+            with self._lock:
+                self._chart_offsets[sid] = found
+                self._measuring.discard(sid)
+                if found:
+                    self.play_version += 1
+
+        threading.Thread(target=run, name="rs-keylights chart offset", daemon=True).start()
+        return 0.0
+
     def play(self, body: dict[str, Any]) -> dict[str, Any]:
         """Plays a song with its parts as chosen, from a start (or its own) at a speed (or the one chosen)."""
         sid = str(body.get("song", ""))
+        self.chart_offset(sid)  # (measured meanwhile, if it isn't yet: its audio lined up with it once it is)
         planned, length = self._plan(sid)  # (every part muted, it plays on: they can be played again as it goes)
         start = _number(body.get("start", self.song_settings.get(sid, {}).get("start", 0)), "start", 0, 24 * 3600)
         speed = _number(body.get("speed", self.play_options["speed"]), "speed", 0.05, 4)
@@ -1847,7 +1881,8 @@ class Gui:
             if not isinstance(session, Playback) or not session.running or not self._playing \
                     or self._playing["id"] != sid:
                 return None, 1.0
-            return session.where_at(at)
+            position, speed = session.where_at(at)  # (the chart's: the audio that far on from it, to line up)
+            return (None if position is None else position + self._chart_offsets.get(sid, 0.0)), speed
 
         def run() -> None:
             try:
@@ -1901,7 +1936,9 @@ class Gui:
         chosen = self.play_options["separator"]
         can = {s: stems.can_make(separator=s) or (s == stems.ROFORMER and self.settings["split_server"] is not None)
                for s in stems.SEPARATORS}  # (BS-RoFormer SW: here, or on a split server)
+        offset = self.chart_offset(sid)  # (measured, the first time: the page told once it is)
         return {"made": bool(split), "made_by": split, "by": self._parts_by(ref), "separator": chosen,
+                "chart_offset": round(offset * 1000) if offset else None,
                 "making": bool(making.get("making")), "making_by": making.get("separator"),
                 "progress": making.get("progress"), "waiting": bool(making.get("making") and making.get("waiting")),
                 "error": making.get("error"), "can": can[chosen], "can_by": can, "names": list(stems.STEMS),
@@ -2004,7 +2041,9 @@ class Gui:
                 split = self.stems_info(sid)
             except (GuiError, OSError, ValueError):
                 split = {}
+        offset = self._chart_offsets.get(sid) if sid else None
         return {"on": bool(options["audio"]), "volume": int(options["audio_volume"]),
+                "chart_offset": round(offset * 1000) if offset else None,
                 "volumes": dict(options["stem_volumes"]), "mutes": dict(options["stem_mutes"]),
                 "made": bool(split.get("made")), "making": bool(split.get("making")),
                 "waiting": bool(split.get("waiting")), "progress": split.get("progress"), "can": bool(split.get("can")), "there": drums.can_decode()}
@@ -2448,7 +2487,8 @@ class Gui:
                 following = Following(OverlayClient(self.overlay_port), self.index, keyboard, self._follow_voices(),
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
                                       parts_for=self._follow_parts(), trace=self._trace,
-                                      game_time=self._riff_loop.time)
+                                      game_time=self._riff_loop.time,
+                                      song_offset=lambda ref: self.chart_offset(song_id(ref)))
                 self._follow_extras(following)  # (its song's drum part)
                 following.start()
                 self._session, self._followed = following, None

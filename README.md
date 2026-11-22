@@ -621,6 +621,15 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
 
 🎵 in the header plays the song's own audio from the Mac along with a song you play:
 
+**In time with its chart.** Some charts (custom ones mostly) sit a few tens of milliseconds off their song's audio,
+the same all through it: The Hero's notes come 58 ms before its audio, Crack the Sky's 30 ms after. Everything
+played from the chart (the parts, the drum part) is then that far off the song. The first time a song's played or
+followed, rs-keylights measures it, in a second or two in the background: where the song's drums (its drum stem, if
+it's split; else the whole song) line up best with the chart's beats, in 20-second stretches. If most stretches agree
+and it's 15 ms or more off, it's lined up: played here, the song's audio is moved by it; following the game, the parts
+are (on top of the offset set in Follow Rocksmith). The Song Audio card says so ("synced +58 ms"). Measured once
+for each song (`~/Library/Caches/rs-keylights/chart-offsets.json`), and again from its drums once it's split.
+
 - It's paused, moved and looped with the song.
 - It's slowed or sped up without changing pitch. At the song's own speed it plays exactly as it is, each block timed
   by the sound device's own clock for when it's heard, so it never needs stretching to keep up.

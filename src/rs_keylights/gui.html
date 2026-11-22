@@ -613,6 +613,7 @@
   <section id="audioCard" class="card" hidden>
     <div class="fret-head">
       <h3>Song Audio</h3>
+      <span id="audioSync" class="small muted" hidden></span>
       <button type="button" id="audioOn" title="The song's own audio, from the Mac, with the song you play">🎵</button>
     </div>
     <div class="audio-grid audio-levels">
@@ -3797,6 +3798,13 @@ function renderAudioCard(s) {
       "itself (the Mac's GPU, in the background)" :
     "Split it with Demucs: quick (a minute or two), its parts rougher";
   split.dataset.song = s.id;
+  // How far its audio is after its chart, if it's off (measured: chartsync): lined up here and following
+  const off = d.chart_offset;
+  $("audioSync").hidden = !off;
+  $("audioSync").textContent = off ? `synced ${off > 0 ? "+" : "−"}${Math.abs(off)} ms` : "";
+  $("audioSync").title = off ? `Its audio is ${Math.abs(off)} ms ${off > 0 ? "after" : "before"} its chart (the notes ` +
+    `the parts and the drum part play by): its audio's moved that far here, and the parts following the game, to ` +
+    `line up` : "";
   const done = Math.round((d.progress || 0) * 100);
   $("audioProgress").hidden = !d.making;
   $("audioProgress").querySelector("span").style.width = `${done}%`;
