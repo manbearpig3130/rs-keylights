@@ -1722,7 +1722,7 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
                                             {"id": "demucs", "name": "Demucs"}], "server": None,
                              "chart_offset": None}
     made, loaded = [], []  # (the separators it's split by; whose parts are read)
-    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None:
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None, melody=False:
                         made.append(separator) or progress(1.0) or [])
     monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator in made)
     mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
@@ -1832,7 +1832,7 @@ def test_songs_are_split_one_at_a_time_the_others_waiting_their_turn(server, mon
     first, second = [s["id"] for s in call(server, "/api/library")[1]["songs"]][:2]
     go, started = threading.Event(), []
 
-    def make(ref, game, progress, separator, server=None, kit_out=None):  # (a split taking a while: until it's let
+    def make(ref, game, progress, separator, server=None, kit_out=None, melody=False):  # (a split taking a while: until it's let
         started.append(ref)                                                # go)
         assert go.wait(5)
         return []
@@ -2133,7 +2133,7 @@ def test_a_bs_roformer_split_makes_the_drum_part_again_from_its_kits_pieces(serv
     from rs_keylights import stems
     gui, sid = server.gui, first_song(server)
 
-    def make(ref, game, progress, separator, server=None, kit_out=None):  # (a split server with DrumSep)
+    def make(ref, game, progress, separator, server=None, kit_out=None, melody=False):  # (a split server with DrumSep)
         for piece in stems.KIT:
             (kit_out / f"{piece}.wav").write_bytes(b"x")
         return list(stems.KIT)
@@ -2143,7 +2143,7 @@ def test_a_bs_roformer_split_makes_the_drum_part_again_from_its_kits_pieces(serv
     gui.set_stems({"song": sid, "make": True, "separator": "roformer"})
     sid_made, pieces, kit = wait_for(lambda: asked, bool)[0]
     assert sid_made == sid and set(pieces) == set(stems.KIT) and all(p.parent == kit and p.exists() for p in pieces.values())
-    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None: [])
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None, melody=False: [])
     gui.set_stems({"song": sid, "make": True, "separator": "demucs"})  # (Demucs': the quick one, no drum part)
     assert wait_for(lambda: not gui.stems_info(sid)["making"], bool) and len(asked) == 1
 
@@ -2190,7 +2190,7 @@ def test_stop_goes_back_to_the_songs_start_and_the_page_hears_how_far_things_bei
     assert gui.remote_stop() == "back to the start" and gui.song(sid)["start"] == 0  # (stopped already: just that)
     gui._splitting[sid] = {"making": True, "progress": 0.42}
     gui._making[sid] = {"step": "transcribing them", "progress": 0.5}
-    assert call(server, "/api/state")[1]["making"] == {"stems": {sid: 0.42}, "drums": {sid: 0.5}}
+    assert call(server, "/api/state")[1]["making"] == {"stems": {sid: 0.42}, "drums": {sid: 0.5}, "melody": {}}
     gui._splitting.clear()
     gui._making.clear()
     version = gui.play_version
@@ -2251,3 +2251,34 @@ def test_the_guitar_is_heard_on_one_of_an_interfaces_inputs(server, monkeypatch)
     call(server, "/api/settings", {"listen_device": "Mic"})  # (another device: its first input)
     assert (started[-1].device, started[-1].channel) == ("Mic", 1)
     assert call(server, "/api/settings")[1]["input_channels"]["Blender"] == 12
+
+
+def test_a_songs_vocal_melody_once_made_is_its_vocals_part_off_till_its_turned_on(server, monkeypatch, tmp_path):
+    from rs_keylights import gui as gui_module, melody
+    gui = server.gui
+    monkeypatch.setattr(melody, "cache_dir", lambda: tmp_path / "melody")
+    (gui.index.game_dir / "dlc" / "sung_m.psarc").write_bytes(song_archive(
+        "sung", {"lead": ("SL", Song(levels={0: [N(1.0)]})), "vocals": ("SV", Song(vocals=4))},
+        song="Sung", artist="Band"))
+    gui.reindex()
+    sid = next(s["id"] for s in call(server, "/api/library")[1]["songs"] if s["song"] == "Sung")
+    assert [p["part"] for p in gui.song(sid)["parts"]] == ["lead"]  # (no melody yet: its vocals, just lyrics)
+    assert gui.song(sid)["melody"] == {"made": False, "notes": 0, "making": None, "progress": None, "error": None,
+                                       "can": False}
+    info = call(server, "/api/melody", {"song": sid, "make": True})[1]  # (no split server: why not, said)
+    assert wait_for(lambda: gui.melody_info(sid), lambda m: m["error"] is not None)["error"].startswith(
+        "A vocal melody needs a split server")
+    vocals = next(r for r in gui.index.arrangements() if r.song_key == "sung" and r.part == "vocals")
+    melody.keep(vocals, [(1.0, 1.4, 64), (1.5, 2.0, 67)])
+    gui._melody_made(sid)
+    parts = gui.song(sid)["parts"]
+    assert [(p["part"], p["kind"], p["play"], p["lights"]) for p in parts] == [("lead", "lead", True, 1),
+                                                                             ("vocals", "vocals", False, 0)]
+    assert gui_module.default_lights(["lead", "rhythm", "vocals"]) == [1, 1, 0]
+    call(server, "/api/song/settings", {"song": sid, "parts": {"vocals": {"play": True, "lights": 1}}})
+    call(server, "/api/play", {"song": sid, "start": 0.5})
+    planned = {pp.part.ref.part: pp for pp in gui._planned_now}
+    assert [n.pitches for n in planned["vocals"].part.arrangement.notes] == [(64,), (67,)]
+    assert planned["vocals"].voices.main.tone.number == 196  # (VOICE LEAD, its own default)
+    call(server, "/api/stop", {})
+    assert info["made"] is False

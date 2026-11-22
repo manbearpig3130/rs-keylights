@@ -9,14 +9,14 @@
     --bg: #f6f6f4; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e2e2e0;
     --accent: #c4202b; --accent-text: #ffffff; --soft: #fbeaea; --warn: #9a5b00; --warn-bg: #fff4e0;
     --ok: #1f7a3a; --input: #ffffff; --live: #1a6fd8; --live-text: #ffffff;
-    --lead: #e0700f; --rhythm: #2e9a3e; --bass: #2f6fd6; --white-key: #ffffff; --black-key: #1d1d1f;
+    --lead: #e0700f; --rhythm: #2e9a3e; --bass: #2f6fd6; --vocals: #c2389a; --white-key: #ffffff; --black-key: #1d1d1f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161617; --panel: #1f1f21; --text: #ececee; --muted: #9a9aa0; --line: #333336;
       --accent: #ff4d57; --accent-text: #160304; --soft: #3a1a1c; --warn: #ffb547; --warn-bg: #3a2a10;
       --ok: #5fd27f; --input: #2a2a2d; --live: #5aa7ff; --live-text: #0b1a2e;
-      --lead: #ff9a3d; --rhythm: #5fd27f; --bass: #6aa8ff; --white-key: #d8d8dc; --black-key: #101012;
+      --lead: #ff9a3d; --rhythm: #5fd27f; --bass: #6aa8ff; --vocals: #ec6fcf; --white-key: #d8d8dc; --black-key: #101012;
     }
   }
   * { box-sizing: border-box; }
@@ -52,6 +52,7 @@
   input[type=checkbox]:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .45; cursor: default; }
+  button.warn { border-color: var(--warn); }  /* (something it did failed: its title says why) */
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   #muteBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* muted */
   #audioBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* the song's audio */
@@ -530,6 +531,7 @@
           <div class="song-export">
             <button type="button" id="exportMidi" title="Every part, the tempo map (the record's: a tempo a beat), the sections as markers, chords and tones as text, the lyrics and their melody, and the drum part if it's made: for Logic or GarageBand">MIDI file</button>
             <button type="button" id="exportAudio" title="The song's audio as a WAV, lined up with the MIDI file: put both in at the start">Song audio</button>
+            <button type="button" id="makeMelody"></button>
             <button type="button" id="resetTones" title="Every arrangement back on the default tones: the tones each has of its own (tone, palm mutes, harmonics) cleared, so its kind's (Default tones, on the Keyboard card) play, playing this song and following it">Reset tones</button>
             <span id="exportNote" class="small muted"></span>
           </div>
@@ -3603,6 +3605,27 @@ function partChange(part, field, value) {
 // cleared, so its kind's default tones play, playing the song (its parts) and following it (following's arrangements);
 // whether each follows the song's tone changes stays as it is
 const NO_TONES = {tone: null, mute_tone: null, pinch_tone: null};
+// The song's vocal melody: made on the split server (its vocals' pitch, RMVPE), then one more of its parts (its
+// vocals), played and lit or not as the others are. POST /api/melody
+function renderMelodyButton(s) {
+  const m = s.melody || {}, button = $("makeMelody");
+  button.disabled = !!m.making || !m.can;
+  button.textContent = m.making ? `Vocal melody ${Math.round((m.progress || 0) * 100)}%` :
+    m.made ? "Melody again" : "Vocal melody";
+  button.title = !m.can ? "Needs a split server (Song Audio, Split on another computer): it tracks the vocals' pitch" :
+    m.error ? `Couldn't make it: ${m.error}` :
+    m.made ? `Its vocal melody (${m.notes} notes) is the Vocals part below: make it again` :
+    "The vocals' melody as a part of its own (Vocals), to play or light on the keys: tracked on the split server " +
+    "(about a minute), along the lyrics";
+  button.classList.toggle("warn", !!m.error);
+}
+$("makeMelody").addEventListener("click", () => act(async () => {
+  if (!selected) return;
+  const info = await api("/api/melody", {song: selected.id, make: true});
+  selected = {...selected, melody: info};
+  renderMelodyButton(selected);
+}));
+
 function resetSongTones() {
   const s = selected;
   if (!s) return;
@@ -3654,6 +3677,7 @@ function renderSong() {
   $("artist").textContent = s.artist;
   $("file").textContent = `${s.artist ? "· " : ""}${s.file} · ${fmt(s.length)}`;
   $("songKey").replaceChildren(keyLine(s.key, s.id));
+  renderMelodyButton(s);
   $("exportAudio").disabled = !s.audio_export;
   $("exportAudio").title = s.audio_export ? "The song's audio as a WAV, lined up with the MIDI file: put both in at the start" :
     "Needs the drum tools to decode it: run tools/drums-setup.sh";
@@ -4412,6 +4436,9 @@ function showState(st) {
     const done = Math.round(making.stems[selected.id] * 100);
     $("audioProgress").querySelector("span").style.width = `${done}%`;
     $("audioProgress").querySelector("output").textContent = `${done}%`;
+  }
+  if (selected && making.melody && making.melody[selected.id] != null) {  // (the vocal melody's, on its button)
+    $("makeMelody").textContent = `Vocal melody ${Math.round(making.melody[selected.id] * 100)}%`;
   }
   if (selected && making.drums[selected.id] != null) {
     const done = Math.round(making.drums[selected.id] * 100);

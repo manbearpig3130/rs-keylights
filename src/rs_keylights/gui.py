@@ -39,7 +39,7 @@ from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, Planne
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import chartsync, gameparts, gamestems, splitserver, stems, warmup
+from . import chartsync, gameparts, gamestems, melody, splitserver, stems, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -66,7 +66,8 @@ from .watch import (BUILT_IN, DEFAULT as DEFAULT_TONE, FIELDS as TONE_PAGES, TON
 # browsers that opened the link with its key once (then a cookie has it).
 
 DEFAULT_GUI_PORT = 8040
-PART_ORDER = ("lead", "rhythm", "combo", "bass")
+PART_ORDER = ("lead", "rhythm", "combo", "bass", "vocals")
+KIND_DEFAULTS = {"vocals": {"tone": 196}}  # (the vocal melody's own tone, unless it's given one: VOICE LEAD)
 KINDS = ("lead", "rhythm", "bass")  # each has default tones, for parts without their own
 TONE_FIELDS = ("tone", "mute_tone", "pinch_tone")  # a set of tones: these tone numbers
 PART_FIELDS = (*TONE_FIELDS, "follow_tones")  # and whether its tone follows the song's (False: it stays)
@@ -163,7 +164,9 @@ def part_order(ref: ArrangementRef) -> tuple[int, str]:
 
 
 def kind(ref: ArrangementRef) -> str:
-    """Whose default tones a part gets: bass, rhythm, or lead (combos too)."""
+    """Whose default tones a part gets: bass, rhythm, or lead (combos too); the vocal melody, vocals."""
+    if ref.part == "vocals":
+        return "vocals"
     if ref.bass:
         return "bass"
     return "rhythm" if ref.part.startswith("rhythm") or ref.name.lower() == "rhythm" else "lead"
@@ -172,8 +175,13 @@ def kind(ref: ArrangementRef) -> str:
 def default_lights(kinds: list[str]) -> list[int]:
     """Whether each of a song's parts plays and lights keys by default (1), sharing the 4 lit keys, or not (0): with
     4 parts or fewer, all of them; with more, the first lead, rhythm and bass part."""
-    chosen = list(range(len(kinds))) if len(kinds) <= 4 else [kinds.index(k) for k in KINDS if k in kinds]
-    return [1 if i in chosen else 0 for i in range(len(kinds))]
+    played = [k for k in kinds if k != "vocals"]  # (the vocal melody: off, till it's turned on)
+    chosen = list(range(len(played))) if len(played) <= 4 else [played.index(k) for k in KINDS if k in played]
+    out, place = [], 0
+    for k in kinds:
+        out.append(0 if k == "vocals" else 1 if place in chosen else 0)
+        place += k != "vocals"
+    return out
 
 
 def default_follow() -> dict[str, Any]:
@@ -564,6 +572,8 @@ class Gui:
         # played or followed), and the songs being measured
         self._chart_offsets: dict[str, float] = {}
         self._measuring: set[str] = set()
+        self._melody_making: dict[str, dict[str, Any]] = {}  # (a song's vocal melody being made: its step, how far,
+        # or why it failed)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
         self._planned_now: list[PlannedPart] = []  # the song playing's parts, as planned
         self._note_times: dict[int, tuple[tuple[Note, ...], list[float]]] = {}  # (when its notes start, by them)
@@ -825,6 +835,7 @@ class Gui:
             "saved": sid in self.song_settings,
             "drums": self.drums_info(sid),
             "stems": self.stems_info(sid),
+            "melody": self.melody_info(sid),
             "audio_export": drums.can_decode(),
             "version": self.play_version,
             "parts": [
@@ -1669,11 +1680,11 @@ class Gui:
             if sid in self._loaded:
                 self._loaded.move_to_end(sid)
                 return self._loaded[sid]
-        refs = sorted((r for r in self.index.arrangements() if song_id(r) == sid and r.part not in NO_NOTES),
+        refs = sorted((r for r in self.index.arrangements() if song_id(r) == sid and self._playable(r)),
                       key=part_order)
         if not refs:
             raise GuiError("No such song (is its drive connected? try Reindex)")
-        loaded = [(ref, ref.load()) for ref in refs]
+        loaded = [(ref, self.arrangement_of(ref)) for ref in refs]
         with self._lock:
             self._loaded[sid] = loaded
             while len(self._loaded) > 8:
@@ -1770,7 +1781,7 @@ class Gui:
             name = chosen["part"]
             ref, arrangement = by_part[name]
             parts.append(Part(ref, arrangement, chosen["lights"], muted=not chosen["play"]))
-            own, defaults = chosen["tones"], self.follow_settings[kind(ref)]
+            own, defaults = chosen["tones"], self.follow_settings.get(kind(ref), KIND_DEFAULTS.get(kind(ref), {}))
 
             def pick(field: str) -> Any:  # (SAME_TONE: over a default)
                 return own.get(field, defaults.get(field))
@@ -1807,6 +1818,90 @@ class Gui:
                        "sound": pp.voices.describe() if pp.voices else "silent",
                        "lights": pp.part.lights} for pp in planned if not pp.part.muted],
         }
+
+    # A song's vocal melody (melody): its vocals' pitch tracked on the split server, played as one more of its parts
+
+    def _vocals_ref(self, sid: str) -> ArrangementRef | None:
+        refs = [r for r in self.index.arrangements() if song_id(r) == sid and r.part == "vocals"]
+        return refs[0] if refs else None
+
+    def melody_info(self, sid: str) -> dict[str, Any]:
+        """A song's vocal melody, for the page: made (how many notes), being made (the step, how far) or failed
+        (why), and whether it can be (a split server set)."""
+        ref = self._load(sid)[0][0]
+        notes = melody.kept(ref)
+        making = self._melody_making.get(sid, {})
+        return {"made": notes is not None, "notes": len(notes or []), "making": making.get("step"),
+                "progress": making.get("progress") if making.get("step") else None, "error": making.get("error"),
+                "can": self.settings["split_server"] is not None}
+
+    def set_melody(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A song's vocal melody made ("make": again, if it is), in the background (a minute or so: on the split
+        server); once it's made it's one of the song's parts (its vocals), played or not as the others are."""
+        sid = str(body.get("song", ""))
+        loaded = self._load(sid)
+        if body.get("make"):
+            with self._lock:
+                if self._melody_making.get(sid, {}).get("step"):
+                    return self.melody_info(sid)
+                self._melody_making[sid] = {"step": "starting", "progress": 0.0, "error": None}
+                self.play_version += 1
+            ref = next((r for r, _a in loaded if r.artist), loaded[0][0])
+            beats = next((a.beats for _r, a in loaded if a.beats), ())
+
+            def step(text: str) -> None:
+                self._melody_making[sid] = {**self._melody_making.get(sid, {}), "step": text}
+
+            def far(done: float) -> None:
+                self._melody_making[sid] = {**self._melody_making.get(sid, {}), "progress": round(done, 3)}
+
+            def run() -> None:
+                try:
+                    server = self.settings["split_server"]
+                    if server is None:  # (said before anything's measured)
+                        raise stems.StemsError("A vocal melody needs a split server (Split on another computer): "
+                                               "RMVPE runs there")
+                    try:  # (its chart's offset: the melody's times lined up with its parts)
+                        offset = chartsync.offset_for(ref, beats, self.index.game_dir).offset
+                        self._chart_offsets[sid] = offset
+                    except Exception:  # (not measured: as it is)
+                        offset = 0.0
+                    melody.make(ref, self._vocals_ref(sid), self.index.game_dir, server, offset, progress=far,
+                                say=step)
+                    self._melody_making.pop(sid, None)
+                except Exception as exc:  # (no split server, or an older one, or failing: said on the page)
+                    self._melody_making[sid] = {"step": None, "progress": None, "error": str(exc)}
+                self._melody_made(sid)
+
+            threading.Thread(target=run, name="rs-keylights melody", daemon=True).start()
+        return self.melody_info(sid)
+
+    def _melody_made(self, sid: str) -> None:
+        """A song's melody made (or not): its parts read again (its vocals among them), and what plays goes on with
+        them."""
+        with self._lock:
+            self._loaded.pop(sid, None)
+            self.play_version += 1
+        if self._playing and self._playing["id"] == sid:
+            try:
+                self._play_on(sid)
+            except Exception:  # (the song stopped meanwhile)
+                pass
+
+    def _melody_from_split(self, sid: str, ref: ArrangementRef, path: Path) -> None:
+        """A BS-RoFormer SW split's melody (melody.json, the split server's) made into the song's vocal melody."""
+        loaded = self._load(sid)
+        beats = next((a.beats for _r, a in loaded if a.beats), ())
+        try:
+            try:
+                offset = chartsync.offset_for(ref, beats, self.index.game_dir).offset
+                self._chart_offsets[sid] = offset
+            except Exception:  # (not measured: as it is)
+                offset = 0.0
+            melody.keep(ref, melody.notes_from_file(path, self._vocals_ref(sid), offset))
+        except Exception as exc:  # (said on the page)
+            self._melody_making[sid] = {"step": None, "progress": None, "error": str(exc)}
+        self._melody_made(sid)
 
     def chart_offset(self, sid: str) -> float:
         """How far a song's audio is after its chart (seconds; 0: in time, or not known yet): measured in the
@@ -2090,11 +2185,14 @@ class Gui:
             try:
                 server = self.settings["split_server"] if separator == stems.ROFORMER else None
                 pieces = stems.make(ref, self.index.game_dir, progress=far, separator=separator, server=server,
-                                    kit_out=kit)
+                                    kit_out=kit, melody=True)
                 self._splitting[sid] = {"making": False, "progress": None, "error": None}
+                if kit is not None and "melody" in (pieces or []):  # (its vocals' melody too: made into its own)
+                    self._melody_from_split(sid, ref, kit / "melody.json")
+                pieces = [p for p in pieces or [] if p != "melody"]
                 if kit is not None:  # (BS-RoFormer SW's: its drum part made again from them, from its kit's pieces
                     # too if the split server made them)
-                    self._make_drums(sid, self._load(sid), {p: kit / f"{p}.wav" for p in pieces or []} or None, kit)
+                    self._make_drums(sid, self._load(sid), {p: kit / f"{p}.wav" for p in pieces} or None, kit)
                     kit = None
             except Exception as exc:  # (the separator missing, or failing: said on the page)
                 self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}
@@ -2489,7 +2587,7 @@ class Gui:
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
                                       parts_for=self._follow_parts(), trace=self._trace,
                                       game_time=self._riff_loop.time,
-                                      song_offset=lambda ref: self.chart_offset(song_id(ref)))
+                                      song_offset=lambda ref: self.chart_offset(song_id(ref)), load=self.arrangement_of)
                 self._follow_extras(following)  # (its song's drum part)
                 following.start()
                 self._session, self._followed = following, None
@@ -3852,8 +3950,23 @@ class Gui:
         return parts_for
 
     def _song_refs(self, ref: ArrangementRef) -> list[ArrangementRef]:
-        """The arrangements of a song with notes, lead first."""
-        return sorted((r for r in self.index.of_song(ref) if r.part not in NO_NOTES), key=part_order)
+        """The arrangements of a song with notes (its vocal melody, once it's made), lead first."""
+        return sorted((r for r in self.index.of_song(ref) if self._playable(r)), key=part_order)
+
+    @staticmethod
+    def _playable(ref: ArrangementRef) -> bool:
+        """An arrangement with notes to play: a vocals part too, once its melody's made (melody)."""
+        return ref.part not in NO_NOTES or (ref.part == "vocals" and melody.kept(ref) is not None)
+
+    @staticmethod
+    def arrangement_of(ref: ArrangementRef) -> Arrangement:
+        """An arrangement's notes: its chart's; a vocals part's, its melody (melody.kept)."""
+        loaded = ref.load()
+        if ref.part == "vocals":
+            notes = melody.kept(ref)
+            if notes is not None:
+                return melody.arrangement(loaded, notes)
+        return loaded
 
     def _follow_voices(self) -> VoicesFor | None:
         """The voices for each arrangement played: its own tones, else the defaults for its kind of part, else the
@@ -3863,7 +3976,8 @@ class Gui:
             return None
 
         def voices_for(ref: ArrangementRef, channels: tuple[int, int, int]) -> Voices:
-            own, defaults = settings["arrangements"].get(ref.persistent_id, {}), settings[kind(ref)]
+            own, defaults = settings["arrangements"].get(ref.persistent_id, {}), \
+                settings.get(kind(ref), KIND_DEFAULTS.get(kind(ref), {}))
 
             def pick(field: str) -> Any:
                 return own.get(field, defaults.get(field))
@@ -4108,7 +4222,10 @@ class Gui:
                                                         if making.get("making")},
                                               "drums": {sid: making.get("progress") or 0.0
                                                         for sid, making in list(self._making.items())
-                                                        if making.get("step")}}}
+                                                        if making.get("step")},
+                                              "melody": {sid: making.get("progress") or 0.0
+                                                         for sid, making in list(self._melody_making.items())
+                                                         if making.get("step")}}}
             if isinstance(session, Playback):
                 if not session.running:
                     self._session = None
@@ -4931,6 +5048,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/riff": lambda: gui.set_game_riff(body),
             "/api/game/music": lambda: gui.set_game_music(body),
             "/api/drums": lambda: gui.set_drums(body),
+            "/api/melody": lambda: gui.set_melody(body),
             "/api/stems": lambda: gui.set_stems(body),
             "/api/stems/server": lambda: gui.set_split_server(body),
             "/api/game-stems": lambda: gui.set_game_stems(body),

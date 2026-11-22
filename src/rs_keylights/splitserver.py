@@ -64,6 +64,11 @@ def log(url: str, key: str, since: int = 0, timeout: float = 3.0) -> dict[str, A
     return _json(url, key, f"/log?since={int(since)}", timeout=timeout)
 
 
+def has_melody(url: str, key: str) -> bool:
+    """Whether it tracks a vocal melody too (RMVPE; a server from before it doesn't)."""
+    return bool(status(url, key).get("melody"))
+
+
 def has_kit(url: str, key: str) -> bool:
     """Whether it splits a drum part into the kit's pieces too (DrumSep: kick, snare, toms, hh, ride, crash; a server
     from before it doesn't)."""
@@ -72,16 +77,20 @@ def has_kit(url: str, key: str) -> bool:
 
 
 def split(url: str, key: str, song: Path, parts: Sequence[str], out: Path,
-          progress: Callable[[float], None] = lambda _done: None, from_drums: bool = False) -> dict[str, Path]:
-    """A song's parts (song: its audio, a WAV) made there: each part's FLAC, in out. How far along: 0 to 1, to
-    progress (sent by SENT, made by MADE, then fetched). From drums: the audio's a drum part already, the parts the
-    kit's pieces (DrumSep's)."""
+          progress: Callable[[float], None] = lambda _done: None, from_drums: bool = False,
+          source: str | None = None) -> dict[str, Path]:
+    """A song's parts (song: its audio, a WAV) made there: each part's FLAC (the melody's, melody.json), in out. How
+    far along: 0 to 1, to progress (sent by SENT, made by MADE, then fetched). From drums (source "drums"): the audio's
+    a drum part already, the parts the kit's pieces (DrumSep's); source "vocals": a vocal part, its melody."""
+    source = "drums" if from_drums else source
     said = status(url, key)  # (there, the key right, the parts its: else said before the song's sent)
-    known = (said.get("kit") if from_drums else said.get("parts")) or []
+    known = (said.get("kit") if source == "drums" else ["melody"] if source == "vocals" and said.get("melody")
+             else [] if source else said.get("parts")) or []
     if any(part not in known for part in parts):
-        raise SplitServerError(f"The parts{' of a drum part' if from_drums else ''}: {', '.join(known) or 'none'}")
+        said_of = {"drums": " of a drum part", "vocals": " of a vocal part"}.get(source or "", "")
+        raise SplitServerError(f"The parts{said_of}: {', '.join(known) or 'none'}")
     with open(song, "rb") as audio:
-        job = _json(url, key, f"/split?parts={','.join(parts)}" + ("&from=drums" if from_drums else ""), method="POST",
+        job = _json(url, key, f"/split?parts={','.join(parts)}" + (f"&from={source}" if source else ""), method="POST",
                     data=audio,
                     headers={"Content-Type": "audio/wav", "Content-Length": str(song.stat().st_size)},
                     timeout=120)["id"]
@@ -104,8 +113,8 @@ def split(url: str, key: str, song: Path, parts: Sequence[str], out: Path,
                 break
         made = {}
         for k, part in enumerate(parts):
-            made[part] = out / f"{part}.flac"
-            with _call(url, key, f"/split/{job}/{part}.flac", timeout=60) as answer, open(made[part], "wb") as f:
+            made[part] = out / (f"{part}.json" if part == "melody" else f"{part}.flac")
+            with _call(url, key, f"/split/{job}/{made[part].name}", timeout=60) as answer, open(made[part], "wb") as f:
                 while block := answer.read(1 << 20):
                     f.write(block)
             progress(MADE + (1 - MADE) * (k + 1) / len(parts))

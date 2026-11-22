@@ -155,7 +155,7 @@ BROWSE_SHOWN = 5.0  # seconds the screen shows the song the pitch strip is on, a
 GAME_KEYS = {TRACK_BUTTONS[0]: "up", TRACK_BUTTONS[1]: "down", SIDE_BUTTONS[0]: "escape", RECORD: "enter"}
 NOT_FOLLOWING_KEYS = "Follow the game first"  # (Rocksmith's menus' keys, not following)
 FLICK_GAIN, FLICK_FADE = 1.5, 0.8  # a flick's songs a second for its steps a second, and how it slows (seconds)
-BUILT_IN = {"lead": 79, "rhythm": 79, "bass": 85}
+BUILT_IN = {"lead": 79, "rhythm": 79, "bass": 85, "vocals": 196}  # (the vocal melody: VOICE LEAD)
 CHORD_EARLY = 0.15  # seconds: a chord's name shows this early, a little before it's played
 CHORDS_FIRST = {"rhythm": 0, "lead": 1, "bass": 2}  # whose chords, of arrangements lighting as many keys
 KIND_LETTERS = {"lead": "L", "rhythm": "R", "bass": "B"}  # whose chord it is, beside it
@@ -171,7 +171,8 @@ PALETTE_RGB = {1: (14, 14, 14), 3: (127, 127, 127), 5: (127, 0, 0), 9: (127, 42,
                13: (127, 127, 0), 21: (0, 127, 0), 23: (0, 12, 0), 37: (0, 84, 127), 39: (0, 8, 12), 45: (0, 0, 127),
                49: (42, 0, 127), 53: (127, 0, 127), 55: (12, 0, 12)}  # the palette colours shown, as near as RGB goes
 COLOURS = {"lead": (9, (127, 45, 0)), "rhythm": (21, (0, 127, 20)), "bass": (45, (0, 45, 127)),
-           "drums": (3, (100, 100, 100))}  # (a song's drum part: white)
+           "drums": (3, (100, 100, 100)), "vocals": (53, (127, 0, 127))}  # (a song's drum part: white; its vocal
+# melody: magenta)
 TONIC, IN_SCALE, ALSO = 5, 3, 49  # palette colours: the scale view
 SOUND_ON, SOUND_OFF, FOLLOWING, NOT_FOLLOWING = 21, 5, 37, 39  # the right column's pads
 KEYS_ON, KEYS_RGB = 49, (60, 0, 127)  # its keys' pads: purple

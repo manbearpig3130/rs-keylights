@@ -34,12 +34,13 @@ def ready(tools: Path | None = None) -> bool:
 
 def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, cache: Path | None = None,
          progress: Callable[[float], None] = lambda _done: None, server: dict[str, str] | None = None,
-         kit_out: Path | None = None) -> list[str]:
+         kit_out: Path | None = None, melody: bool = False) -> list[str]:
     """A song's parts made by BS-RoFormer SW and kept (stems.store), how far along going to progress (0 to 1): its
     audio decoded (drums-setup.sh's decoder), separated by roformer_worker.py in the setup's own Python here, or by a
     split server ({"url", "key"}: splitserver), if one's given. One that doesn't answer: here instead, if it's set up
     here. With kit_out, a server that has DrumSep splits its drums into the kit's pieces too (stems.KIT), as 16-bit
-    WAVs there (for the drum part: drums.make's pieces); the pieces made (none: not by this server, or here)."""
+    WAVs there (for the drum part: drums.make's pieces); with melody too, the vocals' melody (melody.json, there:
+    the server's RMVPE). What's made besides the parts (none: not by this server, or here)."""
     import numpy as np
 
     from . import drums, splitserver, stems
@@ -63,6 +64,8 @@ def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, cache: 
             try:
                 if kit_out is not None and splitserver.has_kit(server["url"], server["key"]):
                     pieces = list(stems.KIT)
+                if kit_out is not None and melody and splitserver.has_melody(server["url"], server["key"]):
+                    pieces.append("melody")
                 made = splitserver.split(server["url"], server["key"], work / "song.wav", [*stems.SEPARATED, *pieces],
                                          out, lambda done: progress(stems.SEPARATING * done))
             except splitserver.Unreachable as exc:
@@ -72,6 +75,8 @@ def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, cache: 
                 raise stems.StemsError(f"The split server couldn't split it: {exc}") from exc
         wavs = {}
         if made is not None:  # (its FLACs, each read back as it was made; the kit's pieces to kit_out)
+            if "melody" in made and kit_out is not None:
+                made.pop("melody").replace(kit_out / "melody.json")
             for stem, flac in made.items():
                 wavs[stem] = (kit_out if stem in pieces and kit_out is not None else work) / f"{stem}.wav"
                 stems._run(["afconvert", "-f", "WAVE", "-d", "LEI16", str(flac), str(wavs[stem])], dict(os.environ),

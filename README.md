@@ -621,6 +621,15 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
 
 🎵 in the header plays the song's own audio from the Mac along with a song you play:
 
+**The vocal melody.** **Vocal melody** (on the song's card) tracks the song's vocals' pitch on the split server
+(RMVPE, every 10 ms: about a minute; its vocals stem sent if it's split, else the song, its vocals separated there)
+and makes it a part of its own, **Vocals**, with the others: played on the keys (VOICE LEAD, unless it's given its own
+tone), lit, muted, its volume, on the page, the Launchkey and in the game's MIXER as any arrangement. A split with
+BS-RoFormer SW on the server makes it too. Along the song's lyrics, each syllable is a note at the pitch it's sung at
+most (a melisma, a few); without lyrics, its sung stretches, split where the pitch moves on. It starts off: turn it on.
+Growled or screamed vocals have no pitch to speak of, so those lines are left out. It needs the server's script from
+after this (it sets up RMVPE, 180 MB, on its next start).
+
 **In time with its chart.** Some charts (custom ones mostly) sit a few tens of milliseconds off their song's audio,
 the same all through it: The Hero's notes come 58 ms before its audio, Crack the Sky's 30 ms after. Everything
 played from the chart (the parts, the drum part) is then that far off the song. The first time a song's played or
