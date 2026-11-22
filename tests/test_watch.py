@@ -2113,7 +2113,7 @@ def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
     launchkey.queued = [Pad(0, KEYS_COLUMN)]  # its Music's pad: the song's audio on (teal), not the keyboard's mute
     clock.now = 3.5
     watch.step()
-    assert gui.audio["on"] and gui.sound and pads(launchkey)[(0, KEYS_COLUMN)] == (0, 90, 100)
+    assert gui.audio["on"] and gui.sound and pads(launchkey)[(0, KEYS_COLUMN)] == (21, False)
     launchkey.queued = [Turn(KEYS_COLUMN, 15)]  # knob 7: its volume
     clock.now = 4.0
     watch.step()
@@ -2235,7 +2235,7 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
 
     assert screens(launchkey)[-1] == mixer([60, 100, 80], None, [True, False, False])  # (the bass waits its turn)
     assert pads(launchkey)[(0, 2)] == (127, 45, 0) and pads(launchkey)[(0, 1)] == (0, 11, 32)  # (bright, dim)
-    assert pads(launchkey)[(0, KEYS_COLUMN)] == (0, 90, 100)  # (its Music, knob 7's)
+    assert pads(launchkey)[(0, KEYS_COLUMN)] == (21, False)  # (its Music, knob 7's)
     assert pads(launchkey)[(0, 0)] == (0, False) and pads(launchkey)[(0, CONTROLS)] == (21, False)  # (none else;
     # the page's master mute: its parts sounding)
     launchkey.queued = [Turn(2, -40)]  # knob 3: the guitar in the game's song
@@ -2264,7 +2264,7 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
     launchkey.queued = [Pad(0, KEYS_COLUMN)]
     clock.now = 2.7
     watch.step()
-    assert not gui.music_muted and pads(launchkey)[(0, KEYS_COLUMN)] == (0, 90, 100)
+    assert not gui.music_muted and pads(launchkey)[(0, KEYS_COLUMN)] == (21, False)
     launchkey.queued = [Turn(CONTROLS, -5)]  # knob 8: the bass and guitar together, the Music apart
     clock.now = 2.8
     watch.step()

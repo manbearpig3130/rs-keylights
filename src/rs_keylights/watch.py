@@ -187,8 +187,8 @@ STEM_PULSE = 3  # (their pads while the song's being split: white, pulsing)
 STEMS_TO_SPLIT = 0.12  # a song not split yet: their pads this dim (a tap splits it)
 STEM_STEP = 1  # a step of their knobs, of a volume (0 to 100)
 GAME_STEMS = ("bass", "guitar")  # following, the game's song's (rearmed-mods' Song Stems): the part played, out
-MUSIC_RGB = (0, 90, 100)  # the stems page's knob 7 and its pad: the Music (the game's following, else the song's
-# audio: teal, as the game's MIXER has it)
+# (the stems page's knob 7 and its pad, the Music (the game's following, else the song's audio): green as the master
+# pad beside it is, sounding, red muted: apart from the parts' pads, Other's teal beside it)
 GAME_STEM_WAITING = 0.25  # the other one's pad this bright (its level waits for its turn)
 AUDIO_ON, AUDIO_OFF = 21, 5  # the song's audio's pad: green playing, red off
 MUTED_LEVEL = 0.08  # and outside it: its colour, as dim as it goes
@@ -1048,7 +1048,7 @@ class Watch:
             music = self._music_of(info)  # (its Music, knob 7's: muted, red)
             if music is not None:
                 picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if info.get("music_muted") else \
-                    ("rgb", *MUSIC_RGB)
+                    ("palette", SOUND_ON, False)
             if self._game_stems(info) is not None:  # (the page's master mute: its parts, green sounding, red all muted)
                 sounding = not all(self._game_muted(stem, info) for stem in GAME_STEMS)
                 picture[(0, CONTROLS)] = ("palette", SOUND_ON if sounding else SOUND_OFF, False)
@@ -1063,11 +1063,11 @@ class Watch:
                 picture[(0, column)] = ("rgb", *(round(c * MUTED_LEVEL) for c in rgb))
             else:
                 picture[(0, column)] = ("rgb", *rgb)
-        picture[(0, KEYS_COLUMN)] = ("rgb", *MUSIC_RGB) if audio.get("on") else ("palette", MUTED_PAD, False)  # (its
+        picture[(0, KEYS_COLUMN)] = ("palette", SOUND_ON, False) if audio.get("on") else ("palette", MUTED_PAD, False)  # (its
         # Music: the song's audio on or off; following, the game's Music)
         if info.get("mode") == "follow":
             picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if info.get("music_muted") or \
-                self._music_of(info) is None else ("rgb", *MUSIC_RGB)
+                self._music_of(info) is None else ("palette", SOUND_ON, False)
         if audio.get("made"):  # (the page's master mute: its parts, green any sounding, red all muted)
             sounding = not all(mutes.get(stem) for stem, _label, _rgb in STEMS)
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if sounding else SOUND_OFF, False)
