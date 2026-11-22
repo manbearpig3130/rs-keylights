@@ -421,6 +421,10 @@ def _changed_options(options: dict[str, Any], change: dict[str, Any]) -> dict[st
             raise GuiError(f"Expected the parts muted ({', '.join(stems.STEMS)})")
         out["stem_mutes"] = {**{s: False for s in stems.STEMS}, **out.get("stem_mutes", {}),
                              **{k: bool(v) for k, v in given.items()}}
+    if "separator" in change:  # (which splits a song into its parts, and whose parts play: the other's if not made)
+        if change["separator"] not in stems.SEPARATORS:
+            raise GuiError(f"Expected a separator ({', '.join(stems.SEPARATORS)})")
+        out["separator"] = change["separator"]
     if "audio_device" in change:  # (an audio output, by name; none: the Mac's own, as it is)
         device = change["audio_device"]
         if device is not None and not isinstance(device, str):
@@ -546,10 +550,11 @@ class Gui:
         self._keys_out: dict[int, tuple[Synth, int]] = {}  # the keys' notes sounding on another device: its, channel
         self._song_audio: SongAudio | None = None  # the song's own audio, playing with it
         self._audio_token = 0  # (each start or stop: a song's decoded after, not played)
-        self._audio_kept: tuple[str, Any, dict[str, Any] | None, int] | None = None  # the last song's audio decoded:
-        # its id, samples, parts (if they're made) and rate
+        self._audio_kept: tuple[str, Any, dict[str, Any] | None, int, str | None] | None = None  # the last song's
+        # audio decoded: its id, samples, parts (if they're made), rate, and whose parts they are
         self._splitting: dict[str, dict[str, Any]] = {}  # songs' parts being made (or failed), by song
-        self._split_queue: deque[tuple[str, ArrangementRef]] = deque()  # songs waiting to be split, one at a time
+        self._split_queue: deque[tuple[str, ArrangementRef, str]] = deque()  # songs waiting to be split (and by
+        # which separator), one at a time
         self._split_running = False  # (a thread splitting them)
         self._audio_error: str | None = None
         self._audio_stream = audio_stream  # (sounddevice's OutputStream; tests: their own)
@@ -604,8 +609,9 @@ class Gui:
         self.play_options: dict[str, Any] = {"speed": 1.0, "real_pitch": True, "silent": False, "song": None,
                                              "audio": False, "audio_volume": AUDIO_VOLUME, "audio_device": None,
                                              "stem_volumes": {stem: 100 for stem in stems.STEMS},
-                                             "stem_mutes": {stem: False for stem in stems.STEMS}}  # (real
-        # pitch: the notes as they sound on the guitar, at first)
+                                             "stem_mutes": {stem: False for stem in stems.STEMS},
+                                             "separator": stems.ROFORMER}  # (real pitch: the notes as they sound on
+        # the guitar, at first)
         self.song_settings: dict[str, dict[str, Any]] = {}
         self.play_version = 0
         self._play_saved = False
@@ -1499,7 +1505,7 @@ class Gui:
                 # at once; a song not split, the song alone: as it is)
                 audio.weights.update(stems.mix_weights(_stem_weights(options, stems.STEMS)))
             if isinstance(session, Playback) and session.running and self._playing:
-                if changed & {"audio", "audio_device"}:
+                if changed & {"audio", "audio_device", "separator"}:  # (another separator: its parts, if made)
                     self._audio_on(self._playing["id"])
                 if "speed" in changed:
                     session.set_speed(options["speed"])
@@ -1733,27 +1739,40 @@ class Gui:
         threading.Thread(target=run, name="rs-keylights song audio", daemon=True).start()
 
     def _song_samples(self, sid: str, ref: ArrangementRef) -> tuple[Any, dict[str, Any] | None, int]:
-        """A song's audio, decoded, and its parts if they're made (the last song's kept: played again, it's
-        there)."""
+        """A song's audio, decoded, and its parts if they're made (the separator chosen's; not made, the other's):
+        the last song's kept, played again, it's there."""
+        which = self._parts_by(ref)
         kept = self._audio_kept
-        if kept is not None and kept[0] == sid and (kept[2] is not None or not stems.made(ref)):
+        if kept is not None and kept[0] == sid and kept[4] == which:
             return kept[1], kept[2], kept[3]
         self._audio_kept = None  # (its memory back first)
         samples, rate = song_samples(ref, self.index.game_dir)
-        parts = stems.load(ref, samples)
-        self._audio_kept = (sid, samples, parts, rate)
+        parts = stems.load(ref, samples, separator=which) if which else None
+        self._audio_kept = (sid, samples, parts, rate, which if parts is not None else None)
         return samples, parts, rate
+
+    def _parts_by(self, ref: ArrangementRef) -> str | None:
+        """Whose parts of a song play: the separator chosen's, else the other's (none made: None)."""
+        split = stems.split_with(ref)
+        chosen = self.play_options["separator"]
+        return chosen if chosen in split else (split[0] if split else None)
 
     # The song's parts (stems), each at a volume of its own in its audio
 
     def stems_info(self, sid: str) -> dict[str, Any]:
-        """A song's parts: made, being made (how far; or waiting for another song's to be), failed (why), and
-        whether they can be made."""
+        """A song's parts: made (by which separators, and whose play: "by"), being made (by which, how far; or waiting
+        for another song's to be), failed (why), and whether the separator chosen can make them ("can"; each's:
+        "can_by")."""
         ref = self._load(sid)[0][0]
         making = self._splitting.get(sid, {})
-        return {"made": stems.made(ref), "making": bool(making.get("making")), "progress": making.get("progress"),
-                "waiting": bool(making.get("making") and making.get("waiting")), "error": making.get("error"),
-                "can": stems.can_make(), "names": list(stems.STEMS)}
+        split = stems.split_with(ref)
+        chosen = self.play_options["separator"]
+        return {"made": bool(split), "made_by": split, "by": self._parts_by(ref), "separator": chosen,
+                "making": bool(making.get("making")), "making_by": making.get("separator"),
+                "progress": making.get("progress"), "waiting": bool(making.get("making") and making.get("waiting")),
+                "error": making.get("error"), "can": stems.can_make(separator=chosen),
+                "can_by": {s: stems.can_make(separator=s) for s in stems.SEPARATORS}, "names": list(stems.STEMS),
+                "separators": [{"id": s, "name": stems.SEPARATOR_NAMES[s]} for s in stems.SEPARATORS]}
 
     def audio_info(self, sid: str | None) -> dict[str, Any]:
         """The song's own audio, for a remote (the Launchkey's stem mixer): on or off, its volume, its parts' volumes
@@ -1772,18 +1791,23 @@ class Gui:
                 "waiting": bool(split.get("waiting")), "progress": split.get("progress"), "can": bool(split.get("can")), "there": drums.can_decode()}
 
     def set_stems(self, body: dict[str, Any]) -> dict[str, Any]:
-        """A song's parts made ("make"), in the background (a minute or two); played with its audio once they are.
-        One song's split at a time (two at once would share the Neural Engine, and the cache's pruning): another
-        asked for meanwhile waits its turn ("waiting")."""
+        """A song's parts made ("make"), by the separator chosen (or "separator"), in the background (Demucs: a minute
+        or two; BS-RoFormer SW: about the song's length); played with its audio once they are. One song's split at a
+        time (two at once would share the Mac's GPU or Neural Engine, and the cache's pruning): another asked for
+        meanwhile waits its turn ("waiting")."""
         sid = str(body.get("song", ""))
         loaded = self._load(sid)
         if body.get("make"):
+            separator = body.get("separator", self.play_options["separator"])
+            if separator not in stems.SEPARATORS:
+                raise GuiError(f"Expected a separator ({', '.join(stems.SEPARATORS)})")
             ref = next((r for r, _a in loaded if r.artist), loaded[0][0])
             with self._lock:
                 if self._splitting.get(sid, {}).get("making"):
                     return self.stems_info(sid)
-                self._splitting[sid] = {"making": True, "waiting": True, "progress": 0.0, "error": None}
-                self._split_queue.append((sid, ref))
+                self._splitting[sid] = {"making": True, "waiting": True, "progress": 0.0, "error": None,
+                                        "separator": separator}
+                self._split_queue.append((sid, ref, separator))
                 start, self._split_running = not self._split_running, True
                 self.play_version += 1
             if start:
@@ -1797,7 +1821,7 @@ class Gui:
                 if not self._split_queue:
                     self._split_running = False
                     return
-                sid, ref = self._split_queue.popleft()
+                sid, ref, separator = self._split_queue.popleft()
                 self._splitting[sid] = {**self._splitting.get(sid, {}), "waiting": False}
                 self.play_version += 1
 
@@ -1805,7 +1829,7 @@ class Gui:
                 self._splitting[sid] = {**self._splitting.get(sid, {}), "progress": round(done, 3)}
 
             try:
-                stems.make(ref, self.index.game_dir, progress=far)
+                stems.make(ref, self.index.game_dir, progress=far, separator=separator)
                 self._splitting[sid] = {"making": False, "progress": None, "error": None}
             except Exception as exc:  # (the separator missing, or failing: said on the page)
                 self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}

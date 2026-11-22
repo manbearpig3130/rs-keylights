@@ -371,8 +371,8 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
          cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None,
          parts_cache: Path | None = None) -> list[Hit]:
     """A song's drum part made (a minute or so) and kept: its audio from its archive, decoded and its drums separated
-    (drums-setup.sh's rs-stems-drums, with Song Stems' model; the song split into its parts already, stems', in
-    parts_cache: its drums from there, not separated again), transcribed (ADTOF, in drums-setup.sh's Python), refined,
+    (drums-setup.sh's rs-stems-drums, with Song Stems' model: a minute or so, the drums alone; the song split into
+    its parts already, stems', in parts_cache: its drums from there, the better separator's), transcribed (ADTOF, in drums-setup.sh's Python), refined,
     aligned to the chart and snapped to its beats. How far along it is goes to progress (0 to 1) as it goes."""
     from . import stems  # (it uses this module)
     import numpy as np
@@ -414,7 +414,7 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
         say("decoding its audio")
         run([str(helper), "decode", str(work / "song.wem"), str(work / "song.wav")], "Decoding the song")
         progress(DECODED)
-        split = stems.made(ref, parts_cache)
+        split = stems.split_with(ref, parts_cache)  # (the better separator's first)
         if not split:
             say("separating its drums")
             run([str(helper), "separate", str(work / "song.wem"), "1", "drums", str(work / "rest.pcm")],
@@ -424,7 +424,7 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
             mix = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, channels)
         if split:
             say("its drums, from its parts")
-            parts = stems.load(ref, mix, parts_cache, ("drums",))
+            parts = stems.load(ref, mix, parts_cache, ("drums",), split[0])
             if parts is None:
                 raise DrumsError("The song's parts went as its drum part was made: make it again")
             drums = parts["drums"]

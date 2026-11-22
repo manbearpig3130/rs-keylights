@@ -583,9 +583,16 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
 
 The **Song's audio** card sets its volume and output.
 
-**Split into parts** separates it into drums, bass, guitar, vocals, keys and other (ambience, synths, effects), with
-Song Stems' Demucs model (htdemucs_6s): about 35 s for a 4-minute song, once, all five parts from one pass of the
-model (a separator built before that takes one pass a part, about two minutes: run `tools/drums-setup.sh` again).
+**Split into parts** separates it into drums, bass, guitar, vocals, keys and other (ambience, synths, effects), once,
+with the **separator** chosen beside it:
+
+- **BS-RoFormer SW** (jarredou's 6-stem model, as jonkubis' Core ML port has it): much the cleaner parts, the guitar
+  most of all, in about the song's own length on the Mac's GPU. It needs `tools/roformer-setup.sh` run once.
+- **Demucs** (Song Stems' htdemucs_6s): quick, about 35 s for a 4-minute song on the Neural Engine, all five parts
+  from one pass of the model, but rougher (a separator built before that takes one pass a part, about two minutes:
+  run `tools/drums-setup.sh` again).
+
+A song can have both; the chosen separator's parts play (✓ beside a separator: its parts are made), else the other's.
 The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
 and mute, the same for every song. This needs the `drums` and `listen` extras and `tools/drums-setup.sh`.

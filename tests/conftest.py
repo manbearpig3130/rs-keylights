@@ -64,6 +64,7 @@ def no_real_drums(monkeypatch, tmp_path):
     monkeypatch.setattr(drums, "cache_dir", lambda: tmp_path / "drums-cache")
     monkeypatch.setattr(stems, "cache_dir", lambda: tmp_path / "stems-cache")  # (and its songs' parts)
     monkeypatch.setenv("RS_KEYLIGHTS_DRUMS_TOOLS", str(tmp_path / "drums-tools"))
+    monkeypatch.setenv("RS_KEYLIGHTS_ROFORMER_TOOLS", str(tmp_path / "roformer-tools"))  # (BS-RoFormer SW's too)
 
 
 from rs_keylights import gui as gui_module  # noqa: E402

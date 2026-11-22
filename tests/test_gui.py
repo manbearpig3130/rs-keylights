@@ -1690,14 +1690,17 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
     from rs_keylights import gui as gui_module, stems
     gui, sid = server.gui, first_song(server)
     song = call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]
-    assert song["stems"] == {"made": False, "making": False, "progress": None, "waiting": False, "error": None,
-                             "can": False, "names": list(stems.STEMS)}
-    made = []
-    monkeypatch.setattr(stems, "make", lambda ref, game, progress: made.append(ref) or progress(1.0))
-    monkeypatch.setattr(stems, "made", lambda ref, cache=None: bool(made))
+    assert song["stems"] == {"made": False, "made_by": [], "by": None, "separator": "roformer", "making": False,
+                             "making_by": None, "progress": None, "waiting": False, "error": None, "can": False,
+                             "can_by": {"roformer": False, "demucs": False}, "names": list(stems.STEMS),
+                             "separators": [{"id": "roformer", "name": "BS-RoFormer SW"},
+                                            {"id": "demucs", "name": "Demucs"}]}
+    made, loaded = [], []  # (the separators it's split by; whose parts are read)
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator: made.append(separator) or progress(1.0))
+    monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator in made)
     mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
-    monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None: {s: samples // 6 for s in stems.STEMS}
-                        if made else None)
+    monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None, separator="demucs": loaded.append(separator)
+                        or {s: samples // 6 for s in stems.STEMS} if separator in made else None)
     monkeypatch.setattr(gui_module, "song_samples", lambda ref, game: (mix, 44100))
 
     class Stream:
@@ -1717,9 +1720,21 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
     call(server, "/api/play/options", {"audio": True})
     call(server, "/api/play", {"song": sid, "start": 1.0})
     assert wait_for(lambda: gui._song_audio, bool) and "song" in gui._song_audio.weights  # (whole: not split yet)
-    info = call(server, "/api/stems", {"song": sid, "make": True})[1]
+    info = call(server, "/api/stems", {"song": sid, "make": True, "separator": "demucs"})[1]
     assert wait_for(lambda: made and gui._song_audio and "drums" in gui._song_audio.weights, bool)  # (split: at once)
-    assert call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["stems"]["made"]
+    shown = call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["stems"]
+    assert shown["made"] and shown["made_by"] == ["demucs"] and shown["by"] == "demucs"  # (BS-RoFormer's not made:
+    # Demucs' play)
+    assert made == ["demucs"] and loaded[-1] == "demucs"
+    call(server, "/api/stems", {"song": sid, "make": True})  # (by the one chosen: BS-RoFormer SW)
+    assert wait_for(lambda: loaded and loaded[-1] == "roformer", bool)  # (its parts play at once)
+    shown = call(server, f"/api/song?id={urllib.request.quote(sid)}")[1]["stems"]
+    assert shown["made_by"] == ["roformer", "demucs"] and shown["by"] == "roformer"
+    call(server, "/api/play/options", {"separator": "demucs"})  # (the other chosen: its parts play)
+    assert wait_for(lambda: loaded[-1] == "demucs", bool)
+    assert call(server, "/api/play/options", {"separator": "spleeter"})[0] == 400
+    assert call(server, "/api/stems", {"song": sid, "make": True, "separator": "spleeter"})[0] == 400
+    assert wait_for(lambda: gui._song_audio and "drums" in gui._song_audio.weights, bool)
     audio = gui._song_audio
 
     def level(stem):  # (a part as it's heard: the song mixed at other's level, each part at its own less that)
@@ -1790,7 +1805,7 @@ def test_songs_are_split_one_at_a_time_the_others_waiting_their_turn(server, mon
     first, second = [s["id"] for s in call(server, "/api/library")[1]["songs"]][:2]
     go, started = threading.Event(), []
 
-    def make(ref, game, progress):  # (a split taking a while: until it's let go)
+    def make(ref, game, progress, separator):  # (a split taking a while: until it's let go)
         started.append(ref)
         assert go.wait(5)
 
