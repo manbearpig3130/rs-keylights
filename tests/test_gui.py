@@ -1487,7 +1487,7 @@ def test_a_songs_drum_part_plays_along_on_the_drum_channel_and_making_one_says_w
     gui = server.gui
     _, song = call(server, f"/api/song?id={urllib.request.quote(sid)}")
     assert song["drums"] == {"play": False, "volume": 100, "made": False, "hits": 0, "making": None, "progress": None, "error": None,
-                             "tools": False}
+                             "tools": False, "kit": gui.settings["drum_set"]}
     ref = gui._load(sid)[0][0]
     drums.keep(ref, [drums.Hit(1.5, drums.KICK, 110), drums.Hit(1.75, drums.SNARE, 90)])
     status, info = call(server, "/api/drums", {"song": sid, "play": True, "volume": 90})
@@ -2156,3 +2156,23 @@ def test_following_a_parts_lit_keys_changed_go_at_once_in_the_player_playing(ser
     assert follower._player is player and [lit for _l, lit, _r in player._shown[:2]] == [True, True]
     assert [p.part.lights for p in follower.planned] == [4, 2]
     call(server, "/api/stop", {})
+
+
+def test_stop_goes_back_to_the_songs_start_and_the_page_hears_how_far_things_being_made_are(server):
+    from rs_keylights.tones import DRUM_SETS
+    gui, sid = server.gui, first_song(server)
+    call(server, "/api/play/options", {"song": sid})
+    call(server, "/api/song/settings", {"song": sid, "start": 30})  # (a start set before)
+    call(server, "/api/play", {"song": sid})
+    assert gui.remote_stop() == "stopped" and gui.song(sid)["start"] == 0  # (back to the start: plays from there)
+    call(server, "/api/song/settings", {"song": sid, "start": 12})
+    assert gui.remote_stop() == "back to the start" and gui.song(sid)["start"] == 0  # (stopped already: just that)
+    gui._splitting[sid] = {"making": True, "progress": 0.42}
+    gui._making[sid] = {"step": "transcribing them", "progress": 0.5}
+    assert call(server, "/api/state")[1]["making"] == {"stems": {sid: 0.42}, "drums": {sid: 0.5}}
+    gui._splitting.clear()
+    gui._making.clear()
+    version = gui.play_version
+    kit = next(program for _name, program in DRUM_SETS if program != gui.settings["drum_set"])
+    gui.set_drums({"song": sid, "kit": kit})  # (the Launchkey's knob: every page shows it)
+    assert gui.play_version > version and gui.drums_info(sid)["kit"] == kit

@@ -945,7 +945,7 @@ class Gui:
         making = self._making.get(sid, {})
         return {**self._drum_settings(sid), "made": hits is not None, "hits": len(hits) if hits else 0,
                 "making": making.get("step"), "progress": making.get("progress") if making.get("step") else None,
-                "error": making.get("error"), "tools": drums.setup_done()}
+                "error": making.get("error"), "tools": drums.setup_done(), "kit": int(self.settings["drum_set"])}
 
     def _with_drums(self, sid: str, arrangements: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """A remote's arrangements of a song, with its drum part as one more: after them, in DRUMS_PLACE_MOST at
@@ -1007,6 +1007,8 @@ class Gui:
             with self._lock:
                 changed = kit != self.settings["drum_set"]
                 self.settings["drum_set"] = kit
+                if changed:
+                    self.play_version += 1  # (every page shows it: the Launchkey's knob, the page's)
             if changed:
                 self._save()
                 self._drums_on(sid)
@@ -3448,12 +3450,18 @@ class Gui:
         return said.keys
 
     def remote_stop(self) -> str:
-        """A remote's Stop: the song playing stops (following goes on: it has its own pad)."""
+        """A remote's Stop: the song playing stops, and goes back to its start (it plays from there next: as a stop
+        button does; a start set before, gone); stopped already, just that. (Following goes on: it has its own pad.)"""
         with self._lock:
-            if isinstance(self._session, Playback) and self._session.running:
+            stopped = isinstance(self._session, Playback) and self._session.running
+            if stopped:
+                sid = self._playing["id"] if self._playing else self.play_options.get("song")
                 self._stop()
-                return "stopped"
-        return "nothing playing"
+            else:
+                sid = self.play_options.get("song")
+            if sid and self.song_settings.get(sid, {}).get("start"):
+                self.set_song({"song": sid, "start": 0})
+        return "stopped" if stopped else "back to the start" if sid else "nothing playing"
 
     def toggle_follow(self) -> bool:
         """A remote's follow button: following the game, or stopping; whether it's following now."""
@@ -3991,7 +3999,13 @@ class Gui:
                                    "warmup": {**self._warmup.info(), "run": self._warmup_run,
                                               "hearing": self._warmup_heard()}
                                    if self._warmup is not None else None,
-                                   "launchkey": self._watch.status if self._watch is not None else None}
+                                   "launchkey": self._watch.status if self._watch is not None else None,
+                                   "making": {"stems": {sid: making.get("progress") or 0.0
+                                                        for sid, making in list(self._splitting.items())
+                                                        if making.get("making")},
+                                              "drums": {sid: making.get("progress") or 0.0
+                                                        for sid, making in list(self._making.items())
+                                                        if making.get("step")}}}
             if isinstance(session, Playback):
                 if not session.running:
                     self._session = None

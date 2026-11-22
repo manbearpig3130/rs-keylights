@@ -2315,3 +2315,27 @@ def test_following_a_split_song_whose_parts_play_in_the_game_the_stems_page_has_
     volumes = [100 - 5 * watch_module.STEM_STEP, 100, 100, 100, 100, 100, 73]
     quiet = [False, False, False, True, False, False, False]
     assert shown == mixer_picture(names, volumes, 6, muted=False, quiet=quiet, tops=[100] * 7, divider=6).data()
+
+
+def test_play_and_stop_leave_the_mixer_up_and_stop_drops_a_move_not_made_yet():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    watch.step()
+    launchkey.queued = [Button(105)]  # Func: the mixer, kept up
+    clock.now = 0.5
+    watch.step()
+    assert watch._picture_of == "mixer"
+    launchkey.queued = [Button(PLAY)]  # (paused or going on: the mixer stays)
+    clock.now = 1.0
+    watch.step()
+    assert gui.plays and watch._picture_of == "mixer" and watch.mix_knobs
+    launchkey.queued = [Button(105)]  # (closed)
+    clock.now = 1.5
+    watch.step()
+    watch._moving_to, watch._turned_at = 90.0, clock.now  # (knob 3 turned a moment ago: not made yet)
+    launchkey.queued = [Button(RECORD)]
+    clock.now = 1.6
+    watch.step()
+    clock.now = 5.0
+    watch.step()
+    assert gui.stopped == 1 and watch._moving_to is None and 90.0 not in gui.seeks  # (back to the start, not there)

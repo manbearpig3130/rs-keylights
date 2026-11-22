@@ -1675,7 +1675,8 @@ function renderDrumsCard(s) {
       });
     }
   }
-  const wanted = `${s.id}|${s.drums ? s.drums.hits : 0}|${drumsOutputs}`;
+  const wanted = `${s.id}|${s.drums ? s.drums.hits : 0}|${s.drums ? s.drums.kit : ""}|${drumsOutputs}`;  // (its kit:
+  // the Launchkey's knob turns it too)
   if (drumsWanted === wanted) return;
   drumsWanted = wanted;
   api(`/api/drums/part?id=${encodeURIComponent(s.id)}`).then((d) => {
@@ -3692,7 +3693,7 @@ function drumsBlock(s) {
   if (d.making) {  // (how far it is: the separating as it goes, the rest reckoned)
     const done = Math.round((d.progress || 0) * 100);
     const making = document.createElement("div");
-    making.className = "making muted small";
+    making.className = "making drums-making muted small";
     making.innerHTML = `<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${done}">` +
       `<span style="width: ${done}%"></span></div><output>${done}%</output>`;
     block.append(making);
@@ -4087,6 +4088,21 @@ function showState(st) {
   if (followStale(st)) {
     followBusy = true;
     loadFollow().catch(() => {}).finally(() => { followBusy = false; });
+  }
+  // How far a split or a drum part being made is: its bar moved as it goes (the song's own refresh shows it start
+  // and end)
+  const making = st.making || {stems: {}, drums: {}};
+  if (selected && making.stems[selected.id] != null) {
+    const done = Math.round(making.stems[selected.id] * 100);
+    $("audioProgress").querySelector("span").style.width = `${done}%`;
+    $("audioProgress").querySelector("output").textContent = `${done}%`;
+  }
+  if (selected && making.drums[selected.id] != null) {
+    const done = Math.round(making.drums[selected.id] * 100);
+    for (const bar of document.querySelectorAll(".drums-making")) {
+      bar.querySelector("span").style.width = `${done}%`;
+      bar.querySelector("output").textContent = `${done}%`;
+    }
   }
   if (playOptions && st.play_version !== songShown && !songBusy) {
     songShown = st.play_version;

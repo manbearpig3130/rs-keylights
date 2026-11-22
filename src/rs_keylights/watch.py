@@ -1107,6 +1107,7 @@ class Watch:
                                                   event.number == TRACK_BUTTONS[0] and info.get("mode") == "follow")
         # (Rocksmith's keys, or said to be: the mixer stays up; Record, as ever, closes it)
         said = isinstance(event, Pad) and event.row == 1 or game_key
+        said = said or isinstance(event, Button) and event.number == PLAY  # (play or pause: the mixer stays up too)
         if self.mix_knobs and not mixing and not said:  # something else done: the knobs back on the tones (lit
             # keys, keys lighting first and following are said over it; Rocksmith's keys go to the game)
             self._close_mixer()
@@ -1301,9 +1302,10 @@ class Watch:
 
     def _button(self, number: int, song: dict[str, Any] | None, now: float) -> None:
         following = (self._info or {}).get("mode") == "follow"
-        if number == PLAY:  # the song's picture shows it playing or paused
+        if number == PLAY:  # the song's picture shows it playing or paused (the mixer kept up: it stays)
             self.gui.remote_play()
-            self._back_to_the_song()
+            if not (self.mix_knobs and self._mixer_kept):
+                self._back_to_the_song()
         elif number == RECORD and self._pedal_shown(now):  # the pedal's preset kept for the tone playing (its
             # song's own; on it already: back to automatic)
             pedal = (self._info or {}).get("pedal") or {}
@@ -1320,8 +1322,10 @@ class Watch:
             self._lyrics_go(now)
         elif number == RECORD:  # the song the pitch strip is on switched to; on the song already, it stops
             if self._browsed is None or (song is not None and self._browsed == song["id"]):
+                self._moving_to = None  # (a move not made yet: not made, after it's stopped: back to the start)
                 self.gui.remote_stop()
-                self._back_to_the_song()
+                if not (self.mix_knobs and self._mixer_kept):
+                    self._back_to_the_song()
             elif self.gui.browse_select() is not None:  # (the screen shows it)
                 self._browse_until = 0.0
                 self._say(now, line="Switched to this song")
