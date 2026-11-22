@@ -97,13 +97,14 @@ def can_make(tools: Path | None = None, separator: str = DEMUCS) -> bool:
 
 def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_home: Path | None = None,
          cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None,
-         separator: str = DEMUCS) -> None:
+         separator: str = DEMUCS, server: dict[str, str] | None = None) -> None:
     """A song's parts made by a separator and kept, how far along going to progress (0 to 1). Demucs: about 35 s for 4
-    minutes of song (a separator built before separate-all, three times that); BS-RoFormer SW, about the song's own
-    length. (tools: the separator's; stems_home: Song Stems' model, Demucs'.)"""
+    minutes of song (a separator built before separate-all, three times that); BS-RoFormer SW, a little longer than
+    the song here, or on a split server (server: {"url", "key"}), many times quicker. (tools: the separator's;
+    stems_home: Song Stems' model, Demucs'.)"""
     if separator == ROFORMER:
         from . import roformer
-        roformer.make(ref, game_dir, tools=tools, cache=cache, progress=progress)
+        roformer.make(ref, game_dir, tools=tools, cache=cache, progress=progress, server=server)
         return
     import numpy as np
     tools = tools or drums.tools_dir()

@@ -595,6 +595,16 @@ with the **separator** chosen beside it:
   run `tools/drums-setup.sh` again).
 
 A song can have both; the chosen separator's parts play (✓ beside a separator: its parts are made), else the other's.
+
+**Split on another computer.** BS-RoFormer SW runs many times quicker on a PC's NVIDIA GPU. Copy
+`tools/rs-keylights-split-server.py` to it and run it there (`python3 rs-keylights-split-server.py`). Read it first:
+the first time, it sets itself up in its own folder (`~/.local/share/rs-keylights-split`: its own Python with PyTorch
+for CUDA, the model's code and the model, about 5 GB, nothing system-wide, no root), checks the model runs on the GPU
+(printing how long a 10-minute song will take), then prints its address and a key. Put those in the Song's audio
+card's **Split on another computer**. Songs split with BS-RoFormer SW are then sent to it (about 60 MB up for 10
+minutes of song, its parts back as lossless FLAC); if it doesn't answer, they're split on the Mac instead (if
+`tools/roformer-setup.sh` has been run). It listens on your network on port 8042, answering only requests with its
+key. Its model is let go of 10 minutes after the last song, so the GPU's memory is free for games.
 The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
 and mute, the same for every song. This needs the `drums` and `listen` extras and `tools/drums-setup.sh`.

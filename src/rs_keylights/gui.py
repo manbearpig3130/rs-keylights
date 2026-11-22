@@ -36,7 +36,7 @@ from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, V
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import gamestems, stems, warmup
+from . import gamestems, splitserver, stems, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -344,6 +344,7 @@ SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is look
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
 WARMUP_LOG = "warmups.jsonl"  # the warm-up's progress log, beside the settings: a line a drill played
 PROGRESS_DAYS = 30  # the days of it shown
+SERVER_SEEN_FOR = 30.0  # seconds what a split server said is shown before it's asked again
 AUDIO_KEPT_FOR = 60.0  # seconds the last song's audio stays decoded once it's stopped (split: half a GB or more)
 DRUM_HIT_LENGTH = 0.15  # seconds a drum struck on the page sounds (its sound decays by itself)
 DRUMS_PLACE_MOST = 4  # for a remote, a song's drum part is an arrangement after its own, in this place at most (its
@@ -600,7 +601,11 @@ class Gui:
                                          "warmup_ladder": True,  # (faster as you get it right: heard)
                                          "warmup_what": "routine",  # (the warm-up's drills, or one on its own)
                                          "warmup_tuning": warmup.TUNINGS[0][0],
-                                         "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None}}
+                                         "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
+                                         "split_server": None}  # (another computer splitting songs with
+        # BS-RoFormer SW, tools/rs-keylights-split-server.py: {"url", "key"})
+        self._server_seen: tuple[float, dict[str, Any]] | None = None  # (it, as last asked: when, and what it said)
+        self._server_asking = False
         self._warmup_log_lock = threading.Lock()  # (the progress log: a drill's line at a time)
         self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
         self.follow_version = 0  # changes with them, so pages know to show them again
@@ -656,6 +661,8 @@ class Gui:
                     self.play_options["song"] = self._found_id(kept)
                     moved |= kept_id(self.play_options["song"], index.game_dir) != kept
             self.settings.update({k: saved[k] for k in self.settings if k in saved})
+            if not _split_server_ok(self.settings["split_server"]):
+                self.settings["split_server"] = None
             try:
                 self.settings["volumes"] = _volumes(self.settings["volumes"])
                 self.settings["keys_volume"] = int(_number(self.settings["keys_volume"], "volume", 0, 127))
@@ -1767,12 +1774,83 @@ class Gui:
         making = self._splitting.get(sid, {})
         split = stems.split_with(ref)
         chosen = self.play_options["separator"]
+        can = {s: stems.can_make(separator=s) or (s == stems.ROFORMER and self.settings["split_server"] is not None)
+               for s in stems.SEPARATORS}  # (BS-RoFormer SW: here, or on a split server)
         return {"made": bool(split), "made_by": split, "by": self._parts_by(ref), "separator": chosen,
                 "making": bool(making.get("making")), "making_by": making.get("separator"),
                 "progress": making.get("progress"), "waiting": bool(making.get("making") and making.get("waiting")),
-                "error": making.get("error"), "can": stems.can_make(separator=chosen),
-                "can_by": {s: stems.can_make(separator=s) for s in stems.SEPARATORS}, "names": list(stems.STEMS),
-                "separators": [{"id": s, "name": stems.SEPARATOR_NAMES[s]} for s in stems.SEPARATORS]}
+                "error": making.get("error"), "can": can[chosen], "can_by": can, "names": list(stems.STEMS),
+                "separators": [{"id": s, "name": stems.SEPARATOR_NAMES[s]} for s in stems.SEPARATORS],
+                "server": self.split_server_info()}
+
+    # A split server: BS-RoFormer SW on another computer's NVIDIA GPU (splitserver)
+
+    def split_server_info(self) -> dict[str, Any] | None:
+        """The split server set (None: none): its address, whether it answers ("ok": None while it's first asked),
+        what it runs on and how many songs it has waiting, or why not. Asked again in the background once what it
+        said is SERVER_SEEN_FOR old (a page asking never waits for it)."""
+        server = self.settings["split_server"]
+        if server is None:
+            return None
+        seen = self._server_seen
+        if seen is None or seen[1].get("url") != server["url"] or time.monotonic() - seen[0] > SERVER_SEEN_FOR:
+            with self._lock:
+                start, self._server_asking = not self._server_asking, True
+            if start:
+                threading.Thread(target=self._ask_split_server, name="rs-keylights split server", daemon=True).start()
+        if seen is None or seen[1].get("url") != server["url"]:
+            return {"url": server["url"], "ok": None, "device": None, "waiting": 0, "error": None}
+        return dict(seen[1])
+
+    def _ask_split_server(self) -> dict[str, Any]:
+        server = self.settings["split_server"]
+        info: dict[str, Any] = {"url": server["url"] if server else None, "ok": False, "device": None, "waiting": 0,
+                                "error": None}
+        try:
+            if server is not None:
+                said = splitserver.status(server["url"], server["key"])
+                info.update(ok=True, device=said.get("device"), waiting=int(said.get("waiting") or 0))
+        except splitserver.SplitServerError as exc:
+            info["error"] = str(exc)
+        finally:
+            self._server_asking = False
+        seen, self._server_seen = self._server_seen, (time.monotonic(), info)
+        if seen is None or {k: seen[1].get(k) for k in ("url", "ok", "device", "waiting")} != \
+                {k: info.get(k) for k in ("url", "ok", "device", "waiting")}:
+            with self._lock:
+                self.play_version += 1  # (pages show it again)
+        return info
+
+    def set_split_server(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The split server to split songs with BS-RoFormer SW on ("url": its address, as it prints it, or just the
+        computer's name; empty: none, here again; "key": the key it prints, kept if not given again), kept, and asked
+        at once: what it said."""
+        url = str(body.get("url") or "").strip()
+        if not url:
+            server = None
+        else:
+            if "://" not in url:
+                url = "http://" + url
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                raise GuiError("Expected the split server's address, as it prints it (http://name.local:8042)")
+            if parsed.port is None:
+                url = f"{parsed.scheme}://{parsed.hostname}:{splitserver.PORT}"
+            else:
+                url = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+            kept = self.settings["split_server"] or {}
+            key = str(body.get("key") or "").strip() or kept.get("key", "")
+            if not key:
+                raise GuiError("Expected its key too (it prints it as it starts)")
+            server = {"url": url, "key": key}
+        self.settings["split_server"] = self._kept["split_server"] = server
+        self._save()
+        with self._lock:
+            self.play_version += 1
+        if self.settings["split_server"] is None:
+            self._server_seen = None
+            return {"server": None}
+        return {"server": self._ask_split_server()}
 
     def audio_info(self, sid: str | None) -> dict[str, Any]:
         """The song's own audio, for a remote (the Launchkey's stem mixer): on or off, its volume, its parts' volumes
@@ -1829,7 +1907,8 @@ class Gui:
                 self._splitting[sid] = {**self._splitting.get(sid, {}), "progress": round(done, 3)}
 
             try:
-                stems.make(ref, self.index.game_dir, progress=far, separator=separator)
+                server = self.settings["split_server"] if separator == stems.ROFORMER else None
+                stems.make(ref, self.index.game_dir, progress=far, separator=separator, server=server)
                 self._splitting[sid] = {"making": False, "progress": None, "error": None}
             except Exception as exc:  # (the separator missing, or failing: said on the page)
                 self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}
@@ -4075,6 +4154,12 @@ def _pinch(value: Any) -> Tone | None:
     return _tone(value)
 
 
+def _split_server_ok(server: Any) -> bool:
+    """Whether a kept split server is one: None (none), or its address and key."""
+    return server is None or (isinstance(server, dict) and isinstance(server.get("url"), str) and
+                              isinstance(server.get("key"), str) and bool(server["url"] and server["key"]))
+
+
 def _stem_weights(options: dict[str, Any], parts: Any) -> dict[str, float]:
     """The song's parts' weights (0 to 1) from playing's options: their volumes (0 to 100; muted: 0), for those it
     has."""
@@ -4400,6 +4485,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/game/music": lambda: gui.set_game_music(body),
             "/api/drums": lambda: gui.set_drums(body),
             "/api/stems": lambda: gui.set_stems(body),
+            "/api/stems/server": lambda: gui.set_split_server(body),
             "/api/game-stems": lambda: gui.set_game_stems(body),
             "/api/drums/hit": lambda: gui.hit_drum(body),
             "/api/warmup": lambda: gui.set_warmup(body),

@@ -155,7 +155,9 @@
   .audio-grid .audio-wide { grid-column: 2 / span 3; min-width: 0; }
   .audio-grid label { font-size: 13px; color: var(--muted); }
   .audio-parts-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; }
-  #audioPartsNote { flex: 1 1 200px; }
+  #audioPartsNote, #splitServerNote { flex: 1 1 200px; }
+  .split-server { margin-top: 12px; }
+  .split-server summary { cursor: pointer; color: var(--muted); }
   #audioOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
@@ -543,6 +545,21 @@
     <div id="audioProgress" class="making muted small" hidden><div class="bar" role="progressbar" aria-valuemin="0"
       aria-valuemax="100"><span></span></div><output></output></div>
     <div id="audioStems" class="audio-grid"></div>
+    <details id="splitServer" class="split-server">
+      <summary class="small"></summary>
+      <p class="small muted">BS-RoFormer SW on another computer's NVIDIA GPU, many times quicker than on the Mac: run
+        <code>tools/rs-keylights-split-server.py</code> there (it sets itself up the first time), then the address and
+        key it prints here. Not answering, songs split here instead.</p>
+      <div class="audio-grid">
+        <label for="splitServerUrl">Address</label>
+        <input id="splitServerUrl" class="audio-wide" placeholder="http://my-pc.local:8042" autocomplete="off">
+        <label for="splitServerKey">Key</label>
+        <input id="splitServerKey" class="audio-wide" type="password" autocomplete="off">
+      </div>
+      <div class="audio-parts-head"><span id="splitServerNote" class="small muted"></span>
+        <button type="button" id="splitServerForget">Forget it</button>
+        <button type="button" id="splitServerSave">Save and check</button></div>
+    </details>
   </section>
 
   <section id="lyricsCard" class="card" hidden>
@@ -3436,13 +3453,23 @@ function renderAudioCard(s) {
     chosen === "roformer" ? "To split songs with BS-RoFormer SW, run tools/roformer-setup.sh in rs-keylights' folder." :
     "To split songs into parts, run tools/drums-setup.sh again (it now takes out the vocals and keys too).";
   if (d.error) $("audioPartsNote").textContent = `Couldn't split it: ${d.error}`;
+  const server = d.server, there = server && server.ok;  // (a split server: BS-RoFormer SW there, if it answers)
   const separator = $("audioSeparator");
   separator.replaceChildren(...(d.separators || []).map((x) => {
     const option = document.createElement("option");
     option.value = x.id;
-    option.textContent = x.name + (madeBy.includes(x.id) ? " ✓" : "");  // (✓: its parts made)
+    option.textContent = x.name + (x.id === "roformer" && there ? " (on the PC)" : "") +
+      (madeBy.includes(x.id) ? " ✓" : "");  // (✓: its parts made)
     return option;
   }));
+  $("splitServer").querySelector("summary").textContent = !server ? "Split on another computer…" :
+    server.ok === null ? `Split on ${server.url}: asking it…` :
+    server.ok ? `Split on ${server.url}: ${server.device}` + (server.waiting ? `, ${server.waiting} waiting` : "") :
+    `Split on ${server.url}: not answering, so here`;
+  $("splitServerNote").textContent = server && server.error ? server.error : "";
+  $("splitServerForget").hidden = !server;
+  if (document.activeElement !== $("splitServerUrl")) $("splitServerUrl").value = server ? server.url : "";
+  $("splitServerKey").placeholder = server ? "(kept: another to change it)" : "the key it prints";
   separator.value = chosen;
   separator.disabled = d.making;
   const split = $("audioSplit");
@@ -3451,6 +3478,7 @@ function renderAudioCard(s) {
   split.title = !d.can ? (chosen === "roformer" ?
       "BS-RoFormer SW isn't set up: run tools/roformer-setup.sh in rs-keylights' folder" :
       "The separator needs rebuilding: run tools/drums-setup.sh in rs-keylights' folder") :
+    chosen === "roformer" && there ? `Split it with BS-RoFormer SW on ${server.url}: the cleanest parts, quickly` :
     chosen === "roformer" ? "Split it with BS-RoFormer SW: the cleanest parts, in a little longer than the song " +
       "itself (the Mac's GPU, in the background)" :
     "Split it with Demucs: quick (a minute or two), its parts rougher";
@@ -3505,6 +3533,21 @@ $("audioSplit").addEventListener("click", () => act(async () => {
     renderSong();
   }
 }));
+async function setSplitServer(change) {  // (then the song again: what the server said, in its card)
+  const said = await api("/api/stems/server", change);
+  $("splitServerKey").value = "";
+  const sid = selected && selected.id;
+  const again = sid ? await api(`/api/song?id=${encodeURIComponent(sid)}`) : null;
+  if (again && selected && selected.id === sid) {
+    selected = again;
+    renderSong();
+  }
+  $("splitServerNote").textContent = said.server && !said.server.ok ? said.server.error || "" :
+    said.server ? `It answers: ${said.server.device}` : "";
+}
+$("splitServerSave").addEventListener("click", () => act(() =>
+  setSplitServer({url: $("splitServerUrl").value, key: $("splitServerKey").value})));
+$("splitServerForget").addEventListener("click", () => act(() => setSplitServer({url: ""})));
 $("audioSeparator").addEventListener("change", () => act(async () => {  // (and whose parts play, if made)
   loadPlayOptions(await api("/api/play/options", {separator: $("audioSeparator").value}));
   const sid = selected && selected.id;

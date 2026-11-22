@@ -229,7 +229,8 @@ def test_settings_are_kept(server, tmp_path):
                                                  "vibrato": "always"}, "drum_set": 0, "warmup_speeds": {},
                                                  "warmup_shown": True, "warmup_ladder": True, "warmup_what": "routine",
                                                  "warmup_tuning": "E standard",
-                                                 "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None}}
+                                                 "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
+                                                 "split_server": None}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
@@ -1694,9 +1695,10 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
                              "making_by": None, "progress": None, "waiting": False, "error": None, "can": False,
                              "can_by": {"roformer": False, "demucs": False}, "names": list(stems.STEMS),
                              "separators": [{"id": "roformer", "name": "BS-RoFormer SW"},
-                                            {"id": "demucs", "name": "Demucs"}]}
+                                            {"id": "demucs", "name": "Demucs"}], "server": None}
     made, loaded = [], []  # (the separators it's split by; whose parts are read)
-    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator: made.append(separator) or progress(1.0))
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None: made.append(separator)
+                        or progress(1.0))
     monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator in made)
     mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
     monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None, separator="demucs": loaded.append(separator)
@@ -1805,7 +1807,7 @@ def test_songs_are_split_one_at_a_time_the_others_waiting_their_turn(server, mon
     first, second = [s["id"] for s in call(server, "/api/library")[1]["songs"]][:2]
     go, started = threading.Event(), []
 
-    def make(ref, game, progress, separator):  # (a split taking a while: until it's let go)
+    def make(ref, game, progress, separator, server=None):  # (a split taking a while: until it's let go)
         started.append(ref)
         assert go.wait(5)
 
