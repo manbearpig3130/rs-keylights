@@ -30,6 +30,26 @@
   header .timeline select { padding: 3px 4px; }
   #status.on { color: var(--text); font-weight: 600; }
   button { font: inherit; border: 1px solid var(--line); background: var(--input); color: var(--text); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  /* Sliders and checkboxes drawn here, in the page's colours: macOS greys its own out while the window's behind
+     another (the page's aren't). A slider's filled part as far as its value (--fill: fillRange) */
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 18px; padding: 0; border: 0; border-radius: 0;
+    background: transparent; cursor: pointer; --fill: 50%; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, var(--accent) var(--fill), var(--line) var(--fill)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+    margin-top: -5px; border-radius: 50%; background: var(--white-key); border: 1px solid var(--muted);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 25%); }
+  input[type=range]:focus-visible { outline: none; }
+  input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 45%, transparent); }
+  input[type=range]:disabled { opacity: .45; cursor: default; }
+  input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; padding: 0; margin: 0 3px 0 0;
+    border: 1px solid var(--muted); border-radius: 4px; background: var(--input); vertical-align: -2px; cursor: pointer;
+    display: inline-grid; place-content: center; flex: none; }
+  input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; width: 8px; height: 4px; margin-top: -2px;
+    border-left: 2px solid var(--accent-text); border-bottom: 2px solid var(--accent-text); transform: rotate(-45deg); }
+  input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+  input[type=checkbox]:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .45; cursor: default; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
@@ -165,7 +185,7 @@
   .part-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
   .part-lit, .part-volume { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .part-volume { min-width: 0; }
-  .part-volume input { width: 110px; min-width: 50px; flex: 0 1 110px; accent-color: var(--accent); }
+  .part-volume input { width: 110px; min-width: 50px; flex: 0 1 110px; }
   .part-volume output { min-width: 3em; font-variant-numeric: tabular-nums; }
   .part-mute { padding: 1px 6px; }
   .part-mute.on { background: var(--accent); border-color: var(--accent); }
@@ -190,9 +210,10 @@
   .audio-grid input[type=range] { width: 100%; }
   .audio-grid .audio-wide { grid-column: 2 / span 3; min-width: 0; }
   .audio-grid label { font-size: 13px; color: var(--muted); }
-  /* The Song Audio card's top: its title, then its volume, where it plays and 🎵 (they go under it, too narrow) */
-  #audioCard .fret-head .part-volume { flex: 0 1 auto; }
-  #audioDevice { flex: 0 1 190px; min-width: 90px; margin-left: auto; }  /* (under it: on the right still) */
+  /* The Song Audio card's volume and its parts': rows lined up (their names' column the same width), and where it
+     plays by Split into parts, in the split section's summary */
+  .audio-grid.audio-levels { grid-template-columns: 4.2em minmax(0, 1fr) 3.5em 2.5em; }
+  #audioDevice { flex: 0 1 170px; min-width: 90px; font-size: 13px; }
   .audio-parts-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; }
   #audioPartsNote, #splitServerNote { flex: 1 1 200px; }
   .split-server { margin-top: 12px; }
@@ -215,7 +236,7 @@
   .part-tones .tonebox .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; }
   .timeline { display: flex; gap: 10px; align-items: center; margin: 12px 0 4px; }
-  .timeline input[type=range] { flex: 1; accent-color: var(--accent); }
+  .timeline input[type=range] { flex: 1; }
   .time { font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
   #startat { width: 70px; }
   .note { padding: 6px 9px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); margin: 8px 0; }
@@ -592,21 +613,24 @@
   <section id="audioCard" class="card" hidden>
     <div class="fret-head">
       <h3>Song Audio</h3>
-      <span class="part-volume" title="Its volume">
-        <input type="range" id="audioVolume" min="0" max="100" aria-label="The song's audio volume">
-        <output id="audioVolumeShown"></output></span>
-      <select id="audioDevice" aria-label="Output device"
-        title="Where it plays: Default output is macOS's own (as the Sound settings have it)"></select>
       <button type="button" id="audioOn" title="The song's own audio, from the Mac, with the song you play">🎵</button>
+    </div>
+    <div class="audio-grid audio-levels">
+      <label for="audioVolume">Volume</label>
+      <input type="range" id="audioVolume" min="0" max="100" title="The song's audio's volume">
+      <output id="audioVolumeShown"></output><span></span>
     </div>
     <div class="audio-parts-head" hidden>
       <span id="audioPartsNote" class="small muted"></span>
     </div>
     <div id="audioProgress" class="making muted small" hidden><div class="bar" role="progressbar" aria-valuemin="0"
       aria-valuemax="100"><span></span></div><output></output></div>
-    <div id="audioStems" class="audio-grid"></div>
+    <div id="audioStems" class="audio-grid audio-levels"></div>
     <details id="splitServer" class="split-server">
-      <summary class="small"><span id="splitServerSaid"></span><button type="button" id="audioSplit"></button></summary>
+      <summary class="small"><span id="splitServerSaid"></span>
+        <select id="audioDevice" aria-label="Output device"
+          title="Where it plays: Default output is macOS's own (as the Sound settings have it)"></select>
+        <button type="button" id="audioSplit"></button></summary>
       <div class="audio-grid">
         <label for="audioSeparator">Separator</label>
         <select id="audioSeparator" class="audio-wide" title="Which separator splits songs into parts (and whose parts play)"></select>
@@ -932,6 +956,29 @@ const store = {
   get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private window */ } },
 };
+
+// A slider's filled part, as far as its value goes (its track's --fill): as it's dragged, and however its value's
+// set (the value setter of every input, for sliders); new ones as they're added
+function fillRange(el) {
+  const min = Number(el.min) || 0, max = el.max === "" ? 100 : Number(el.max), value = Number(el.value);
+  el.style.setProperty("--fill", `${max > min ? ((value - min) / (max - min)) * 100 : 0}%`);
+}
+{
+  const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  Object.defineProperty(HTMLInputElement.prototype, "value", {
+    configurable: true, enumerable: own.enumerable, get() { return own.get.call(this); },
+    set(v) { own.set.call(this, v); if (this.type === "range") fillRange(this); },
+  });
+  document.addEventListener("input", (e) => { if (e.target.type === "range") fillRange(e.target); }, true);
+  const fillAll = (root) => {
+    if (root.nodeType !== 1) return;
+    if (root.matches('input[type="range"]')) fillRange(root);
+    for (const el of root.querySelectorAll('input[type="range"]')) fillRange(el);
+  };
+  new MutationObserver((changes) => { for (const c of changes) for (const n of c.addedNodes) fillAll(n); })
+    .observe(document.documentElement, {childList: true, subtree: true});
+  document.addEventListener("DOMContentLoaded", () => fillAll(document.body));
+}
 
 async function api(path, body) {
   const options = body === undefined ? {} :
@@ -3693,8 +3740,9 @@ async function exportSong(what) {
 // showOptions shows them), and its parts (stems): split from it (Split into parts: a minute or two, in the
 // background), then each at a volume of its own, a slider and a mute each (every song's: mute the band, keep the
 // vocals...). POST /api/stems
-const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys",
-                    other: "Other (ambience, effects…)"};
+const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys", other: "Other"};
+const STEM_TITLES = {other: "Everything else: ambience, effects, keys the separator didn't call keys, and what it left " +
+                     "of the rest (the song less the parts)"};
 let stemsPoll = null, audioShown = "";
 function renderAudioCard(s) {
   const card = $("audioCard");
@@ -3759,6 +3807,7 @@ function renderAudioCard(s) {
   for (const stem of d.made ? d.names : []) {
     const label = document.createElement("label");
     label.textContent = STEM_NAMES[stem] || stem;
+    if (STEM_TITLES[stem]) label.title = STEM_TITLES[stem];
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
@@ -4125,6 +4174,8 @@ $("audioBtn").addEventListener("click", () => changeOptions({audio: !(playOption
 $("audioVolume").addEventListener("input", () => { $("audioVolumeShown").textContent = `${$("audioVolume").value}%`; });
 $("audioVolume").addEventListener("change", () => changeOptions({audio_volume: Number($("audioVolume").value)}));
 $("audioDevice").addEventListener("change", () => changeOptions({audio_device: $("audioDevice").value || null}));
+$("audioDevice").addEventListener("click", (e) => e.preventDefault());  // (in its section's summary: it stays open
+// or shut)
 
 function checkLights() {
   const message = selected.parts.some((p) => p.play) ? "" : "Every part is muted: it plays on as you unmute them.";
