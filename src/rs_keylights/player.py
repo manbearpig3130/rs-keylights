@@ -104,8 +104,11 @@ class Player:
         # each track's part, by name (a song's arrangement's part, "drums"; None: none), for muting it; those muted
         self.names = tuple(names)[:len(self.tracks)] + (None,) * max(len(self.tracks) - len(names), 0)
         self._muted = self._named(muted)
-        self._displays: dict[tuple[Any, ...], tuple[list[KeyLight], list[float]]] = {}  # (the keys' timelines made,
-        # by the tracks lit and the timing: a part muted and back, or made before it's muted, prepare_mute)
+        self._displays: dict[tuple[Any, ...], tuple[list[KeyLight], list[float], tuple[Any, ...]]] = {}  # (the keys'
+        # timelines made, by the tracks lit, their lights and the timing: a part muted and back, or made before it's
+        # muted, prepare_mute; with the lights they're made of, kept, so a key never names another's)
+        self._shown: list[tuple[Sequence[Light], bool, int]] = [(t.lights, t.lit, t.priority) for t in self.tracks]
+        # (each track's keys: its lights, whether it lights them, its rank; another part's lit keys, relight)
         # the keyboard's channels no part sounds on: a note whose pitch moves borrows one (_borrowing), if the
         # keyboard can make one like a part's channel
         self.spare = tuple(spare) if callable(getattr(keys, "borrow", None)) else ()
@@ -128,25 +131,60 @@ class Player:
         """The tracks of the parts named."""
         return {ti for ti, name in enumerate(self.names) if name is not None and name in names}
 
-    def _display_for(self, muted: set[int]) -> tuple[list[KeyLight], list[float]]:
-        """The keys' timeline with these tracks muted (and when each key lights), made once for each (most of a
-        mute's time: tens of milliseconds)."""
-        lit = tuple(ti for ti, t in enumerate(self.tracks) if t.lit and ti not in muted)
-        key = (lit, self.rate, self.lead, self.min_period)
+    def _display_for(self, muted: set[int], shown: list[tuple[Sequence[Light], bool, int]] | None = None) -> \
+            tuple[list[KeyLight], list[float]]:
+        """The keys' timeline with these tracks muted, their keys as shown has them (and when each key lights), made
+        once for each (most of a mute's time: tens of milliseconds)."""
+        shown = self._shown if shown is None else shown
+        lit = tuple(ti for ti, (_lights, on, _rank) in enumerate(shown) if on and ti not in muted)
+        lights = tuple(shown[ti][0] for ti in lit)
+        key = (lit, tuple(id(each) for each in lights), tuple(shown[ti][2] for ti in lit), self.rate, self.lead,
+               self.min_period)
         got = self._displays.get(key)
-        if got is None:
-            display = merge_keys([self.tracks[ti].lights for ti in lit], self.rate, self.lead, self.min_period,
-                                 self.most_keys, [self.tracks[ti].priority for ti in lit])
-            got = (display, [k.on for k in display])
+        if got is None or any(a is not b for a, b in zip(got[2], lights)):
+            display = merge_keys(list(lights), self.rate, self.lead, self.min_period, self.most_keys,
+                                 [shown[ti][2] for ti in lit])
+            got = (display, [k.on for k in display], lights)
             if len(self._displays) >= 8:
                 self._displays.clear()
             self._displays[key] = got
-        return got
+        return got[0], got[1]
 
     def prepare_mute(self, names: Collection[str]) -> None:
         """What mute(names) needs made first, changing nothing (so it can be done without holding up the notes: the
         keys' timeline for it)."""
         self._display_for(self._named(names))
+
+    def _shown_with(self, tracks: dict[str, Track]) -> list[tuple[Sequence[Light], bool, int]]:
+        return [(tracks[name].lights, tracks[name].lit, tracks[name].priority) if name in tracks else was
+                for name, was in zip(self.names, self._shown)]
+
+    def prepare_relight(self, tracks: dict[str, Track]) -> None:
+        """What relight(tracks) needs made first, changing nothing (prepare_mute's)."""
+        self._display_for(self._muted, self._shown_with(tracks))
+
+    def relight(self, tracks: dict[str, Track]) -> None:
+        """Parts lighting other keys (or none), as these tracks of theirs (by name: the same parts, planned again with
+        other lit keys) have them, going on from where it is: the keys' timeline made again, the keys lit now changed
+        to it; what sounds left as it is (a part's sound doesn't depend on its keys)."""
+        shown = self._shown_with(tracks)
+        if all(a[0] is b[0] and a[1:] == b[1:] for a, b in zip(shown, self._shown)):
+            return
+        self._shown = shown
+        self._redisplay()
+
+    def _redisplay(self) -> None:
+        """The keys' timeline made again, going on from where it is: the keys lit now changed to it."""
+        position = self._position
+        lit = set(self.keys_at(position)) if position is not None else set()
+        self._build()
+        if position is not None:
+            now = set(self.keys_at(position))
+            if lit - now:
+                self.keys.unlight(tuple(sorted(lit - now)))
+            if now - lit:
+                self.keys.light(tuple(sorted(now - lit)))
+            self._next = bisect_right(self._times, position)
 
     def _build(self) -> None:
         self.display, self._display_ons = self._display_for(self._muted)
@@ -387,16 +425,8 @@ class Player:
         for ti in sorted(going):
             self._silence(ti)
         self._muted = wanted
-        if any(self.tracks[ti].lit for ti in going | coming):  # (the keys' timeline made again, as retime does)
-            lit = set(self.keys_at(position)) if position is not None else set()
-            self._build()
-            if position is not None:
-                now = set(self.keys_at(position))
-                if lit - now:
-                    self.keys.unlight(tuple(sorted(lit - now)))
-                if now - lit:
-                    self.keys.light(tuple(sorted(now - lit)))
-                self._next = bisect_right(self._times, position)
+        if any(self._shown[ti][1] for ti in going | coming):  # (the keys' timeline made again, as retime does)
+            self._redisplay()
         if position is not None:
             for ti in sorted(coming):
                 self._sound_from(ti, position)

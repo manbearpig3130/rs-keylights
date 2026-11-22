@@ -472,3 +472,21 @@ def test_a_part_muted_from_the_start_is_planned_but_never_heard_until_unmuted():
     player.mute(())
     assert ("play", 12, (48,), 90) in keys.events
     assert ("all off",) not in keys.events[1:]  # (only the first step's)
+
+
+def test_a_part_lighting_other_keys_changes_the_keys_alone_its_sound_going_on():
+    keys = FakeKeys()
+    lead = [Light(1.0, 3.0, (60,))]
+    rhythm = [Light(1.0, 3.0, (48,))]
+    player = Player([Track(lead, FakeVoices()), Track(rhythm, OtherVoices(), lit=False)], keys, names=["lead", "rhythm"])
+    player.advance(0.5)
+    player.advance(1.2)
+    assert keys.lit == {60}
+    keys.events.clear()
+    player.relight({"rhythm": Track(rhythm, OtherVoices(), lit=True), "lead": Track(lead, FakeVoices(), lit=False)})
+    assert keys.events == [("off", (60,)), ("on", (48,))] and keys.lit == {48}  # (the keys alone: nothing sounding)
+    player.relight({"rhythm": Track(rhythm, OtherVoices(), lit=True)})  # (as it is: nothing)
+    assert keys.events == [("off", (60,)), ("on", (48,))]
+    for at in (2.0, 2.6, 3.1):
+        player.advance(at)
+    assert ("stop", 11, (60,)) in keys.events and ("stop", 12, (48,)) in keys.events  # (both still sounding till then)

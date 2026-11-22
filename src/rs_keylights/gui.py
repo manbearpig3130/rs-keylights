@@ -1191,6 +1191,10 @@ class Gui:
                     self._mute_now(sid):  # (parts muted or back, alone: at once, the rest going on untouched)
                 self._save_songs()
                 return self.song(sid) if answer else {}
+            if change and "start" not in body and all(set(fields) <= {"lights"} for fields in change.values()) and \
+                    self._relight_now(sid):  # (other lit keys, alone: at once, nothing sounding touched)
+                self._save_songs()
+                return self.song(sid) if answer else {}
             if replays and later > 0:  # (a remote's turns, coming quickly: each kept as it comes, and checked, saved
                 # and played once they stop, as the last that fit if they don't; each step's planning would lag it)
                 self._fit_before.setdefault(sid, was)
@@ -1575,6 +1579,25 @@ class Gui:
     def _drums_extra(self, sid: str) -> dict[str, Any]:
         """A player's drum part (player_for's extra), muted in it if it isn't played."""
         return {"extra": self._drum_tracks(sid, muted_too=True), "extra_muted": not self._drum_settings(sid)["play"]}
+
+    def _relight_now(self, sid: str) -> bool:
+        """The song playing's parts lighting the keys as they're chosen now, at once (Player.relight): what sounds left
+        as it is. False if more than their lit keys changed in planning them again (another part, sound or mute);
+        then it's played again with them."""
+        with self._lock:
+            session = self._session
+            if not isinstance(session, Playback) or not session.running or not self._playing or \
+                    self._playing["id"] != sid:
+                return False
+            planned, _length = self._plan(sid)
+            was = self._planned_now
+            if [pp.part.ref.part for pp in planned] != [pp.part.ref.part for pp in was] or \
+                    any(new.voices != old.voices or new.part.muted != old.part.muted for new, old in zip(planned, was)):
+                return False
+            session.relight({pp.part.ref.part: self._made.track(pp) for pp in planned})
+            self._playing, self._planned_now = self._describe(sid, planned), planned
+            self.play_version += 1
+            return True
 
     def _mute_now(self, sid: str) -> bool:
         """The song playing's parts (and its drum part) muted and unmuted as they're chosen now, at once: nothing
@@ -2315,10 +2338,13 @@ class Gui:
             session = self._session
             if isinstance(session, Following) and session.running:
                 session.set_offset(settings["offset_ms"] / 1000)
-                if not (set(body) == {"parts"} and all(set(fields) <= {"play"} for chosen in body["parts"].values()
-                                                       for fields in chosen.values())
-                        and session.mute_parts(self._follow_parts())):  # (parts muted or back, alone: at once)
-                    self._replay("follow", lambda: self._follow_on(session), later)
+                fields = [set(each) for chosen in (body.get("parts") or {}).values() for each in chosen.values()] \
+                    if set(body) == {"parts"} else []
+                if not (fields and all(each <= {"play"} for each in fields)
+                        and session.mute_parts(self._follow_parts())) and \
+                        not (fields and all(each <= {"lights"} for each in fields)
+                             and session.relight_parts(self._follow_parts())):  # (parts muted or back, or lighting
+                    self._replay("follow", lambda: self._follow_on(session), later)  # other keys, alone: at once)
             if any(kind_ in body for kind_ in KINDS) and self._playing:  # a song playing takes new defaults
                 self._play_on(self._playing["id"])
         return self.follow_info()

@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, replace
-from typing import Callable, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from .keyboard import Keyboard
 from .library import ArrangementRef
@@ -794,6 +794,33 @@ class Follower:
             elif p.part.lights != lights or (callable(self._voices_for) and p.voices is None):
                 return None
         return muted
+
+    def prepare_relight(self, parts_for: PartsFor | None) -> tuple[Any, ...] | None:
+        """The parts planned again with their lit keys as parts_for has them now, and their tracks (tens of
+        milliseconds, changing nothing: Player.prepare_relight too), if their lit keys are all that's changed (the
+        same parts, sounds and mutes); None if not (set_parts then)."""
+        current, player = self.current, self._player
+        if player is None or current is None or not callable(parts_for):
+            return None
+        planned = self._plan(current, False, parts_for, keep_muted=True)
+        was = self._planned
+        if [p.part.ref.persistent_id for p in planned] != [p.part.ref.persistent_id for p in was] or \
+                any(new.voices != old.voices or new.part.muted != old.part.muted for new, old in zip(planned, was)):
+            return None
+        tracks = {p.part.ref.part: self._made.track(p) for p in planned}
+        player.prepare_relight(tracks)
+        return player, current, planned, tracks, parts_for
+
+    def relight_parts(self, prepared: tuple[Any, ...]) -> bool:
+        """The parts lighting the keys prepare_relight made them for, at once (Player.relight: nothing sounding
+        stopped or struck again); False if what plays has changed since (set_parts then)."""
+        player, current, planned, tracks, parts_for = prepared
+        if player is not self._player or current is not self.current:
+            return False
+        player.relight(tracks)
+        self._planned, self._parts_for = planned, parts_for
+        self._status(f"{current.title} ({current.name}): {self._describe(planned) or 'lights only'}")
+        return True
 
     def prepare_mutes(self, parts_for: PartsFor | None) -> None:
         """What mute_parts needs made first, changing nothing (Player.prepare_mute)."""

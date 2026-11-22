@@ -177,6 +177,13 @@ class Playback:
         with self._lock:
             self.player.mute(names)
 
+    def relight(self, tracks: dict[str, Track]) -> None:
+        """Parts lighting other keys, as it plays (Player.relight): what sounds left as it is. (Made first, the notes
+        going on meanwhile; then taken at once.)"""
+        self.player.prepare_relight(tracks)
+        with self._lock:
+            self.player.relight(tracks)
+
     def replace(self, player: Player, length: float | None = None) -> None:
         """Plays on with another player (other parts, tones or lights), from where the song is."""
         with self._lock:
@@ -287,6 +294,15 @@ class Following:
         from where the song is."""
         with self._lock:
             self.follower.set_extras(extras_for, muted_for)
+
+    def relight_parts(self, parts_for: PartsFor | None) -> bool:
+        """The parts' lit keys as chosen now, at once, if they can be (Follower.relight_parts; planned and made first,
+        the notes going on meanwhile)."""
+        prepared = self.follower.prepare_relight(parts_for)
+        if prepared is None:
+            return False
+        with self._lock:
+            return self.follower.relight_parts(prepared)
 
     def mute_parts(self, parts_for: PartsFor | None) -> bool:
         """The parts muted and unmuted as chosen now, at once, if they can be (Follower.mute_parts; made first, the

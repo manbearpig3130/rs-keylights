@@ -805,11 +805,15 @@ def test_a_remotes_turns_are_checked_and_saved_once_they_stop_and_go_back_to_the
 def test_a_remotes_changes_are_kept_at_once_and_the_song_takes_them_once_they_stop(server):
     gui, sid = server.gui, first_song(server)
     call(server, "/api/play", {"song": sid, "start": 1.0})
-    player, version = gui._session.player, gui.play_version
-    gui.change_part("lead", {"lights": 1}, later=0.2)  # taps on a pad
+    player = gui._session.player
+    gui.change_part("lead", {"lights": 1}, later=0.2)  # taps on a pad: its lit keys, at once, in what plays
     gui.change_part("lead", {"lights": 2}, later=0.2)
     lead = next(p for p in gui.song(sid)["parts"] if p["part"] == "lead")
-    assert lead["lights"] == 2 and gui.play_version == version + 2  # the page shows each
+    assert lead["lights"] == 2 and gui._session.player is player  # (the notes sounding untouched)
+    version = gui.play_version
+    gui.change_part("lead", {"tone": 31}, later=0.2)  # turns of a knob: kept at once, played once they stop
+    gui.change_part("lead", {"tone": 32}, later=0.2)
+    assert gui.play_version == version + 2  # the page shows each
     assert gui._session.player is player  # the notes sounding go on meanwhile
     assert wait_for(lambda: gui._session.player is not player, bool)
     replaced = gui._session.player
@@ -1993,7 +1997,7 @@ def test_a_part_or_the_drum_part_muted_as_a_song_plays_goes_at_once_and_the_rest
     assert gui._session.player is player and player.muted == {"drums"}
     gui.change_part("drums", {"play": True})
     assert gui._session.player is player and player.muted == frozenset()
-    gui.change_part("lead", {"lights": 2})  # (anything else: played again with it)
+    gui.change_part("lead", {"tone": 30})  # (anything else that changes its sound: played again with it)
     assert wait_for(lambda: gui._session.player is not player, bool)
     call(server, "/api/stop", {})
 
@@ -2121,3 +2125,34 @@ def test_a_bs_roformer_split_makes_the_drum_part_again_from_its_kits_pieces(serv
     monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None: [])
     gui.set_stems({"song": sid, "make": True, "separator": "demucs"})  # (Demucs': the quick one, no drum part)
     assert wait_for(lambda: not gui.stems_info(sid)["making"], bool) and len(asked) == 1
+
+
+def test_a_parts_lit_keys_turned_on_or_off_as_a_song_plays_change_the_keys_alone(server):
+    gui, sid = server.gui, first_song(server)
+    call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 1}, "rhythm": {"lights": 0}}})
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    player = gui._session.player
+    out = server.outs[-1]
+    wait_for(lambda: [m for m in out.sent if m[0] & 0xF0 == 0x90 and m[2] > 0], bool)
+    sent = len(out.sent)
+    assert [lit for _lights, lit, _rank in player._shown[:2]] == [True, False]
+    gui.change_part("rhythm", {"lights": 1})  # (the Launchkey's pad below it: lit too, at once)
+    assert gui._session.player is player and [lit for _l, lit, _r in player._shown[:2]] == [True, True]
+    gui.change_part("lead", {"lights": 0})  # (and the lead's off)
+    assert gui._session.player is player and [lit for _l, lit, _r in player._shown[:2]] == [False, True]
+    assert not [m for m in out.sent[sent:] if m[0] & 0xF0 == 0xB0 and m[1] == 123]  # (nothing stopped everywhere)
+    assert [p["lights"] for p in gui.song(sid)["parts"]] == [0, 1]
+    call(server, "/api/stop", {})
+
+
+def test_following_a_parts_lit_keys_changed_go_at_once_in_the_player_playing(server):
+    server.overlay.state = {"memoryReadout": {"songTimer": 5.0, "songID": "song", "arrangementID": "L"},
+                            "currentState": 4}
+    call(server, "/api/follow/settings", {"sound": True, "parts": {"L": {"R": {"play": True}}}})
+    call(server, "/api/follow", {})
+    follower = wait_for(lambda: server.gui._session.follower, lambda f: f._player is not None and len(f.planned) == 2)
+    player = follower._player
+    call(server, "/api/follow/settings", {"parts": {"L": {"R": {"lights": 2}}}})  # (the rhythm lit too: at once)
+    assert follower._player is player and [lit for _l, lit, _r in player._shown[:2]] == [True, True]
+    assert [p.part.lights for p in follower.planned] == [4, 2]
+    call(server, "/api/stop", {})
