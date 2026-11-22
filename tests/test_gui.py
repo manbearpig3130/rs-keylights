@@ -44,8 +44,8 @@ class FakeHearing:
 
     made = []
 
-    def __init__(self, heard, device="", clock=None, expected=None, lowest=70.0):
-        self.heard, self.expected, self.device, self.lowest = heard, expected, device, lowest
+    def __init__(self, heard, device="", clock=None, expected=None, lowest=70.0, channel=1):
+        self.heard, self.expected, self.device, self.lowest, self.channel = heard, expected, device, lowest, channel
         self.hearing, self.error, self.level, self.stopped = False, None, 0.0, False
         FakeHearing.made.append(self)
 
@@ -221,7 +221,7 @@ def test_settings_are_kept(server, tmp_path):
     assert json.loads((tmp_path / "gui.json").read_text()) == {
         "midi_port": "CASIO USB-MIDI", "channel": 11, "lights_early_ms": 15, "fastest_flash_ms": 70, "launchkey": True,
         "keys_sound": True, "keys_lights": True, "ring": True, "overlap_ms": 120, "listen": False,
-        "listen_device": "Rocksmith USB Guitar Adapter", "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {}, "outputs_known": {},
+        "listen_device": "Rocksmith USB Guitar Adapter", "listen_channel": 1, "tone_changes": True, "tone_map": TONE_KINDS, "techniques": True, "outputs": {}, "outputs_known": {},
         "beat_lights": False,
         "keys_tone": 1, "keys_volume": 100, "keys_output": None, "volumes": [100] * 8, "pedal_backup": "",
         "pedal_favourites": [51, 187], "pinch": {"up": 19, "velocity": 127, "note_velocity": 70, "scoop": 0.5,
@@ -1086,8 +1086,9 @@ def test_the_guitar_heard_lights_its_keys_and_the_song_says_what_it_expects(serv
     started = []
 
     class FakeListener:  # (not the cable: what's heard is said by the test)
-        def __init__(self, heard, expected, device, lowest):
+        def __init__(self, heard, expected, device, lowest, channel=1):
             self.device, self.now, self.level, self.error, self.running = device, (), 0.0, None, False
+            self.channel = channel
             started.append(self)
 
         def start(self):
@@ -2224,3 +2225,29 @@ def test_a_part_muted_that_lights_its_keys_lights_them_still_its_sound_alone_gon
     assert gui._session.player is player and "rhythm" in player.muted and player.names[:2] == ("lead", "rhythm")
     assert [lit for _l, lit, _r in player._shown[:2]] == [True, True]  # (both lit)
     call(server, "/api/stop", {})
+
+
+def test_the_guitar_is_heard_on_one_of_an_interfaces_inputs(server, monkeypatch):
+    from rs_keylights import gui as gui_module
+    gui = server.gui
+    monkeypatch.setattr(gui_module, "_audio_input_channels", lambda: {"Blender": 12, "Mic": 1})
+    started = []
+
+    class FakeListener:
+        def __init__(self, heard, expected, device, lowest, channel=1):
+            self.device, self.channel, self.now, self.level, self.error, self.running = device, channel, (), 0.0, None, False
+            started.append(self)
+
+        def start(self):
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+    monkeypatch.setattr(gui_module, "Listener", FakeListener)
+    call(server, "/api/settings", {"listen": True, "listen_device": "Blender", "listen_channel": 7})
+    assert (started[-1].device, started[-1].channel) == ("Blender", 7) and gui.listening()["channel"] == 7
+    assert call(server, "/api/settings", {"listen_channel": 13})[0] == 400  # (it has 12)
+    call(server, "/api/settings", {"listen_device": "Mic"})  # (another device: its first input)
+    assert (started[-1].device, started[-1].channel) == ("Mic", 1)
+    assert call(server, "/api/settings")[1]["input_channels"]["Blender"] == 12

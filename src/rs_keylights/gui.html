@@ -740,7 +740,9 @@
       <h3>Guitar</h3>
       <label title="The guitar's notes, heard on its input (the Rocksmith cable, shared with the game), light their keys first; while a song plays or is followed, its chords are heard note by note">
         <input type="checkbox" id="listen"> Light the keys I play on the guitar</label>
-      <div class="row"><label>Input <select id="listenDevice"></select></label></div>
+      <div class="row"><label>Input <select id="listenDevice"></select></label>
+        <label id="listenChannelBox" hidden title="Which of its inputs the guitar's on">input
+          <select id="listenChannel"></select></label></div>
       <div id="listenStatus" class="muted small"></div>
       <details class="card-section" id="pedalCard">
         <summary>Guitar pedal<button type="button" class="info" aria-label="About the guitar pedal"></button><span
@@ -4736,6 +4738,12 @@ async function loadSettings() {
   const inputs = s.inputs.includes(s.listen_device) ? s.inputs : [s.listen_device, ...s.inputs];
   $("listenDevice").innerHTML = inputs.map((name) => `<option>${esc(name)}</option>`).join("");
   $("listenDevice").value = s.listen_device;
+  // (an interface with several inputs: which one; its count, as the Mac has it)
+  const count = (s.input_channels || {})[s.listen_device] || 1, channel = s.listen_channel || 1;
+  $("listenChannelBox").hidden = count < 2 && channel < 2;
+  $("listenChannel").innerHTML = Array.from({length: Math.max(count, channel)}, (_x, i) =>
+    `<option value="${i + 1}">${i + 1}</option>`).join("");
+  $("listenChannel").value = String(channel);
   $("pedalBackup").value = s.pedal_backup;
   pedalFavourites = s.pedal_favourites;
   setPedalNames(s.pedal_names);
@@ -5038,9 +5046,13 @@ $("pedalBackup").addEventListener("change", () => act(async () => {
   await api("/api/settings", {pedal_backup: $("pedalBackup").value.trim()});
   await loadSettings();  // (the names from it)
 }));
-for (const id of ["listen", "listenDevice"]) {
-  $(id).addEventListener("change", () => act(() => api("/api/settings",
-    {listen: $("listen").checked, listen_device: $("listenDevice").value})));
+for (const id of ["listen", "listenDevice", "listenChannel"]) {
+  $(id).addEventListener("change", () => act(async () => {
+    const device = $("listenDevice").value, changed = id === "listenDevice";
+    await api("/api/settings", {listen: $("listen").checked, listen_device: device,
+      ...(changed ? {} : {listen_channel: Number($("listenChannel").value)})});  // (another device: its first)
+    if (changed) await loadSettings();  // (its inputs)
+  }));
 }
 $("overlap").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("toneChanges").addEventListener("change", () => act(async () => {

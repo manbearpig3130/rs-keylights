@@ -629,7 +629,7 @@ class Gui:
         self.settings: dict[str, Any] = {"midi_port": DEFAULT_PORT, "channel": DEFAULT_CHANNEL,
                                          "lights_early_ms": LIGHTS_EARLY * 1000, "fastest_flash_ms": MIN_PERIOD * 1000,
                                          "launchkey": True, "keys_sound": True, "keys_lights": True, "ring": True,
-                                         "overlap_ms": 120, "listen": False, "listen_device": GUITAR_INPUT,
+                                         "overlap_ms": 120, "listen": False, "listen_device": GUITAR_INPUT, "listen_channel": 1,
                                          "tone_changes": True, "tone_map": dict(TONE_KINDS), "techniques": True,
                                          "outputs": {}, "outputs_known": {}, "beat_lights": False,
                                          "keys_tone": KEYS_TONE, "keys_volume": NORMAL_VOLUME, "keys_output": None,
@@ -2221,6 +2221,7 @@ class Gui:
                                          until_stopped=self.settings["warmup_what"] != "routine",
                                          on_drill=self._warmup_drilled)
                         hearing = self._onset_listener(session.heard, device=str(self.settings["listen_device"]),
+                                                       channel=int(self.settings["listen_channel"]),
                                                        expected=session.expected,
                                                        lowest=0.85 * 440.0 * 2 ** ((lowest - 69) / 12))
                     except Exception:
@@ -3607,12 +3608,13 @@ class Gui:
     def listen_now(self) -> None:
         """Hears the guitar on its input, its notes lighting the keys, or stops (as the settings have it)."""
         wanted, device = bool(self.settings["listen"]), str(self.settings["listen_device"])
+        channel = int(self.settings["listen_channel"])
         listener = self._listener
-        if listener is not None and (not wanted or listener.device != device):
+        if listener is not None and (not wanted or listener.device != device or listener.channel != channel):
             listener.stop()
             self._listener = listener = None
         if wanted and (listener is None or not listener.running):
-            self._listener = Listener(self._hear, self._expected_now, device, self._lowest_now)
+            self._listener = Listener(self._hear, self._expected_now, device, self._lowest_now, channel=channel)
             self._listener.start()
 
     def _hear(self, pitches: tuple[int, ...]) -> None:
@@ -3676,6 +3678,7 @@ class Gui:
         """For the page: whether the guitar's heard, on which input, what it plays now, how loud, and why not."""
         listener = self._listener
         return {"on": bool(self.settings["listen"]), "device": self.settings["listen_device"],
+                "channel": int(self.settings["listen_channel"]),
                 "heard": [note_name(p) for p in listener.now] if listener else [],
                 "level": round(listener.level, 4) if listener else 0.0,
                 "error": listener.error if listener else None}
@@ -4147,6 +4150,7 @@ class Gui:
             ports = []
         return {**self.settings, "ports": ports, "game_dir": str(self.index.game_dir), "overlay_port": self.overlay_port,
                 "outputs_there": self.output_status(), "inputs": _audio_inputs(),
+                "input_channels": _audio_input_channels(),
                 "keyboard_name": keyboard_name(str(self.settings["midi_port"])),
                 "pedal_backup_used": str(self.pedal.backup or ""),
                 "pedal_names": [self.pedal.name(slot) for slot in range(1, PEDAL_SLOTS + 1)]}
@@ -4163,6 +4167,12 @@ class Gui:
         played = bool(body.get("techniques", self.settings["techniques"]))
         listen = bool(body.get("listen", self.settings["listen"]))
         listen_device = str(body.get("listen_device", self.settings["listen_device"]) or GUITAR_INPUT)
+        listen_channel = int(_number(body.get("listen_channel", self.settings["listen_channel"]), "input", 1, 64))
+        if listen_device != self.settings["listen_device"] and "listen_channel" not in body:
+            listen_channel = 1  # (another device: its first, unless one's chosen with it)
+        most = _audio_input_channels().get(listen_device)
+        if most is not None and listen_channel > most:
+            raise GuiError(f"{listen_device} has {most} inputs")
         backup = str(body.get("pedal_backup", self.settings["pedal_backup"]) or "").strip()
         favourites = _favourites(body.get("pedal_favourites", self.settings["pedal_favourites"]))
         asked, known = _recalled(self.settings["outputs"], body.get("outputs") or {},
@@ -4183,7 +4193,7 @@ class Gui:
         changed = dict(midi_port=port, channel=channel, lights_early_ms=early, fastest_flash_ms=flash, launchkey=launchkey,
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        outputs_known=known,
-                       overlap_ms=overlap, listen=listen, listen_device=listen_device, pedal_backup=backup,
+                       overlap_ms=overlap, listen=listen, listen_device=listen_device, listen_channel=listen_channel, pedal_backup=backup,
                        pedal_favourites=favourites, pinch=pinch)
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
@@ -4597,6 +4607,16 @@ def _audio_outputs() -> list[str]:
         return [str(d["name"]) for d in sounddevice.query_devices() if d["max_output_channels"] > 0]
     except Exception:  # (no audio)
         return []
+
+
+def _audio_input_channels() -> dict[str, int]:
+    """Each audio input's channels (an interface's inputs), if sounddevice is installed."""
+    try:
+        import sounddevice
+        return {str(d["name"]): int(d["max_input_channels"]) for d in sounddevice.query_devices()
+                if d["max_input_channels"] > 0}
+    except Exception:  # (none, or no audio)
+        return {}
 
 
 def _audio_inputs() -> list[str]:

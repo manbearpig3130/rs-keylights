@@ -207,8 +207,9 @@ class Listener:
     listen for (a bass's lower)."""
 
     def __init__(self, heard: Callable[[tuple[int, ...]], None], expected: Callable[[], Sequence[int]] | None = None,
-                 device: str = DEVICE, lowest: Callable[[], float] | None = None) -> None:
+                 device: str = DEVICE, lowest: Callable[[], float] | None = None, channel: int = 1) -> None:
         self.device = device
+        self.channel = channel  # (its input, from 1: an interface's own, of several)
         self._heard, self._expected = heard, expected
         self._lowest = lowest
         self._quit = threading.Event()
@@ -242,7 +243,7 @@ class Listener:
             return
         try:
             detector = Detector()
-            with sounddevice.InputStream(samplerate=RATE, channels=1, device=self.device, blocksize=HOP,
+            with sounddevice.InputStream(samplerate=RATE, channels=self.channel, device=self.device, blocksize=HOP,
                                          dtype="float32", latency="low") as stream:  # (its "high": a mixer's
                 # input held 0.43 s back)
                 self.error = None
@@ -251,7 +252,7 @@ class Listener:
                     if self._lowest is not None:
                         detector.lowest = self._lowest()
                     expected = self._expected() if self._expected is not None else ()
-                    now = detector.feed(samples[:, 0], expected or ())
+                    now = detector.feed(samples[:, self.channel - 1], expected or ())
                     self.level = detector.level
                     if now != self.now:
                         self.now = now
@@ -402,10 +403,11 @@ class OnsetListener:
 
     def __init__(self, heard: Callable[[float, int | None], None], device: str = DEVICE,
                  clock: Callable[[], float] | None = None, expected: Callable[[], Sequence[int]] | None = None,
-                 lowest: float = ONSET_LOWEST) -> None:
+                 lowest: float = ONSET_LOWEST, channel: int = 1) -> None:
         import time
 
         self.device = device
+        self.channel = channel  # (its input, from 1)
         self.lowest = lowest  # (Hz: the lowest note listened for, the tuning's lowest string's, and a little)
         self._heard, self._expected = heard, expected
         self._clock = clock or time.monotonic
@@ -438,7 +440,7 @@ class OnsetListener:
             return
         try:
             onsets = Onsets(lowest=self.lowest)
-            with sounddevice.InputStream(samplerate=RATE, channels=1, device=self.device, blocksize=HOP,
+            with sounddevice.InputStream(samplerate=RATE, channels=self.channel, device=self.device, blocksize=HOP,
                                          dtype="float32", latency="low") as stream:  # (its "high": a mixer said
                 # 0.43 s, half a second more than it took)
                 latency: Any = stream.latency  # (seconds a sample takes to come: the input's)
@@ -451,7 +453,7 @@ class OnsetListener:
                     count += len(samples)
                     began = min(began, self._clock() - count / RATE - latency)
                     expected = self._expected() if self._expected is not None else ()
-                    for at, pitch in onsets.feed(samples[:, 0], began + count / RATE, expected):
+                    for at, pitch in onsets.feed(samples[:, self.channel - 1], began + count / RATE, expected):
                         self._heard(at, pitch)
                     self.level = onsets.level
         except Exception as exc:  # no such input (unplugged): said, and listening stops
