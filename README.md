@@ -114,10 +114,11 @@ Launchkey shows.
   italics).
 - **Keys**: the notes falling onto a drawing of the Casio's 61 keys, 2 to 8 seconds ahead. It shows every part
   playing, or one part. Its keyboard plays: click a key (or drag across them) and it sounds as the Launchkey's keys
-  do, where they play (Plays on, in Launchkey keys). Keys held down show red, the Launchkey's too.
+  do, where they play (Plays on, in the Launchkey card). Keys held down show red, the Launchkey's too. Under it,
+  **Keys' tone** is the tone they play (its keys' and the Launchkey's).
 - **Drums**: a drum kit that lights as the drum part strikes it. Click a drum to hear it (it sounds as you press, and
   fast clicks don't select the page's text). See [Drums](#drums).
-- **Song's audio**: the song's own audio and its parts. See [The song's own audio](#the-songs-own-audio).
+- **Song Audio**: the song's own audio and its parts. See [The song's own audio](#the-songs-own-audio).
 - **Theory**: follows the song from its charts:
   - the chord now as a Roman numeral (written against the major scale whatever the mode, so i–♭VI–♭VII, as rock
     songs are usually written), with what it does there (home, away, pulls home) and anything borrowed;
@@ -170,12 +171,15 @@ where the chart has vibrato. **Try it** plays a riff with a quick and a held one
 The **Keyboard** card turns ringing and techniques off.
 
 **Tone changes**: when a song switches tone, the part switches to the keyboard tone for that kind of tone (clean,
-drive, distortion, lead, acoustic, bass…), chosen on the **Tone changes** card. It starts on the Casio's General MIDI
-guitar tones (294 GM CLEAN GUITAR, 296 GM OVERDRIVE GT, 297 GM DISTORTION GT…), because the LK-170's own guitar
-tones sound an octave below the keys. Kinds it doesn't know, or set to "No change", keep the tone. The Launchkey says
-each change ("Lead: distortion"). Each part lists its song's tones under its own, with the current one lit.
+drive, distortion, lead, acoustic, bass…), chosen in the **Keyboard** card's **Tone changes**. It starts on the
+Casio's General MIDI guitar tones (294 GM CLEAN GUITAR, 296 GM OVERDRIVE GT, 297 GM DISTORTION GT…), because the
+LK-170's own guitar tones sound an octave below the keys. Kinds it doesn't know, or set to "No change", keep the
+tone. The Launchkey says each change ("Lead: distortion"). Each part lists its song's tones under its own, with the
+current one lit.
 
-**Default tones**: a set each for lead, rhythm and bass parts, for parts without tones of their own.
+**Default tones** (in the **Keyboard** card): a set each for lead, rhythm and bass parts, for parts without tones of
+their own. The Song card's **Reset tones** puts every part of the song back on them (asking first): the tones each
+has of its own are cleared, playing the song and following it.
 
 **Channels**: each part takes the keyboard channels its tones need: one, plus one each for a palm-mute or harmonics
 tone of its own (the harmonics one only if the part has harmonics). The keyboard has 12 to give, so five or more parts
@@ -184,7 +188,8 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
 ### Settings cards
 
 - **Keyboard**: the MIDI output, the lights' channel, **Lights early** (15 ms) and **Fastest flash** (70 ms); notes
-  ringing and their overlap; **Real pitch**; techniques; the Launchkey remote; and **Look for new songs**.
+  ringing and their overlap; **Real pitch**; techniques; and, folded inside it, **Default tones** and **Tone
+  changes**.
   - **Real pitch** (on at first): the notes sound at their own pitch, not the lit keys' pitch (moved into the
     keys' range). The keyboard plays MIDI notes below its lowest key, but some tones don't reach as low as a B
     standard guitar.
@@ -193,7 +198,7 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
 - **Guitar** (needs the `listen` extra): the notes you play, heard on the Rocksmith USB Guitar Adapter, light their
   keys first. It hears a note 30 to 60 ms after you play it, down to 30 Hz (B standard with a drop pedal an octave
   down). During a song it checks each chord's expected notes; without one, it works chords out from their
-  harmonics.
+  harmonics. Folded inside it: **Guitar pedal** and **Pedal tone rules**.
 - **Other MIDI devices**: a lead, rhythm, bass or drum part can play on another MIDI device (a Korg monologue, a
   Novation Circuit, an app on the Mac through the IAC Driver). The Casio still lights the keys. You choose:
   - the output and channel;
@@ -204,9 +209,11 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
 
   Notes, bends, vibrato, the program and volume go to the device, but tones don't. If it isn't connected, the Casio
   plays the part.
-- **Launchkey keys**: the Launchkey's own keys play the Casio on channel 1 with a tone of their own. **Plays on**
+- **Launchkey**: whether it's the page's remote (and which one is connected). Its own keys play the Casio on
+  channel 1 with a tone of their own (on the **Keys** card). **Plays on**
   sends them to another MIDI output instead (IAC Driver Bus 1 for an app on the Mac, such as Komplete Kontrol). They
   still light the Casio's keys.
+- **rs-keylights**: the game's songs folder, the link for a phone, and **Look for new songs**.
 - **Tone changes**, **Default tones**, **Pinch harmonics**: above. **Guitar pedal**, **Pedal tone rules**: see
   [Guitar pedal (DNAfx)](#guitar-pedal-dnafx).
 
@@ -220,7 +227,7 @@ by its file's place in the game folder (`dlc/x_m.psarc`), so its settings surviv
 
 The game pauses when it loses focus, so changing things on the Mac stops the song. With `rs-keylights gui --lan` the
 page also answers on the network, and a phone on the same Wi-Fi can be the remote. It prints a link with a key (the
-Keyboard card shows it too). Open it once on the phone, and after that the plain address
+rs-keylights card shows it too). Open it once on the phone, and after that the plain address
 (`http://NAME.local:8040/`) works, on the home screen too. On the network the server only answers browsers with the
 key. If the Mac's firewall is on, allow Python's incoming connections when macOS asks.
 
@@ -357,7 +364,7 @@ the keys.
 
 With a Novation Launchkey MK4 (Mini or full size) plugged in, the page takes over its DAW controls while it runs and
 gives them back when it stops. It works on the song followed, else the song playing, else the active song.
-`rs-keylights launchkey` shows what the Launchkey sends, to check it (quit the page first). The **Keyboard** card
+`rs-keylights launchkey` shows what the Launchkey sends, to check it (quit the page first). The **Launchkey** card
 turns the remote off.
 
 The buttons beside the knobs switch what the knobs and pads do: **▲** the arrangements, **▼** playing the song.
@@ -384,7 +391,7 @@ ten at a time), round from the last to the first (as many as Other MIDI devices 
 | Control | Does |
 |---|---|
 | Knob 6 | the guitar pedal's presets; it switches once the knob rests (knob 8 while it shows: ten at a time) |
-| Pad 6, top | the next of your favourite presets (set on the **Guitar pedal** card) |
+| Pad 6, top | the next of your favourite presets (set in the **Guitar** card's **Guitar pedal**) |
 | Pad 6, bottom | hold the pedal on its tone, or let it follow the song's tones again |
 | Record, while the pedal shows (following) | keep the preset shown for the song tone playing, for this song |
 | Pad 7, top | the Launchkey's keys on or off |
@@ -615,10 +622,11 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
   It stays decoded for a minute after it stops, so playing it again starts at once.
 - It's off each time rs-keylights starts, and it doesn't play while following.
 
-The **Song's audio** card sets its volume and output.
+The **Song Audio** card sets its volume and output device (**Default output**: macOS's own). Its 🎵 turns the
+audio on and off, red while it's on.
 
 **Split into parts** separates it into drums, bass, guitar, vocals, keys and other (ambience, synths, effects), once,
-with the **separator** chosen beside it:
+with the **separator** chosen in the section beside it (its summary says which, and where it splits):
 
 - **BS-RoFormer SW** (jarredou's 6-stem model, as jonkubis' Core ML port has it): much the cleaner parts, the guitar
   most of all, in a little longer than the song itself on the Mac's GPU (in the background, out of the game's way).
@@ -634,17 +642,17 @@ A song can have both; the chosen separator's parts play (✓ beside a separator:
 `tools/rs-keylights-split-server.py` to it and run it there (`python3 rs-keylights-split-server.py`). Read it first:
 the first time, it sets itself up in its own folder (`~/.local/share/rs-keylights-split`: its own Python with PyTorch
 for CUDA, the model's code and the model, about 5 GB, nothing system-wide, no root), checks the model runs on the GPU
-(printing how long a 10-minute song will take), then prints its address and a key. Put those in the Song's audio
-card's **Split on another computer**. Songs split with BS-RoFormer SW are then sent to it (about 60 MB up for 10
-minutes of song, its parts back as lossless FLAC); if it doesn't answer, they're split on the Mac instead (if
+(printing how long a 10-minute song will take), then prints its address and a key. Put those in the Song Audio
+card's split section (beside **Split into parts**). Songs split with BS-RoFormer SW are then sent to it (about 60 MB
+up for 10 minutes of song, its parts back as lossless FLAC); if it doesn't answer, they're split on the Mac instead (if
 `tools/roformer-setup.sh` has been run). It listens on your network on port 8042, answering only requests with its
 key. Its models are let go of 10 minutes after the last song, so the GPU's memory is free for games. It also has
 DrumSep (aufr33 and jarredou's MDX23C model, 440 MB more on its first run): with it, a BS-RoFormer SW split brings
 back the drums' kit pieces too (kick, snare, toms, hi-hat, ride, crash, split from its drums in the same job), and
 the song's drum part is made again from them as soon as the parts are in (see
 [How a drum part is made](#how-a-drum-part-is-made)). An older copy of the script on the PC just splits the parts.
-In its terminal, the song being split has a progress bar; **Its output**, under the address and key in the Song's
-audio card, shows what it's printed (its last 300 lines) and how far the song it's splitting is, so you needn't
+In its terminal, the song being split has a progress bar; **Its output**, under the address and key in the Song
+Audio card, shows what it's printed (its last 300 lines) and how far the song it's splitting is, so you needn't
 keep a terminal open on the PC.
 The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
@@ -681,9 +689,9 @@ uv pip install --python .venv/bin/python -e ~/git/dnafx-preset
 
 ### Switching presets
 
-The Launchkey's knob 6 and pads (above), or the **Guitar pedal** card (‹ ›, a list of all 200, and your favourites),
-switch the pedal's presets. Preset names come from the newest `.bhb` backup the DNAfx editor saved (in Music,
-Documents, Desktop or Downloads), or the one named on the card.
+The Launchkey's knob 6 and pads (above), or the **Guitar** card's **Guitar pedal** (‹ ›, a list of all 200, and your
+favourites), switch the pedal's presets. Preset names come from the newest `.bhb` backup the DNAfx editor saved (in
+Music, Documents, Desktop or Downloads), or the one named on the card.
 
 The pedal can't be asked which preset it's on. rs-keylights goes by the last one it switched to, or the last one
 dnafx-preset's listener switched to, whichever was later. A footswitch press on the pedal isn't known. Each switch
@@ -740,7 +748,7 @@ effects and category, and the pedal preset it gets, with the rule that picks it.
 - Each tone can be **Auto** (the rules for every song) or the song's own. Its own category goes into RS
   Companion's `presets.json`; its own preset goes into dnafx-preset's tone map as a song rule.
 - **Try** switches the pedal to a tone's preset, and **Keep** gives the tone the preset the pedal is on.
-- The **Pedal tone rules** card (settings column) has the rules for every song.
+- **Pedal tone rules**, in the **Guitar** card (settings column), has the rules for every song.
 
 Changes keep the rest of the file, comments included, and save the old one as `.bak`. The pedal switches at once if
 the tone is playing.

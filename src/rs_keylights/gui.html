@@ -44,7 +44,7 @@
     main { grid-template-columns: 1fr; padding: 8px; gap: 8px; }
     #side { display: contents; }
     #followCard { order: -1; }
-    #defaultsCard, #keyboardCard { order: 1; }
+    #keyboardCard, #appCard { order: 1; }
     #side .card + .card { margin-top: 0; }
     #library { position: relative; top: 0; max-height: 60vh; }  /* (relative: for the browse box) */
     header { padding: 8px 12px; gap: 8px; }
@@ -104,6 +104,13 @@
   #side .card.folded h3.fold::before { content: "▸ "; }
   #side .card.folded h3 { margin: 0; }
   #side .card.folded > :not(h3):not(.card-tools) { display: none; }
+  /* A settings card's sections (the Keyboard's default tones, the Guitar's pedal...): each folds into its title too */
+  .card-section { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
+  .card-section > summary { cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
+  .card-section > summary::-webkit-details-marker { display: none; }
+  .card-section > summary::before { content: "▸ "; color: var(--muted); }
+  .card-section[open] > summary::before { content: "▾ "; }
+  .card-section[open] > summary { margin-bottom: 4px; }
   body.side-hidden #side { display: none; }
   body.side-hidden main { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
   @media (max-width: 1100px) { body.side-hidden main { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); } }
@@ -158,11 +165,19 @@
   #audioPartsNote, #splitServerNote { flex: 1 1 200px; }
   .split-server { margin-top: 12px; }
   .split-server summary { cursor: pointer; color: var(--muted); }
+  /* Its summary: how songs are split (a ▸ of its own: a flex box has none), Split into parts on the right */
+  #splitServer > summary { display: flex; align-items: center; gap: 8px; list-style: none; }
+  #splitServer > summary::-webkit-details-marker { display: none; }
+  #splitServer > summary::before { content: "▸"; }
+  #splitServer[open] > summary::before { content: "▾"; }
+  #splitServerSaid { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #audioSplit { flex: none; font-size: 14px; }
+  #splitServer[open] > summary { margin-bottom: 8px; }
   .split-server-log { margin-top: 10px; }
   .split-server-log pre { max-height: 240px; overflow: auto; margin: 6px 0 4px; padding: 8px; border-radius: 6px;
     background: var(--input); border: 1px solid var(--line); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
     white-space: pre-wrap; word-break: break-word; }
-  #audioOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  #audioOn { padding: 3px 10px; font-size: 16px; line-height: 1.3; }  /* (red, primary, while the song's audio is on) */
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
   .part-tones .tonebox .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -304,6 +319,8 @@
   .circuit-kit input { width: 52px; }
   .drumkit text { font-size: 11px; fill: var(--muted); text-anchor: middle; pointer-events: none; }
   .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; user-select: none; -webkit-user-select: none; }
+  .roll-tone { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .roll-tone > [data-r="tone"] { flex: 0 1 340px; min-width: 0; color: var(--text); }
   .roll-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .fret-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
@@ -451,6 +468,7 @@
           <div class="song-export">
             <button type="button" id="exportMidi" title="Every part, the tempo map (the record's: a tempo a beat), the sections as markers, chords and tones as text, the lyrics and their melody, and the drum part if it's made: for Logic or GarageBand">MIDI file</button>
             <button type="button" id="exportAudio" title="The song's audio as a WAV, lined up with the MIDI file: put both in at the start">Song audio</button>
+            <button type="button" id="resetTones" title="Every arrangement back on the default tones: the tones each has of its own (tone, palm mutes, harmonics) cleared, so its kind's (Default tones, on the Keyboard card) play, playing this song and following it">Reset tones</button>
             <span id="exportNote" class="small muted"></span>
           </div>
         </div>
@@ -532,27 +550,29 @@
 
   <section id="audioCard" class="card" hidden>
     <div class="fret-head">
-      <h3>Song's audio</h3>
-      <button type="button" id="audioOn" title="The song's own audio, from the Mac, with the song you play">🎵 Play it</button>
+      <h3>Song Audio</h3>
+      <button type="button" id="audioOn" title="The song's own audio, from the Mac, with the song you play">🎵</button>
     </div>
     <div class="audio-grid">
       <label for="audioVolume">Volume</label>
       <input type="range" id="audioVolume" min="0" max="100">
       <output id="audioVolumeShown"></output>
       <span></span>
-      <label for="audioDevice">Plays on</label>
+      <label for="audioDevice" title="Where it plays: Default output is macOS's own (as the Sound settings have it)">Output device</label>
       <select id="audioDevice" class="audio-wide"></select>
     </div>
     <div class="audio-parts-head">
       <span id="audioPartsNote" class="small muted"></span>
-      <select id="audioSeparator" title="Which separator splits songs into parts (and whose parts play)"></select>
-      <button type="button" id="audioSplit"></button>
     </div>
     <div id="audioProgress" class="making muted small" hidden><div class="bar" role="progressbar" aria-valuemin="0"
       aria-valuemax="100"><span></span></div><output></output></div>
     <div id="audioStems" class="audio-grid"></div>
     <details id="splitServer" class="split-server">
-      <summary class="small"></summary>
+      <summary class="small"><span id="splitServerSaid"></span><button type="button" id="audioSplit"></button></summary>
+      <div class="audio-grid">
+        <label for="audioSeparator">Separator</label>
+        <select id="audioSeparator" class="audio-wide" title="Which separator splits songs into parts (and whose parts play)"></select>
+      </div>
       <p class="small muted">BS-RoFormer SW on another computer's NVIDIA GPU, many times quicker than on the Mac: run
         <code>tools/rs-keylights-split-server.py</code> there (it sets itself up the first time), then the address and
         key it prints here. Not answering, songs split here instead.</p>
@@ -606,9 +626,10 @@
     <div id="ptNone" class="small muted" hidden></div>
     <div class="muted small" style="margin-top:6px">Each of the song's tones, the one playing lit: its category (RS
       Companion's mapping) and the guitar pedal's preset for it (dnafx-preset's tone map), each Auto by the rules for
-      every song (Pedal tone rules), or this song's own. The pedal follows a change within a second or two. Try
-      switches the pedal to a tone's preset; Keep gives the tone the preset the pedal's on. On the Launchkey,
-      following: hold the tone, try presets with knob 6, and Record keeps the one shown for the tone playing.</div>
+      every song (Pedal tone rules, on the Guitar card), or this song's own. The pedal follows a change within a
+      second or two. Try switches the pedal to a tone's preset; Keep gives the tone the preset the pedal's on. On the
+      Launchkey, following: hold the tone, try presets with knob 6, and Record keeps the one shown for the tone
+      playing.</div>
   </section>
 
   <section id="theoryCard" class="card" hidden>
@@ -652,58 +673,50 @@
       <details id="followLog"><summary>Messages</summary><ul id="messages"></ul></details>
     </div>
 
-    <div class="card" id="defaultsCard">
-      <h3>Default tones</h3>
-      <div class="muted small">For parts without tones of their own, playing a song or following the game.</div>
-      <div id="followKinds"></div>
-    </div>
-
     <div class="card" id="guitarCard">
       <h3>Guitar</h3>
       <label title="The guitar's notes, heard on its input (the Rocksmith cable, shared with the game), light their keys first; while a song plays or is followed, its chords are heard note by note">
         <input type="checkbox" id="listen"> Light the keys I play on the guitar</label>
       <div class="row"><label>Input <select id="listenDevice"></select></label></div>
       <div id="listenStatus" class="muted small"></div>
-    </div>
-
-    <div class="card" id="pedalCard">
-      <h3>Guitar pedal</h3>
-      <div class="muted small">A Harley Benton DNAfx GiT's presets, switched over its USB cable (with dnafx-preset). On
-        the Launchkey, knob 6 steps through them (knob 8 ten at a time while one shows), the pad under it goes
-        through your favourites, and the bottom pad keeps the tone you're on (lit: it follows the song's).</div>
-      <div class="row stepper">
-        <button type="button" id="pedalDown" title="The preset before">‹</button>
-        <select id="pedalSlot"></select>
-        <button type="button" id="pedalUp" title="The next preset">›</button>
-        <button type="button" id="pedalBack" title="Back to the preset it was on before">Back</button>
-      </div>
-      <div class="row"><label title="As the song switches tone, dnafx-preset switches the pedal to its preset for it; off, it keeps the one it's on (back on: it goes to the song's tone)">
-        <input type="checkbox" id="pedalFollows"> Switch with the song's tones</label></div>
-      <div class="row"><label title="The presets the Launchkey's pad above the guitar's goes through, in turn (the first, on none of them)">Favourites
-        <input id="pedalFavourites" placeholder="51, 187"></label></div>
-      <div class="row"><button type="button" id="pedalNamesRead" title="The presets' names as the pedal has them now (read from it as the page starts, and as song presets are written to it)">Read names from the pedal</button>
-        <span id="pedalNamesSaid" class="muted small"></span></div>
-      <div class="row"><label title="Until they're read from the pedal: the names from a backup the DNAfx editor saved (empty: the newest in Music, Documents, Desktop or Downloads)">Or from
-        <input id="pedalBackup" placeholder="the newest backup (.bhb)"></label></div>
-      <div id="pedalStatus" class="muted small"></div>
-    </div>
-
-    <div class="card" id="pedalRulesCard">
-      <h3>Pedal tone rules</h3>
-      <div class="muted small">The guitar pedal's presets for every song's tones (dnafx-preset's tone map, <code id="prFile"></code>):
-        the first that fits a tone wins, a song's own (Pedal tones), then its artist's, its effect's, its style's,
-        its category's.</div>
-      <div id="prNote" class="note small" hidden></div>
-      <div class="pr-section"><div>Categories</div><div id="prCategories"></div></div>
-      <div class="pr-section"><div>Artists</div><div id="prArtists"></div></div>
-      <div class="pr-section"><div title="A tone's modulation (chorus, flanger...), any modulation, or a delay">Effects</div><div id="prEffects"></div></div>
-      <div class="pr-section"><div title="The song's style: RS Companion's label, by how heavy it is">Styles</div><div id="prStyles"></div></div>
-      <div class="pr-section"><div title="Set on the Pedal tones card (or the Launchkey's Record)">Songs</div><div id="prSongs"></div></div>
-      <details class="pr-section"><summary class="small muted">RS Companion: categories and styles</summary>
-        <div class="muted small">How tones get their categories and songs their styles (RS Companion's presets.json, <code id="prPresets"></code>).</div>
-        <div class="pr-section"><div title="An artist's tones of a category as another">Artists' categories</div><div id="prRemaps"></div></div>
-        <div class="pr-section"><div title="A song (by its key) or an artist always this style">Song and artist styles</div><div id="prSongStyles"></div></div>
-        <div class="pr-section"><div title="A song's style by how heavy it is (0 to 1): the last it reaches">Styles by heaviness</div><div id="prHeaviness"></div></div>
+      <details class="card-section" id="pedalCard">
+        <summary>Guitar pedal</summary>
+        <div class="muted small">A Harley Benton DNAfx GiT's presets, switched over its USB cable (with dnafx-preset). On
+          the Launchkey, knob 6 steps through them (knob 8 ten at a time while one shows), the pad under it goes
+          through your favourites, and the bottom pad keeps the tone you're on (lit: it follows the song's).</div>
+        <div class="row stepper">
+          <button type="button" id="pedalDown" title="The preset before">‹</button>
+          <select id="pedalSlot"></select>
+          <button type="button" id="pedalUp" title="The next preset">›</button>
+          <button type="button" id="pedalBack" title="Back to the preset it was on before">Back</button>
+        </div>
+        <div class="row"><label title="As the song switches tone, dnafx-preset switches the pedal to its preset for it; off, it keeps the one it's on (back on: it goes to the song's tone)">
+          <input type="checkbox" id="pedalFollows"> Switch with the song's tones</label></div>
+        <div class="row"><label title="The presets the Launchkey's pad above the guitar's goes through, in turn (the first, on none of them)">Favourites
+          <input id="pedalFavourites" placeholder="51, 187"></label></div>
+        <div class="row"><button type="button" id="pedalNamesRead" title="The presets' names as the pedal has them now (read from it as the page starts, and as song presets are written to it)">Read names from the pedal</button>
+          <span id="pedalNamesSaid" class="muted small"></span></div>
+        <div class="row"><label title="Until they're read from the pedal: the names from a backup the DNAfx editor saved (empty: the newest in Music, Documents, Desktop or Downloads)">Or from
+          <input id="pedalBackup" placeholder="the newest backup (.bhb)"></label></div>
+        <div id="pedalStatus" class="muted small"></div>
+      </details>
+      <details class="card-section" id="pedalRulesCard">
+        <summary>Pedal tone rules</summary>
+        <div class="muted small">The guitar pedal's presets for every song's tones (dnafx-preset's tone map, <code id="prFile"></code>):
+          the first that fits a tone wins, a song's own (Pedal tones), then its artist's, its effect's, its style's,
+          its category's.</div>
+        <div id="prNote" class="note small" hidden></div>
+        <div class="pr-section"><div>Categories</div><div id="prCategories"></div></div>
+        <div class="pr-section"><div>Artists</div><div id="prArtists"></div></div>
+        <div class="pr-section"><div title="A tone's modulation (chorus, flanger...), any modulation, or a delay">Effects</div><div id="prEffects"></div></div>
+        <div class="pr-section"><div title="The song's style: RS Companion's label, by how heavy it is">Styles</div><div id="prStyles"></div></div>
+        <div class="pr-section"><div title="Set on the Pedal tones card (or the Launchkey's Record)">Songs</div><div id="prSongs"></div></div>
+        <details class="pr-section"><summary class="small muted">RS Companion: categories and styles</summary>
+          <div class="muted small">How tones get their categories and songs their styles (RS Companion's presets.json, <code id="prPresets"></code>).</div>
+          <div class="pr-section"><div title="An artist's tones of a category as another">Artists' categories</div><div id="prRemaps"></div></div>
+          <div class="pr-section"><div title="A song (by its key) or an artist always this style">Song and artist styles</div><div id="prSongStyles"></div></div>
+          <div class="pr-section"><div title="A song's style by how heavy it is (0 to 1): the last it reaches">Styles by heaviness</div><div id="prHeaviness"></div></div>
+        </details>
       </details>
     </div>
 
@@ -712,15 +725,6 @@
       <div class="muted small">A kind of part can sound on another MIDI device (a synth, with its own speakers) instead
         of the <span class="kbName">keyboard</span>, which still lights its keys. It keeps its own sound: no tones are sent to it.</div>
       <div id="outputRows" class="outputs"></div>
-    </div>
-
-    <div class="card" id="toneChangesCard">
-      <h3>Tone changes</h3>
-      <label><input type="checkbox" id="toneChanges"> Follow the songs' tone changes</label>
-      <div class="muted small">When a song switches tone (clean, distortion, acoustic&hellip;, from the tone's name or its
-        pedals), the part's tone switches to the one for that kind here; back to the song's first tone, to the part's
-        own. Palm-mute and pinch-harmonic tones stay as they are.</div>
-      <div id="toneKinds" class="grid2"></div>
     </div>
 
     <div class="card" id="pinchCard">
@@ -765,10 +769,14 @@
     </div>
 
     <div class="card" id="keysCard">
-      <h3>Launchkey keys</h3>
+      <h3>Launchkey</h3>
+      <div class="row"><span><label title="A Launchkey MK4 as the page's remote: its pads, knobs, mixer and screen for the song, and following, Rocksmith's own keys (see the README). Off, the page lets go of it, its keys too">
+          <input type="checkbox" id="launchkey"> The page's remote</label>
+        <span id="launchkeyStatus" class="muted small"></span></span></div>
       <div class="muted small">Its keys play the Casio (on channel 1, a part of their own), or another MIDI output
         (Plays on), and light the keys they
-        play: first, a song's lights getting the rest until you let go. On the Launchkey, knob 7 steps through the
+        play: first, a song's lights getting the rest until you let go. Their tone is on the Keys card, whose keys
+        play as these do. On the Launchkey, knob 7 steps through the
         tones (knob 8 through their groups while one shows), and the pads under it turn them on and off and choose
         whether they light the keys.</div>
       <div class="row">
@@ -776,11 +784,10 @@
         <label><input type="checkbox" id="keysLights"> Light the keys</label>
       </div>
       <div class="grid2">
-        <label for="keysOutput" title="Where the keys sound: the Casio (with the tone below), or another MIDI output (IAC Driver Bus 1: an app on this Mac, such as Komplete Kontrol), with its own sound. They light the Casio's keys either way">Plays on</label>
+        <label for="keysOutput" title="Where the keys sound: the Casio (with the tone on the Keys card), or another MIDI output (IAC Driver Bus 1: an app on this Mac, such as Komplete Kontrol), with its own sound. They light the Casio's keys either way">Plays on</label>
         <span><select id="keysOutput"></select>
           <label id="keysChannelBox" title="The channel they play on there">channel <input id="keysChannel" type="number" min="1" max="16" style="width:56px"></label>
           <span id="keysOutputStatus" class="muted small"></span></span>
-        <label>Tone</label><span id="keysTone"></span>
         <label for="keysVolume">Volume</label>
         <span class="part-volume"><input type="range" id="keysVolume" min="0" max="100"><output id="keysVolumeShown"></output></span></div>
     </div>
@@ -804,15 +811,32 @@
 
           <label title="Bends (pitch bend), slides (a semitone at a time), vibrato, tremolo picking, hammer-ons and pull-offs (softer), slaps and pops (harder), harmonics' own pitches, and dead notes (a click, with a palm-mute tone). Off: accents alone">
           <input type="checkbox" id="techniques"> Play techniques: bends, slides, vibrato&hellip;</label></span>
-        <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
-        <label>Phone</label><span id="phone" class="small"></span>
-        <label>Launchkey</label>
-        <span><label title="A Launchkey MK4 as the page's remote: its pads, knobs, mixer and screen for the song, and following, Rocksmith's own keys (see the README)">
-          <input type="checkbox" id="launchkey"> The page's remote</label>
-          <span id="launchkeyStatus" class="muted small"></span></span>
       </div>
       <div class="row">
         <button id="saveSettings">Save</button>
+      </div>
+      <details class="card-section" id="defaultsCard">
+        <summary>Default tones</summary>
+        <div class="muted small">For parts without tones of their own, playing a song or following the game.</div>
+        <div id="followKinds"></div>
+      </details>
+      <details class="card-section" id="toneChangesCard">
+        <summary>Tone changes</summary>
+        <label><input type="checkbox" id="toneChanges"> Follow the songs' tone changes</label>
+        <div class="muted small">When a song switches tone (clean, distortion, acoustic&hellip;, from the tone's name or its
+          pedals), the part's tone switches to the one for that kind here; back to the song's first tone, to the part's
+          own. Palm-mute and pinch-harmonic tones stay as they are.</div>
+        <div id="toneKinds" class="grid2"></div>
+      </details>
+    </div>
+
+    <div class="card" id="appCard">
+      <h3>rs-keylights</h3>
+      <div class="grid2">
+        <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
+        <label>Phone</label><span id="phone" class="small"></span>
+      </div>
+      <div class="row">
         <button id="reindex">Look for new songs</button>
       </div>
     </div>
@@ -851,6 +875,9 @@
       <select data-r="part" aria-label="Whose notes" title="Whose notes: what the keyboard plays (every part playing, as it lights and sounds them), or one arrangement alone"></select>
     </div>
     <div data-r="roll" class="roll"><canvas data-r="canvas" aria-label="The notes falling onto the keys"></canvas></div>
+    <div class="roll-tone"
+      title="The tone its keys play, clicked here, and the Launchkey's keys (its knob 7 steps it too)">
+      <span>Keys' tone</span><span data-r="tone"></span></div>
     <div data-r="legend" class="roll-legend"></div>
   </section>
 </template>
@@ -1533,6 +1560,7 @@ function makeRollCard(spec) {
   canvas.addEventListener("pointerup", letGo);
   canvas.addEventListener("pointercancel", letGo);
   canvas.addEventListener("lostpointercapture", letGo);
+  r("tone").append(keysToneControl());  // (the Launchkey's keys' tone: these keys play as they do)
   r("ahead").value = String(ahead());
   r("ahead").addEventListener("change", () => {
     card.spec.ahead = rollAhead = Number(r("ahead").value) || 4;
@@ -2197,7 +2225,7 @@ $("lyricsLines").addEventListener("click", (e) => {
 
 // Pedal tones: a song's tones (an arrangement's: the one the game plays, following it), each with its category (RS
 // Companion's mapping) and the guitar pedal's preset for it (dnafx-preset's tone map), Auto or the song's own, the one
-// playing lit; and the rules for every song (the settings column's Pedal tone rules).
+// playing lit; and the rules for every song (the Guitar card's Pedal tone rules, in the settings column).
 // GET/POST /api/songtones, /api/pedal/rules
 const CATEGORY_NAMES = ["Clean", "Crunch", "Heavy", "Lead"];
 let pedalNames = [], pedalFavourites = [], pedalToneSeen = "";
@@ -2314,7 +2342,7 @@ $("ptRows").addEventListener("click", (e) => {
   if (e.target.classList.contains("pt-try") && t.pedal) act(() => api("/api/pedal", {slot: t.pedal}));
   if (e.target.classList.contains("pt-keep")) {
     const slot = state && state.pedal && state.pedal.slot;
-    if (!slot) toast("The pedal's preset isn't known: pick one on the Guitar pedal card first");
+    if (!slot) toast("The pedal's preset isn't known: pick one in the Guitar card's Guitar pedal first");
     else changePedalTone({tone: t.key, pedal: slot});
   }
 });
@@ -2865,7 +2893,7 @@ const CARD_KINDS = {
   tab: {name: "Tab", make: makeTabCard},
   keys: {name: "Keys", make: makeRollCard},
   drums: {name: "Drums", fixed: "drumsCard"},
-  audio: {name: "Song's audio", fixed: "audioCard"},
+  audio: {name: "Song Audio", fixed: "audioCard"},
   theory: {name: "Theory", fixed: "theoryCard"},
   lyrics: {name: "Lyrics", fixed: "lyricsCard"},
   plays: {name: "Hits and misses", fixed: "playsCard"},
@@ -3384,6 +3412,18 @@ function partChange(part, field, value) {
   act(() => changeSong({parts: {[part]: {[field]: value}}}));
 }
 
+// The song's tones back to the defaults, asked first: each arrangement's own (its tone, palm mutes and harmonics)
+// cleared, so its kind's default tones play, playing the song (its parts) and following it (following's arrangements);
+// whether each follows the song's tone changes stays as it is
+const NO_TONES = {tone: null, mute_tone: null, pinch_tone: null};
+function resetSongTones() {
+  const s = selected;
+  if (!s) return;
+  if (!confirm(`Back to the default tones for every arrangement of ${s.song} (playing it and following it)?`)) return;
+  changeFollow({arrangements: Object.fromEntries(s.parts.map((p) => [p.arrangement, {...NO_TONES}]))});
+  act(() => changeSong({parts: Object.fromEntries(s.parts.map((p) => [p.part, {...NO_TONES}]))}));
+}
+
 function renderActive() {
   if (!selected) return;
   const following = state.mode === "following", here = selected.id === state.active;
@@ -3512,7 +3552,7 @@ async function exportSong(what) {
   }
 }
 
-// The Song's audio card: the song's own audio (🎵) on or off, how loud and on which output (playOptions: showOptions
+// The Song Audio card: the song's own audio (🎵) on or off, how loud and on which output (playOptions: showOptions
 // shows them), and its parts (stems): split from it (Split into parts: a minute or two, in the background), then each
 // at a volume of its own, a slider and a mute each (every song's: mute the band, keep the vocals...). POST /api/stems
 const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys",
@@ -3548,10 +3588,11 @@ function renderAudioCard(s) {
       (madeBy.includes(x.id) ? " ✓" : "");  // (✓: its parts made)
     return option;
   }));
-  $("splitServer").querySelector("summary").textContent = !server ? "Split on another computer…" :
-    server.ok === null ? `Split on ${server.url}: asking it…` :
-    server.ok ? `Split on ${server.url}: ${server.device}` + (server.waiting ? `, ${server.waiting} waiting` : "") :
-    `Split on ${server.url}: not answering, so here`;
+  // (its summary says how songs split: the separator, in the section, and where; Split into parts beside it)
+  $("splitServerSaid").textContent = `Split with ${name(chosen)}` + (chosen !== "roformer" || !server ? ", here" :
+    server.ok === null ? ` on ${server.url}: asking it…` :
+    server.ok ? ` on ${server.url}: ${server.device}` + (server.waiting ? `, ${server.waiting} waiting` : "") :
+    ` on ${server.url}: not answering, so here`);
   $("splitServerNote").textContent = server && server.error ? server.error : "";
   $("splitServerForget").hidden = !server;
   if (document.activeElement !== $("splitServerUrl")) $("splitServerUrl").value = server ? server.url : "";
@@ -3611,14 +3652,17 @@ function renderAudioCard(s) {
     }, 1000);
   }
 }
-$("audioSplit").addEventListener("click", () => act(async () => {
-  const sid = $("audioSplit").dataset.song;
-  const info = await api("/api/stems", {song: sid, make: true});
-  if (selected && selected.id === sid) {
-    selected = {...selected, stems: info};
-    renderSong();
-  }
-}));
+$("audioSplit").addEventListener("click", (e) => {
+  e.preventDefault();  // (in its section's summary: the section stays open or shut)
+  act(async () => {
+    const sid = $("audioSplit").dataset.song;
+    const info = await api("/api/stems", {song: sid, make: true});
+    if (selected && selected.id === sid) {
+      selected = {...selected, stems: info};
+      renderSong();
+    }
+  });
+});
 async function setSplitServer(change) {  // (then the song again: what the server said, in its card)
   const said = await api("/api/stems/server", change);
   $("splitServerKey").value = "";
@@ -3850,7 +3894,7 @@ function partBlock(o) {
 function songTonesRow(changes, follows, follow) {
   const row = document.createElement("div");
   row.className = "song-tones" + (follows ? "" : " fixed");
-  row.title = `The song's tone changes: in the Tone changes card, the ${KB()} tone for each kind`;
+  row.title = `The song's tone changes: in the Keyboard card's Tone changes, the ${KB()} tone for each kind`;
   row.append("Song's tones:");
   const box = document.createElement("label");
   box.className = "follow-tones";
@@ -3858,7 +3902,7 @@ function songTonesRow(changes, follows, follow) {
   check.type = "checkbox";
   check.checked = follows;
   check.disabled = !$("toneChanges").checked;
-  box.title = check.disabled ? "Tone changes are off for every song (the Tone changes card)" :
+  box.title = check.disabled ? "Tone changes are off for every song (the Keyboard card's Tone changes)" :
     "Switch this part's tone as the song's does; off, it keeps the tone chosen above (or its default)";
   check.addEventListener("change", () => follow(check.checked));
   box.append(check, "Follow");
@@ -3897,11 +3941,11 @@ function showOptions() {
   if (playOptions) {  // the song's own audio: on or off, how loud, and why it can't play (if it can't)
     const on = !!playOptions.audio;
     $("audioBtn").classList.toggle("on", on);
-    $("audioOn").classList.toggle("on", on);
-    $("audioOn").textContent = on ? "🎵 Playing it" : "🎵 Play it";
+    $("audioOn").classList.toggle("primary", on);  // (red while it's on, as Follow Rocksmith is while following)
     $("audioOn").disabled = !playOptions.audio_there;
     $("audioBtn").disabled = !playOptions.audio_there;
-    $("audioBtn").title = !playOptions.audio_there ? "The song's own audio needs the drum tools (tools/drums-setup.sh)" :
+    $("audioBtn").title = $("audioOn").title = !playOptions.audio_there ?
+      "The song's own audio needs the drum tools (tools/drums-setup.sh)" :
       playOptions.audio_error ? `The song's audio couldn't play: ${playOptions.audio_error}` :
       on ? "The song's own audio plays with the song you play: off" :
       "The song's own audio, from the Mac, with the song you play (slowed down: at its pitch; off each time rs-keylights starts)";
@@ -3910,8 +3954,8 @@ function showOptions() {
     const chosen = playOptions.audio_device;
     const outputs = playOptions.audio_outputs || [];
     const listed = chosen && !outputs.includes(chosen) ? [chosen, ...outputs] : outputs;
-    $("audioDevice").innerHTML = '<option value="">the Mac\'s output</option>' +
-      listed.map((d) => `<option>${esc(d)}</option>`).join("");
+    $("audioDevice").innerHTML = '<option value="" title="macOS\'s own, as the Sound settings have it">' +
+      "Default output</option>" + listed.map((d) => `<option>${esc(d)}</option>`).join("");
     $("audioDevice").value = chosen || "";
   }
 }
@@ -4245,6 +4289,7 @@ async function sendFollow() {
 
 function stepTone(select, delta, from) {
   const values = [...select.options].map((o) => o.value).filter(Boolean);
+  if (!values.length) return;  // (its tones not there yet)
   let i = values.indexOf(select.value || String(from || ""));
   i = i < 0 ? (delta > 0 ? 0 : values.length - 1) : (i + delta + values.length) % values.length;
   select.value = values[i];
@@ -4363,11 +4408,29 @@ function fullScreen(on) {
   Promise.resolve(call).catch(() => {});
 }
 
-// The Launchkey's keys: the Casio's sound and lights for them, and the tone (set here or with its knobs)
+// The Launchkey's keys: the Casio's sound and lights for them, and the tone (set on a Keys card or with its knobs)
 
 let shownKeys = "";
-let keysSelect = null;
+let keysTone = null;  // the tone they play (as the Mac last said), on every Keys card
 let midiPorts = [], midiPort = "";  // the MIDI outputs there are, and the keyboard's (the settings')
+
+// Their tone's dropdown, a Keys card's (its keys play as the Launchkey's do); each shows the tone once it's known
+function keysToneControl() {
+  const select = document.createElement("select");
+  select.className = "keys-tone";
+  select.setAttribute("aria-label", "Launchkey keys' tone");
+  select.addEventListener("change", () => changeKeys({tone: Number(select.value)}));
+  const control = stepper(select, null);
+  showKeysTone(select);
+  return control;
+}
+
+function showKeysTone(select) {
+  if (!toneOptions || keysTone === null) return;
+  if (!select.options.length) select.innerHTML = toneOptions;
+  select.value = String(keysTone);
+  select.dispatchEvent(new Event("input"));  // its box shows it
+}
 
 function showKeys(keys) {
   if (!keys || !toneOptions || JSON.stringify(keys) === shownKeys) return;
@@ -4376,19 +4439,12 @@ function showKeys(keys) {
   $("keysLights").checked = keys.lights;
   if (document.activeElement !== $("keysVolume")) $("keysVolume").value = String(percentOf(keys.volume ?? 100));
   $("keysVolumeShown").textContent = `${$("keysVolume").value}%`;
-  if (!keysSelect) {
-    keysSelect = document.createElement("select");
-    keysSelect.innerHTML = toneOptions;
-    keysSelect.setAttribute("aria-label", "Launchkey keys' tone");
-    keysSelect.addEventListener("change", () => changeKeys({tone: Number(keysSelect.value)}));
-    $("keysTone").append(stepper(keysSelect, keys.tone));
-  }
-  keysSelect.value = String(keys.tone);
-  keysSelect.dispatchEvent(new Event("input"));  // its box shows it
+  keysTone = keys.tone;
+  for (const select of document.querySelectorAll("select.keys-tone")) showKeysTone(select);
   const out = keys.output;
   const known = midiPorts.filter((p) => p !== midiPort);
   const ports = out && !known.includes(out.port) ? [out.port, ...known] : known;
-  $("keysOutput").innerHTML = `<option value="">the ${esc(KB())}</option>` +
+  $("keysOutput").innerHTML = `<option value="">${esc(KB())}</option>` +
     ports.map((p) => `<option>${esc(p)}</option>`).join("");
   $("keysOutput").value = out ? out.port : "";
   if (document.activeElement !== $("keysChannel")) $("keysChannel").value = String(out ? out.channel : 1);
@@ -4703,7 +4759,7 @@ $("followFull").addEventListener("change", () => store.set("rsk.followFull", $("
 document.body.classList.toggle("side-hidden", !!store.get("rsk.sideHidden", false));
 $("sideBtn").addEventListener("click", () => store.set("rsk.sideHidden", document.body.classList.toggle("side-hidden")));
 // The settings column's cards fold into their titles (remembered; setup ones folded at first)
-const FOLDED_AT_FIRST = new Set(["defaultsCard", "outputsCard", "toneChangesCard", "keyboardCard"]);
+const FOLDED_AT_FIRST = new Set(["outputsCard", "keyboardCard", "appCard"]);
 for (const card of document.querySelectorAll("#side > .card")) {
   const title = card.querySelector(":scope > h3");
   if (!title) continue;
@@ -4716,6 +4772,11 @@ for (const card of document.querySelectorAll("#side > .card")) {
   title.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
   });
+}
+// And their sections (the Keyboard's Default tones and Tone changes, the Guitar's pedal...): remembered, shut at first
+for (const section of document.querySelectorAll("#side details.card-section[id]")) {
+  section.open = !!store.get("rsk.open." + section.id, false);
+  section.addEventListener("toggle", () => store.set("rsk.open." + section.id, section.open));
 }
 $("followOffset").addEventListener("change", () => changeFollow({offset_ms: Number($("followOffset").value) || 0}));
 $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("followShowKey").checked}));
@@ -4777,6 +4838,7 @@ $("muteBtn").addEventListener("click", () => act(() => api("/api/play/options", 
 $("loopOn").addEventListener("click", () => act(() => api("/api/loop", {on: !(state.loop || {}).on})));
 $("exportMidi").addEventListener("click", () => exportSong("midi"));
 $("exportAudio").addEventListener("click", () => exportSong("audio"));
+$("resetTones").addEventListener("click", resetSongTones);
 $("loopClear").addEventListener("click", () => act(() => api("/api/loop", {a: null, b: null})));
 $("slider").addEventListener("input", () => {
   dragging = true;
