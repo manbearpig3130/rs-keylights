@@ -37,6 +37,8 @@ What rs-keylights asks it (each with the header X-RS-Keylights-Key: the key):
   GET    /split/ID                  {"state": waiting|splitting|done|failed, "progress": 0-1, "error": …}
   GET    /split/ID/PART.flac        a part once it's done: 16-bit FLAC, as long as the song, at its rate
   DELETE /split/ID                  its files gone
+  GET    /log?since=N               what it's printed since line N (its last LOG_KEPT lines), and the song it's
+                                    splitting now and how far (rs-keylights' page shows them)
 
 The split is ZFTurbo's own (their utils/model_utils.py demix): the song at 44.1 kHz, mirrored past either end,
 chunks of the model's (BS-RoFormer SW's 588 800 samples, 13.35 s, half a chunk apart; DrumSep's 130 560, 2.96 s, a
@@ -110,6 +112,8 @@ KIT_MODEL = {  # (as openmirlab's release has them, the same as the UVR and MSST
 }
 
 RATE = 44100  # (the model's)
+LOG_KEPT = 300  # lines of what it's printed, kept for rs-keylights (GET /log)
+BAR_EVERY = 0.25  # seconds between its progress bar's redraws, at most
 IDLE = 600  # seconds after the last song the model's let go of (the GPU's memory free again)
 KEPT = 3600  # seconds a song's parts are kept for rs-keylights to fetch
 MOST_UPLOAD = 1 << 30  # bytes of a song's audio, at most
@@ -119,8 +123,59 @@ MOST_UPLOAD = 1 << 30  # bytes of a song's audio, at most
 # Setting up: with this Python, before anything else is installed
 # ------------------------------------------------------------------------------------------------------------------
 
+class Log:
+    """What it's printed, its last LOG_KEPT lines (numbered from 1: GET /log asks for those since one), and the song
+    being split now and how far it is: its progress bar (drawn in place on a terminal, redrawn at most every
+    BAR_EVERY)."""
+
+    def __init__(self) -> None:
+        self.lines: list[tuple[int, str, str]] = []
+        self.count = 0
+        self.working: dict[str, Any] | None = None
+        self._lock = threading.Lock()
+        self._bar_shown = False
+        self._drawn = 0.0
+        self._tty = sys.stdout.isatty()
+
+    def add(self, text: str) -> None:
+        with self._lock:
+            if self._bar_shown:  # (the bar's line cleared first: the line, then the bar again below it)
+                print("\r\033[K", end="")
+                self._bar_shown = False
+            print(text, flush=True)
+            for line in text.splitlines() or [""]:
+                self.count += 1
+                self.lines.append((self.count, time.strftime("%H:%M:%S"), line))
+            del self.lines[:-LOG_KEPT]
+
+    def progress(self, job: str | None, done: float = 0.0) -> None:
+        """The song being split (None: none now) and how far (0 to 1)."""
+        with self._lock:
+            self.working = {"job": job, "progress": round(done, 3)} if job else None
+            now = time.monotonic()
+            if not self._tty or (job and now - self._drawn < BAR_EVERY and done < 1.0):
+                return
+            self._drawn = now
+            if job is None:
+                if self._bar_shown:
+                    print("\r\033[K", end="", flush=True)
+                self._bar_shown = False
+                return
+            filled = round(30 * done)
+            print(f"\r\033[K{job}: [{'#' * filled}{'-' * (30 - filled)}] {100 * done:3.0f}%", end="", flush=True)
+            self._bar_shown = True
+
+    def since(self, n: int) -> dict[str, Any]:
+        with self._lock:
+            return {"lines": [list(line) for line in self.lines if line[0] > n], "next": self.count,
+                    "working": dict(self.working) if self.working else None}
+
+
+LOG = Log()
+
+
 def say(text: str) -> None:
-    print(text, flush=True)
+    LOG.add(text)
 
 
 def check(data: Path, device: str) -> None:
@@ -449,6 +504,7 @@ class Jobs:
                 with self._lock:
                     if job in self._jobs:
                         self._jobs[job]["progress"] = round(done, 3)
+                LOG.progress(job, done)
 
             started = time.monotonic()
             try:
@@ -459,6 +515,7 @@ class Jobs:
             except Exception as exc:  # (said to rs-keylights, and here)
                 state, error = "failed", f"{type(exc).__name__}: {exc}"
                 say(f"{job}: failed: {error}")
+            LOG.progress(None)
             del audio
             with self._lock:
                 if job in self._jobs:
@@ -550,6 +607,9 @@ def handler(key: str, jobs: Jobs, describe: Callable[[], dict[str, Any]]) -> typ
             path = urlparse(self.path).path.strip("/").split("/")
             if path == ["status"]:
                 return self._json(200, {**describe(), "waiting": jobs.waiting()})
+            if path == ["log"]:
+                since = parse_qs(urlparse(self.path).query).get("since", ["0"])[0]
+                return self._json(200, LOG.since(int(since) if since.isdigit() else 0))
             if len(path) == 2 and path[0] == "split":
                 info = jobs.info(path[1])
                 return self._json(200, info) if info else self._json(404, {"error": "No such song (gone?)"})

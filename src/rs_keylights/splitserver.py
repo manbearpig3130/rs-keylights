@@ -57,6 +57,13 @@ def status(url: str, key: str, timeout: float = 3.0) -> dict[str, Any]:
     return got
 
 
+def log(url: str, key: str, since: int = 0, timeout: float = 3.0) -> dict[str, Any]:
+    """What it's printed since line since (its last few hundred lines: {"lines": [[n, "HH:MM:SS", text]...], "next":
+    the last's number}), and the song it's splitting now and how far ("working": {"job", "progress"}, or None). A
+    server from before it: SplitServerError."""
+    return _json(url, key, f"/log?since={int(since)}", timeout=timeout)
+
+
 def has_kit(url: str, key: str) -> bool:
     """Whether it splits a drum part into the kit's pieces too (DrumSep: kick, snare, toms, hh, ride, crash; a server
     from before it doesn't)."""

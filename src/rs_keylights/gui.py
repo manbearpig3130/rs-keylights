@@ -1881,6 +1881,22 @@ class Gui:
 
     # A split server: BS-RoFormer SW on another computer's NVIDIA GPU (splitserver)
 
+    def split_server_log(self, since: int = 0) -> dict[str, Any]:
+        """What the split server's printed since line since, and what it's splitting now (splitserver.log), for the
+        page's view of its output; or why not ("error": none set, not answering, or a copy from before it)."""
+        server = self.settings["split_server"]
+        if server is None:
+            return {"lines": [], "next": since, "working": None, "error": "No split server set"}
+        try:
+            return {**splitserver.log(server["url"], server["key"], since), "error": None}
+        except splitserver.Unreachable as exc:
+            return {"lines": [], "next": since, "working": None, "error": f"It isn't answering ({exc})"}
+        except splitserver.SplitServerError as exc:
+            said = str(exc)
+            return {"lines": [], "next": since, "working": None,
+                    "error": "Its copy of the script is older: copy the new one to it to see its output here"
+                    if said.startswith("404") or "No such thing" in said else said}
+
     def split_server_info(self) -> dict[str, Any] | None:
         """The split server set (None: none): its address, whether it answers ("ok": None while it's first asked),
         what it runs on and how many songs it has waiting, or why not. Asked again in the background once what it
@@ -4739,6 +4755,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.song_key(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/tones":
                 self._json(200, gui.tones())
+            elif url.path == "/api/stems/server/log":
+                since = parse_qs(url.query).get("since", ["0"])[0]
+                self._json(200, gui.split_server_log(int(since) if since.isdigit() else 0))
             elif url.path == "/api/keys/held":  # (answered once they change: the page asks again then)
                 since = parse_qs(url.query).get("since", ["-1"])[0]
                 self._json(200, gui.held_keys(int(since) if since.lstrip("-").isdigit() else -1))

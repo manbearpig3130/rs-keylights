@@ -637,6 +637,9 @@ DrumSep (aufr33 and jarredou's MDX23C model, 440 MB more on its first run): with
 back the drums' kit pieces too (kick, snare, toms, hi-hat, ride, crash, split from its drums in the same job), and
 the song's drum part is made again from them as soon as the parts are in (see
 [How a drum part is made](#how-a-drum-part-is-made)). An older copy of the script on the PC just splits the parts.
+In its terminal, the song being split has a progress bar; **Its output**, under the address and key in the Song's
+audio card, shows what it's printed (its last 300 lines) and how far the song it's splitting is, so you needn't
+keep a terminal open on the PC.
 The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
 and mute, the same for every song. This needs the `drums` and `listen` extras and `tools/drums-setup.sh`.

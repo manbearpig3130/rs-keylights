@@ -158,6 +158,10 @@
   #audioPartsNote, #splitServerNote { flex: 1 1 200px; }
   .split-server { margin-top: 12px; }
   .split-server summary { cursor: pointer; color: var(--muted); }
+  .split-server-log { margin-top: 10px; }
+  .split-server-log pre { max-height: 240px; overflow: auto; margin: 6px 0 4px; padding: 8px; border-radius: 6px;
+    background: var(--input); border: 1px solid var(--line); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; }
   #audioOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
@@ -561,6 +565,11 @@
       <div class="audio-parts-head"><span id="splitServerNote" class="small muted"></span>
         <button type="button" id="splitServerForget">Forget it</button>
         <button type="button" id="splitServerSave">Save and check</button></div>
+      <details id="splitServerLog" class="split-server-log">
+        <summary class="small">Its output</summary>
+        <pre id="splitServerLines" aria-live="polite"></pre>
+        <div id="splitServerWorking" class="small muted"></div>
+      </details>
     </details>
   </section>
 
@@ -3622,6 +3631,41 @@ async function setSplitServer(change) {  // (then the song again: what the serve
   $("splitServerNote").textContent = said.server && !said.server.ok ? said.server.error || "" :
     said.server ? `It answers: ${said.server.device}` : "";
 }
+// The split server's output (what it prints in its own terminal, its last few hundred lines), while it's opened:
+// asked again every second, from the line after the last shown; the song it's splitting now and how far, under it.
+// GET /api/stems/server/log
+let serverLogNext = 0, serverLogTimer = null;
+async function followServerLog() {
+  clearTimeout(serverLogTimer);
+  const box = $("splitServerLog");
+  if (!box.open) return;
+  try {
+    const d = await api(`/api/stems/server/log?since=${serverLogNext}`);
+    const pre = $("splitServerLines");
+    if (d.next < serverLogNext) {  // (it started again: its lines from 1)
+      pre.textContent = "";
+      serverLogNext = 0;
+    }
+    if (d.lines.length) {
+      const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+      pre.textContent += d.lines.map(([_n, at, text]) => `${at}  ${text}\n`).join("");
+      const lines = pre.textContent.split("\n");
+      if (lines.length > 400) pre.textContent = lines.slice(-400).join("\n");
+      if (atEnd) pre.scrollTop = pre.scrollHeight;
+    }
+    if (!d.error) serverLogNext = d.next;
+    const w = d.working;
+    $("splitServerWorking").textContent = d.error ? d.error :
+      w ? `Splitting now (${w.job}): ${Math.round(w.progress * 100)}%` : "Idle: nothing being split";
+  } catch (e) {
+    $("splitServerWorking").textContent = `Couldn't ask: ${e.message}`;
+  }
+  serverLogTimer = setTimeout(followServerLog, 1000);
+}
+$("splitServerLog").addEventListener("toggle", () => {
+  if ($("splitServerLog").open) followServerLog(); else clearTimeout(serverLogTimer);
+});
+
 $("splitServerSave").addEventListener("click", () => act(() =>
   setSplitServer({url: $("splitServerUrl").value, key: $("splitServerKey").value})));
 $("splitServerForget").addEventListener("click", () => act(() => setSplitServer({url: ""})));

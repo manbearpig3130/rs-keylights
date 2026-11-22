@@ -260,3 +260,31 @@ def test_every_file_the_server_downloads_is_pinned_by_a_whole_sha256():
     import re
     pinned = {**server_script.CODE, **server_script.MODEL, **server_script.KIT_MODEL}
     assert pinned and all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in pinned.values()), pinned
+
+
+def test_what_the_server_prints_and_how_far_it_is_are_asked_for_from_a_line_on(server, tmp_path, monkeypatch):
+    from rs_keylights.gui import Gui
+    from rs_keylights.library import SongIndex
+    url, _jobs = server
+    log = server_script.LOG
+    first = log.count
+    server_script.say("a song from 192.168.1.54 (55 MB)")
+    log.progress("abc123", 0.4)
+    got = splitserver.log(url, "the-key", first)
+    assert [line[2] for line in got["lines"]] == ["a song from 192.168.1.54 (55 MB)"] and got["next"] == first + 1
+    assert got["working"] == {"job": "abc123", "progress": 0.4}
+    log.progress(None)
+    assert splitserver.log(url, "the-key", got["next"]) == {"lines": [], "next": first + 1, "working": None}
+    for k in range(server_script.LOG_KEPT + 5):  # (its last LOG_KEPT kept)
+        server_script.say(f"line {k}")
+    assert len(log.since(0)["lines"]) == server_script.LOG_KEPT
+    (tmp_path / "game").mkdir()
+    gui = Gui(SongIndex(tmp_path / "game", tmp_path / "index.json"), settings_file=tmp_path / "gui.json",
+              list_ports=list, other_follow=lambda: False)
+    assert gui.split_server_log()["error"] == "No split server set"
+    gui.set_split_server({"url": url, "key": "the-key"})
+    said = gui.split_server_log(log.count - 1)
+    assert said["error"] is None and [line[2] for line in said["lines"]] == [f"line {server_script.LOG_KEPT + 4}"]
+    monkeypatch.setattr(splitserver, "log", lambda *a, **k: (_ for _ in ()).throw(splitserver.SplitServerError(
+        "No such thing")))  # (a copy of the script from before it)
+    assert "copy the new one" in gui.split_server_log()["error"]
