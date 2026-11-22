@@ -79,11 +79,12 @@ it, unless it says otherwise.
 - **The header**: the song's time slider and speed (25% to 200%), ▶/❚❚, ■, Mute 🔊 (just the lights, no
   sound), 🎵 the song's own audio, **Follow Rocksmith**, ⚙ to fold the settings column away, and full screen ⛶.
 - **The middle**: the song and its cards.
-- **The settings column**: setup cards. Each folds into its title, and the setup ones start folded.
+- **The settings column**: setup cards. Each folds into its title, and the setup ones start folded. What a card or
+  setting does is behind its **ⓘ**: point at it, or tap it (on a phone).
 - **✎ in the header** edits the layout. Move cards (drag ⠿, or ▲ ▼), remove them (✕), or add them from the bar
-  above. You can have several **Fretboard**, **Tab** and **Keys** cards, each showing its own part (for example a
-  bass tab beside the lead's). **Reset layout** puts it back. The layout is kept per browser, so a phone keeps its
-  own.
+  above. You can have several **Fretboard**, **Tab** and **Keyboard** cards, each showing its own part (for
+  example a bass tab beside the lead's). **Reset layout** puts it back. The layout is kept per browser, so a phone
+  keeps its own.
 
 The **Library** lists every song in the game folder, searchable by song, artist, album or file name. Clicking a
 song shows it without changing what plays. Its **⏵** makes it the *active* song: the one Play plays and the
@@ -91,12 +92,15 @@ Launchkey shows.
 
 ### The song's cards
 
-- **Song**: its art, title, artist and key, and a block for each part:
-  - lit keys, on or off: the lit parts share the keyboard's 4 lit keys a moment at a time, as many different keys as
-    they play, the part you play in the game first, then the song's order;
+- **Song**: its art, title, artist and key, and a line for each part:
+  - a tone: the one the Launchkey's knobs are on (its main tone, palm mutes or harmonics, as the Launchkey's ▲ turns
+    them; the game's TONES too), the other two under its **▸**;
+  - lit keys (the bulb, lit while they're on), on or off: the lit parts share the keyboard's 4 lit keys a moment
+    at a time, as many different keys as they play, the part you play in the game first, then the song's order;
   - volume (0 to 100%, 100% at first; it's the volume of the part in that place, first, second…, in every song);
-  - mute 🔇;
-  - its tones under **Tones**: the main tone, a palm-mute tone and a harmonics tone.
+  - mute 🔇.
+
+  The drum part's line has the Casio's drum kit, as the **Drums** card has it (playing on the Casio).
 
   Until you change them, every part plays and lights a key. Lead, rhythm and bass light 2, 1 and 1. A song with
   more than 4 parts starts with its first lead, rhythm and bass.
@@ -112,10 +116,10 @@ Launchkey shows.
 - **Tab**: two rows of bars, the one the song's in and the next, turning like a page. Notes light as they're
   played, with chord names above and techniques as tab writes them (h, p, t, / \, b, ~, <7>, x; palm mutes in
   italics).
-- **Keys**: the notes falling onto a drawing of the Casio's 61 keys, 2 to 8 seconds ahead. It shows every part
+- **Keyboard**: the notes falling onto a drawing of the Casio's 61 keys, 2 to 8 seconds ahead. It shows every part
   playing, or one part. Its keyboard plays: click a key (or drag across them) and it sounds as the Launchkey's keys
-  do, where they play (Plays on, in the Launchkey card). Keys held down show red, the Launchkey's too. Under it,
-  **Keys' tone** is the tone they play (its keys' and the Launchkey's).
+  do, where they play (Plays on, in the Launchkey card). Keys held down show red, the Launchkey's too. At its top,
+  beside its title, is the tone they play (its keys' and the Launchkey's).
 - **Drums**: a drum kit that lights as the drum part strikes it. Click a drum to hear it (it sounds as you press, and
   fast clicks don't select the page's text). See [Drums](#drums).
 - **Song Audio**: the song's own audio and its parts. See [The song's own audio](#the-songs-own-audio).
@@ -210,7 +214,7 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
   Notes, bends, vibrato, the program and volume go to the device, but tones don't. If it isn't connected, the Casio
   plays the part.
 - **Launchkey**: whether it's the page's remote (and which one is connected). Its own keys play the Casio on
-  channel 1 with a tone of their own (on the **Keys** card). **Plays on**
+  channel 1 with a tone of their own (at the top of the **Keyboard** card). **Plays on**
   sends them to another MIDI output instead (IAC Driver Bus 1 for an app on the Mac, such as Komplete Kontrol). They
   still light the Casio's keys.
 - **rs-keylights**: the game's songs folder, the link for a phone, and **Look for new songs**.
@@ -530,8 +534,9 @@ rearmed-mods' Song Stems installed (for its model).
 
 ### Where it plays
 
-- **On the Casio** (by default): its drum channel, 10. The **Drums** card's **Drum kit** picks the Casio's kit
-  (Standard, Room, Power, Synth, Brush or Orchestra) for every song; the drum part's Launchkey knob does the same.
+- **On the Casio** (by default): its drum channel, 10. The **Drums** card's drum kit, at its top right, picks the
+  Casio's kit (Standard, Room, Power, Synth, Brush or Orchestra) for every song; the drum part's line in the song's
+  card and its Launchkey knob do the same.
 - **On another device**: **Other MIDI devices** › Drums, with its drums' notes either General MIDI's or an
   original Novation Circuit's.
 
@@ -623,8 +628,8 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
   It stays decoded for a minute after it stops, so playing it again starts at once.
 - It's off each time rs-keylights starts, and it doesn't play while following.
 
-The **Song Audio** card sets its volume and output device (**Default output**: macOS's own). Its 🎵 turns the
-audio on and off, red while it's on.
+The **Song Audio** card sets its volume and output device (**Default output**: macOS's own), at its top. Its 🎵
+turns the audio on and off, red while it's on.
 
 **Split into parts** separates it into drums, bass, guitar, vocals, keys and other (ambience, synths, effects), once,
 with the **separator** chosen in the section beside it (its summary says which, and where it splits):

@@ -94,10 +94,12 @@
   .song-export { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
   .song-export button { font-size: 12px; padding: 2px 8px; }
   .song-head h2 { font-size: 18px; }
-  /* An arrangement's tones fold away (its line: name, lit keys, volume, mute), opened by its Tones button */
+  /* An arrangement's other tones fold away (its line: name, a tone, lit keys, volume, mute), opened by its ▸ (turned
+     ▾ while they're open) */
   .part-fold { padding: 1px 8px; font-size: 12px; color: var(--muted); }
-  .part-fold::after { content: " ▸"; }
-  .part-fold[aria-expanded="true"]::after { content: " ▾"; }
+  .part-open { width: 28px; padding: 2px 0; font-size: 14px; line-height: 1.2; }
+  .part-open::after { content: "▶"; display: inline-block; font-size: 10px; transition: transform .15s; }
+  .part-open[aria-expanded="true"]::after { transform: rotate(90deg); }
   /* The settings column: each card folds into its title; the whole column folds away (the middle gets its room) */
   #side h3.fold { cursor: pointer; user-select: none; }
   #side h3.fold::before { content: "▾ "; color: var(--muted); }
@@ -115,11 +117,32 @@
   body.side-hidden main { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
   @media (max-width: 1100px) { body.side-hidden main { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); } }
   header .icon { padding: 3px 0; width: 42px; font-size: 17px; line-height: 1.3; text-align: center; }
-  .lit { display: inline-flex; align-items: center; gap: 4px; }
-  .lit button { padding: 2px 9px; }
-  .lit .lit-toggle { min-width: 3.4em; }
-  .lit .lit-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  .lit b { min-width: 1.3em; text-align: center; }
+  /* A part's lit keys: a bulb, lit (on, its rays out) while it lights them, dim while it doesn't */
+  .lit-toggle { padding: 2px 6px; color: var(--muted); line-height: 0; }
+  .lit-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round; }
+  .lit-toggle .rays { display: none; }
+  .lit-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .lit-toggle.on .glass { fill: currentColor; }
+  .lit-toggle.on .rays { display: inline; }
+  /* An info icon (an italic i in a circle): what's explained there kept out of the way, its .info-text (after it)
+     shown over the page as the mouse is on it, as it's focused, or tapped (kept until it's tapped again) */
+  button.info { display: inline-flex; align-items: center; justify-content: center; position: relative; width: 17px;
+    height: 17px; padding: 0; margin: 0 4px; border: 1.2px solid var(--muted); border-radius: 50%; background: none;
+    color: var(--muted); vertical-align: 1px; flex: none; }
+  button.info::before { content: "i"; font: italic 700 11px/1 Georgia, "Times New Roman", serif; }
+  button.info::after { content: ""; position: absolute; inset: -7px; }  /* (a finger's worth to tap) */
+  button.info:hover, button.info[aria-expanded="true"] { border-color: var(--text); color: var(--text); }
+  button.info[aria-expanded="true"] { background: var(--text); color: var(--panel); }
+  .info-text { display: none; position: fixed; z-index: 4; width: max-content; max-width: min(360px, calc(100vw - 32px));
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text);
+    box-shadow: 0 6px 20px rgba(0,0,0,.22);
+    font: 400 12px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    text-align: left; text-transform: none; letter-spacing: normal; white-space: normal; cursor: auto; user-select: text;
+    -webkit-user-select: text; }  /* (none of its heading's or summary's own: bold, a pointer...) */
+  .info-text.shown { display: block; }
+  .info-text .para { display: block; }
+  .info-text .para + .para { margin-top: 6px; }
   #followLog summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-top: 8px; }
   table { width: 100%; border-collapse: collapse; margin: 12px 0; }
   th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--line); }
@@ -127,16 +150,22 @@
   /* The song's parts: a block each, its line (plays, name, lit keys) over its tones, a name on one line in each */
   #parts { display: grid; gap: 8px; margin: 12px 0; }
   .part-block { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-  .part-block.off .part-tones, .part-block.off .part-lit { opacity: .5; }
+  .part-block.off .part-tones, .part-block.off .part-lit, .part-block.off .part-tone { opacity: .5; }
   .making { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .making .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
   .making .bar span { display: block; height: 100%; background: var(--live); }
   .making output { font-variant-numeric: tabular-nums; min-width: 3.5em; text-align: right; }
-  .part-head { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
-  .part-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* A part's line: its name, its tone (or drum kit) in the middle, then its controls together on the right; too narrow,
+     its controls go under them, still on the right, and its tone shrinks (its name cut short) before that */
+  .part-head { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+  .part-name { flex: 1 1 130px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .part-name .on-air { font-size: 12px; }
+  .part-head .part-tone { flex: 1 1 150px; min-width: 130px; max-width: 240px; }  /* (over a tone box's own flex) */
+  .part-head .part-kit { flex-basis: auto; min-width: 0; }
+  .part-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
   .part-lit, .part-volume { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
-  .part-volume input { width: 110px; accent-color: var(--accent); }
+  .part-volume { min-width: 0; }
+  .part-volume input { width: 110px; min-width: 50px; flex: 0 1 110px; accent-color: var(--accent); }
   .part-volume output { min-width: 3em; font-variant-numeric: tabular-nums; }
   .part-mute { padding: 1px 6px; }
   .part-mute.on { background: var(--accent); border-color: var(--accent); }
@@ -155,12 +184,15 @@
   .loopline { display: flex; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
   .loopline button { padding: 1px 8px; }
   #loopOn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  .part-tones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 64px; gap: 8px; margin-top: 8px; }
+  .part-tones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) 64px; gap: 8px; margin-top: 8px; }
   .audio-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr) 3.5em 2.5em; gap: 6px 10px;
     align-items: center; margin-top: 8px; }
   .audio-grid input[type=range] { width: 100%; }
   .audio-grid .audio-wide { grid-column: 2 / span 3; min-width: 0; }
   .audio-grid label { font-size: 13px; color: var(--muted); }
+  /* The Song Audio card's top: its title, then its volume, where it plays and 🎵 (they go under it, too narrow) */
+  #audioCard .fret-head .part-volume { flex: 0 1 auto; }
+  #audioDevice { flex: 0 1 190px; min-width: 90px; margin-left: auto; }  /* (under it: on the right still) */
   .audio-parts-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; }
   #audioPartsNote, #splitServerNote { flex: 1 1 200px; }
   .split-server { margin-top: 12px; }
@@ -210,6 +242,12 @@
   .tonebox .name { display: block; font-size: 13px; overflow-wrap: break-word; }
   .tonebox.inherited .name { color: var(--muted); font-style: italic; }  /* the default, not chosen here */
   .tonebox select { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; opacity: 0; cursor: pointer; }
+  /* On one line (a part's line, the keyboard card's top): its number, then its name cut short (the whole, its title) */
+  .tonebox.inline { display: flex; align-items: baseline; gap: 6px; padding: 3px 18px 3px 7px; white-space: nowrap; }
+  .tonebox.inline .num, .tonebox.inline .name { display: block; }
+  .tonebox.inline .num { flex: none; font-size: 12px; }
+  .tonebox.inline .num:empty { display: none; }
+  .tonebox.inline .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
   .phone-link { user-select: all; word-break: break-all; }
   .keyline { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
   .keyline > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 8px; align-items: center; }
@@ -319,8 +357,11 @@
   .circuit-kit input { width: 52px; }
   .drumkit text { font-size: 11px; fill: var(--muted); text-anchor: middle; pointer-events: none; }
   .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; user-select: none; -webkit-user-select: none; }
-  .roll-tone { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--muted); }
-  .roll-tone > [data-r="tone"] { flex: 0 1 340px; min-width: 0; color: var(--text); }
+  [data-kind="keys"] .fret-head h3, #audioCard .fret-head h3, #drumsCard .fret-head h3 { flex-basis: auto; }  /* (a
+     short title: what's at its top beside it, on a phone too) */
+  .roll-tone { flex: 1 1 170px; min-width: 150px; max-width: 300px; }  /* (its keys' tone, at its top: narrower,
+     before the rest goes under it) */
+  .roll-tone .stepper button { padding: 2px 8px; }
   .roll-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .roll-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .fret-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
@@ -541,27 +582,24 @@
   <section id="drumsCard" class="card" hidden>
     <div class="fret-head">
       <h3 id="drumsTitle">Drums</h3>
+      <span id="casioSet" hidden></span>
     </div>
     <div id="drumkit" class="drumkit"></div>
     <div id="drumsInfo" class="roll-legend"></div>
     <div id="circuitKit" class="circuit-kit" hidden></div>
-    <div id="casioSet" class="circuit-kit" hidden></div>
   </section>
 
   <section id="audioCard" class="card" hidden>
     <div class="fret-head">
       <h3>Song Audio</h3>
+      <span class="part-volume" title="Its volume">
+        <input type="range" id="audioVolume" min="0" max="100" aria-label="The song's audio volume">
+        <output id="audioVolumeShown"></output></span>
+      <select id="audioDevice" aria-label="Output device"
+        title="Where it plays: Default output is macOS's own (as the Sound settings have it)"></select>
       <button type="button" id="audioOn" title="The song's own audio, from the Mac, with the song you play">🎵</button>
     </div>
-    <div class="audio-grid">
-      <label for="audioVolume">Volume</label>
-      <input type="range" id="audioVolume" min="0" max="100">
-      <output id="audioVolumeShown"></output>
-      <span></span>
-      <label for="audioDevice" title="Where it plays: Default output is macOS's own (as the Sound settings have it)">Output device</label>
-      <select id="audioDevice" class="audio-wide"></select>
-    </div>
-    <div class="audio-parts-head">
+    <div class="audio-parts-head" hidden>
       <span id="audioPartsNote" class="small muted"></span>
     </div>
     <div id="audioProgress" class="making muted small" hidden><div class="bar" role="progressbar" aria-valuemin="0"
@@ -616,7 +654,12 @@
 
   <section id="pedalTonesCard" class="card" hidden>
     <div class="fret-head">
-      <h3>Pedal tones</h3>
+      <h3>Pedal tones<button type="button" class="info" aria-label="About pedal tones"></button><span class="info-text">Each of
+        the song's tones, the one playing lit: its category (RS Companion's mapping) and the guitar pedal's preset for
+        it (dnafx-preset's tone map), each Auto by the rules for every song (Pedal tone rules, on the Guitar card), or
+        this song's own. The pedal follows a change within a second or two. Try switches the pedal to a tone's preset;
+        Keep gives the tone the preset the pedal's on. On the Launchkey, following: hold the tone, try presets with
+        knob 6, and Record keeps the one shown for the tone playing.</span></h3>
       <select id="ptPart" aria-label="Whose tones" title="Whose tones (each part has its own)"></select>
       <label class="small muted" title="The song's style (RS Companion's label, by how heavy it is): dnafx-preset's style rules go by it">Style
         <select id="ptStyle"></select></label>
@@ -624,12 +667,6 @@
     <div id="ptNote" class="note small" hidden></div>
     <table class="pt-table"><tbody id="ptRows"></tbody></table>
     <div id="ptNone" class="small muted" hidden></div>
-    <div class="muted small" style="margin-top:6px">Each of the song's tones, the one playing lit: its category (RS
-      Companion's mapping) and the guitar pedal's preset for it (dnafx-preset's tone map), each Auto by the rules for
-      every song (Pedal tone rules, on the Guitar card), or this song's own. The pedal follows a change within a
-      second or two. Try switches the pedal to a tone's preset; Keep gives the tone the preset the pedal's on. On the
-      Launchkey, following: hold the tone, try presets with knob 6, and Record keeps the one shown for the tone
-      playing.</div>
   </section>
 
   <section id="theoryCard" class="card" hidden>
@@ -659,12 +696,13 @@
 
   <section id="side">
     <div class="card" id="followCard">
-      <h3>Follow Rocksmith</h3>
-      <div class="muted small">Lights the keys along with the song the game plays (from the game itself, with RS Re-ARMed's riffloop mod; without it, RS Companion's stream overlays must be on).</div>
+      <h3>Follow Rocksmith<button type="button" class="info" aria-label="About following Rocksmith"></button><span
+        class="info-text"><span class="para">Lights the keys along with the song the game plays (from the game
+        itself, with RS Re-ARMed's riffloop mod; without it, RS Companion's stream overlays must be on).</span><span
+        class="para">While following, the song you play shows in the middle: its other arrangements can play along,
+        and each can have tones of its own.</span></span></h3>
       <div id="otherFollow" class="note" hidden>Another <code>rs-keylights follow</code> is running (the RS Re-ARMed sidekick?): both would light the keys.</div>
       <div id="followNow" class="muted"></div>
-      <div class="muted small" style="margin-top:8px">While following, the song you play shows in the middle: its
-        other arrangements can play along, and each can have tones of its own.</div>
       <div class="row">
         <label title="Light the keys this much earlier (negative: later)">Offset <input type="number" id="followOffset" value="0" step="10" style="width:70px"> ms</label>
         <label title="Its scale climbs the keys while the song doesn't need them yet"><input type="checkbox" id="followShowKey"> Show each song's key on the keys as it starts</label>
@@ -680,10 +718,10 @@
       <div class="row"><label>Input <select id="listenDevice"></select></label></div>
       <div id="listenStatus" class="muted small"></div>
       <details class="card-section" id="pedalCard">
-        <summary>Guitar pedal</summary>
-        <div class="muted small">A Harley Benton DNAfx GiT's presets, switched over its USB cable (with dnafx-preset). On
+        <summary>Guitar pedal<button type="button" class="info" aria-label="About the guitar pedal"></button><span
+          class="info-text">A Harley Benton DNAfx GiT's presets, switched over its USB cable (with dnafx-preset). On
           the Launchkey, knob 6 steps through them (knob 8 ten at a time while one shows), the pad under it goes
-          through your favourites, and the bottom pad keeps the tone you're on (lit: it follows the song's).</div>
+          through your favourites, and the bottom pad keeps the tone you're on (lit: it follows the song's).</span></summary>
         <div class="row stepper">
           <button type="button" id="pedalDown" title="The preset before">‹</button>
           <select id="pedalSlot"></select>
@@ -701,18 +739,19 @@
         <div id="pedalStatus" class="muted small"></div>
       </details>
       <details class="card-section" id="pedalRulesCard">
-        <summary>Pedal tone rules</summary>
-        <div class="muted small">The guitar pedal's presets for every song's tones (dnafx-preset's tone map, <code id="prFile"></code>):
+        <summary>Pedal tone rules<button type="button" class="info" aria-label="About the pedal tone rules"></button><span
+          class="info-text">The guitar pedal's presets for every song's tones (dnafx-preset's tone map, <code id="prFile"></code>):
           the first that fits a tone wins, a song's own (Pedal tones), then its artist's, its effect's, its style's,
-          its category's.</div>
+          its category's.</span></summary>
         <div id="prNote" class="note small" hidden></div>
         <div class="pr-section"><div>Categories</div><div id="prCategories"></div></div>
         <div class="pr-section"><div>Artists</div><div id="prArtists"></div></div>
         <div class="pr-section"><div title="A tone's modulation (chorus, flanger...), any modulation, or a delay">Effects</div><div id="prEffects"></div></div>
         <div class="pr-section"><div title="The song's style: RS Companion's label, by how heavy it is">Styles</div><div id="prStyles"></div></div>
         <div class="pr-section"><div title="Set on the Pedal tones card (or the Launchkey's Record)">Songs</div><div id="prSongs"></div></div>
-        <details class="pr-section"><summary class="small muted">RS Companion: categories and styles</summary>
-          <div class="muted small">How tones get their categories and songs their styles (RS Companion's presets.json, <code id="prPresets"></code>).</div>
+        <details class="pr-section"><summary class="small muted">RS Companion: categories and styles<button
+          type="button" class="info" aria-label="About RS Companion's categories and styles"></button><span
+          class="info-text">How tones get their categories and songs their styles (RS Companion's presets.json, <code id="prPresets"></code>).</span></summary>
           <div class="pr-section"><div title="An artist's tones of a category as another">Artists' categories</div><div id="prRemaps"></div></div>
           <div class="pr-section"><div title="A song (by its key) or an artist always this style">Song and artist styles</div><div id="prSongStyles"></div></div>
           <div class="pr-section"><div title="A song's style by how heavy it is (0 to 1): the last it reaches">Styles by heaviness</div><div id="prHeaviness"></div></div>
@@ -721,18 +760,18 @@
     </div>
 
     <div class="card" id="outputsCard">
-      <h3>Other MIDI devices</h3>
-      <div class="muted small">A kind of part can sound on another MIDI device (a synth, with its own speakers) instead
-        of the <span class="kbName">keyboard</span>, which still lights its keys. It keeps its own sound: no tones are sent to it.</div>
+      <h3>Other MIDI devices<button type="button" class="info" aria-label="About other MIDI devices"></button><span
+        class="info-text">A kind of part can sound on another MIDI device (a synth, with its own speakers) instead
+        of the <span class="kbName">keyboard</span>, which still lights its keys. It keeps its own sound: no tones are sent to it.</span></h3>
       <div id="outputRows" class="outputs"></div>
     </div>
 
     <div class="card" id="pinchCard">
-      <h3>Pinch harmonics</h3>
-      <div class="muted small">How a pinch harmonic sounds: its fretted note, softer, under a squeal on the part's
+      <h3>Pinch harmonics<button type="button" class="info" aria-label="About pinch harmonics"></button><span
+        class="info-text">How a pinch harmonic sounds: its fretted note, softer, under a squeal on the part's
         pinch-harmonic tone, struck a little flat and scooped up to its pitch, then a wide vibrato. A quick one
         (a riff's) is over before the vibrato comes in. <b>Try it</b> plays a riff with a quick one and a held one on
-        the lead parts' tones.</div>
+        the lead parts' tones.</span></h3>
       <div class="grid2" id="pinchFields">
         <label for="pinchUp">Squeal</label>
         <select id="pinchUp" data-field="up">
@@ -773,18 +812,18 @@
       <div class="row"><span><label title="A Launchkey MK4 as the page's remote: its pads, knobs, mixer and screen for the song, and following, Rocksmith's own keys (see the README). Off, the page lets go of it, its keys too">
           <input type="checkbox" id="launchkey"> The page's remote</label>
         <span id="launchkeyStatus" class="muted small"></span></span></div>
-      <div class="muted small">Its keys play the Casio (on channel 1, a part of their own), or another MIDI output
-        (Plays on), and light the keys they
-        play: first, a song's lights getting the rest until you let go. Their tone is on the Keys card, whose keys
-        play as these do. On the Launchkey, knob 7 steps through the
-        tones (knob 8 through their groups while one shows), and the pads under it turn them on and off and choose
-        whether they light the keys.</div>
       <div class="row">
         <label><input type="checkbox" id="keysSound"> Sound</label>
         <label><input type="checkbox" id="keysLights"> Light the keys</label>
+        <button type="button" class="info" aria-label="About its keys"></button><span class="info-text">Its keys play
+          the Casio (on channel 1, a part of their own), or another MIDI output (Plays on), and light the keys they
+          play: first, a song's lights getting the rest until you let go. Their tone is at the top of the Keyboard
+          card with the falling notes, whose keys play as these do. On the Launchkey, knob 7 steps through the tones
+          (knob 8 through their groups while one shows), and the pads under it turn them on and off and choose
+          whether they light the keys.</span>
       </div>
       <div class="grid2">
-        <label for="keysOutput" title="Where the keys sound: the Casio (with the tone on the Keys card), or another MIDI output (IAC Driver Bus 1: an app on this Mac, such as Komplete Kontrol), with its own sound. They light the Casio's keys either way">Plays on</label>
+        <label for="keysOutput" title="Where the keys sound: the Casio (with the tone on the Keyboard card with the falling notes), or another MIDI output (IAC Driver Bus 1: an app on this Mac, such as Komplete Kontrol), with its own sound. They light the Casio's keys either way">Plays on</label>
         <span><select id="keysOutput"></select>
           <label id="keysChannelBox" title="The channel they play on there">channel <input id="keysChannel" type="number" min="1" max="16" style="width:56px"></label>
           <span id="keysOutputStatus" class="muted small"></span></span>
@@ -816,16 +855,17 @@
         <button id="saveSettings">Save</button>
       </div>
       <details class="card-section" id="defaultsCard">
-        <summary>Default tones</summary>
-        <div class="muted small">For parts without tones of their own, playing a song or following the game.</div>
+        <summary>Default tones<button type="button" class="info" aria-label="About default tones"></button><span
+          class="info-text">For parts without tones of their own, playing a song or following the game.</span></summary>
         <div id="followKinds"></div>
       </details>
       <details class="card-section" id="toneChangesCard">
         <summary>Tone changes</summary>
-        <label><input type="checkbox" id="toneChanges"> Follow the songs' tone changes</label>
-        <div class="muted small">When a song switches tone (clean, distortion, acoustic&hellip;, from the tone's name or its
-          pedals), the part's tone switches to the one for that kind here; back to the song's first tone, to the part's
-          own. Palm-mute and pinch-harmonic tones stay as they are.</div>
+        <label><input type="checkbox" id="toneChanges"> Follow the songs' tone changes</label><button type="button"
+          class="info" aria-label="About following tone changes"></button><span class="info-text">When a song
+          switches tone (clean, distortion, acoustic&hellip;, from the tone's name or its pedals), the part's tone
+          switches to the one for that kind here; back to the song's first tone, to the part's own. Palm-mute and
+          pinch-harmonic tones stay as they are.</span>
         <div id="toneKinds" class="grid2"></div>
       </details>
     </div>
@@ -869,15 +909,14 @@
 <template id="rollTemplate">
   <section class="card" data-kind="keys" hidden>
     <div class="fret-head">
-      <h3 data-r="title">Keys</h3>
+      <h3 data-r="title">Keyboard</h3>
+      <span data-r="tone" class="roll-tone"
+        title="The tone its keys play, clicked here, and the Launchkey's keys (its knob 7 steps it too)"></span>
       <label class="small" title="How far ahead the notes show, falling onto the keys">Ahead
         <select data-r="ahead"><option value="2">2 s</option><option value="4">4 s</option><option value="6">6 s</option><option value="8">8 s</option></select></label>
       <select data-r="part" aria-label="Whose notes" title="Whose notes: what the keyboard plays (every part playing, as it lights and sounds them), or one arrangement alone"></select>
     </div>
     <div data-r="roll" class="roll"><canvas data-r="canvas" aria-label="The notes falling onto the keys"></canvas></div>
-    <div class="roll-tone"
-      title="The tone its keys play, clicked here, and the Launchkey's keys (its knob 7 steps it too)">
-      <span>Keys' tone</span><span data-r="tone"></span></div>
     <div data-r="legend" class="roll-legend"></div>
   </section>
 </template>
@@ -922,6 +961,87 @@ async function act(fn) {
   poll(true);
 }
 
+// Info icons: <button type="button" class="info" aria-label="About …"></button><span class="info-text">…</span>,
+// by a card's title or what it explains. The text, kept where it is (a keyboard's name, a file filled in), shows over
+// the page by its icon as the mouse is on it, as it's focused from the keyboard, or tapped (then kept, until it's
+// tapped again, Esc, or a tap elsewhere); one at a time. Any icon, however it came (the listeners are the page's)
+const infoTip = {button: null, pinned: false};
+let infoCount = 0;
+
+function infoTextOf(button) {
+  const text = button.nextElementSibling;
+  if (!text || !text.classList.contains("info-text")) return null;
+  if (!text.id) text.id = `infoText${++infoCount}`;
+  button.setAttribute("aria-describedby", text.id);
+  button.title = text.title = "";  // (not a heading's own title over it: "Fold it…")
+  return text;
+}
+
+function showInfo(button, pinned) {
+  const text = infoTextOf(button);
+  if (!text) return;
+  if (infoTip.button && infoTip.button !== button) hideInfo();
+  infoTip.button = button;
+  infoTip.pinned = pinned;
+  button.setAttribute("aria-expanded", String(pinned));
+  text.classList.add("shown");
+  placeInfo();
+}
+
+function hideInfo() {
+  const button = infoTip.button;
+  infoTip.button = null;
+  infoTip.pinned = false;
+  if (!button) return;
+  button.setAttribute("aria-expanded", "false");
+  const text = infoTextOf(button);
+  if (text) text.classList.remove("shown");
+}
+
+// Under its icon (over it, with no room below), inside the window, 16 px from its sides
+function placeInfo() {
+  const button = infoTip.button, text = button && infoTextOf(button);
+  if (!text) return;
+  if (!button.isConnected || !button.getClientRects().length) { hideInfo(); return; }  // (gone, or folded away)
+  const at = button.getBoundingClientRect(), wide = document.documentElement.clientWidth;
+  const w = text.offsetWidth, h = text.offsetHeight, below = at.bottom + 6;
+  text.style.left = `${Math.max(16, Math.min(at.left - 10, wide - 16 - w))}px`;
+  text.style.top = `${below + h > innerHeight - 8 && at.top - 6 - h > 8 ? at.top - 6 - h : below}px`;
+}
+
+document.addEventListener("mouseover", (e) => {
+  const button = e.target.closest && e.target.closest("button.info");
+  if (button && button !== infoTip.button && !infoTip.pinned) showInfo(button, false);
+});
+document.addEventListener("mouseout", (e) => {
+  const button = e.target.closest && e.target.closest("button.info");
+  if (button && button === infoTip.button && !infoTip.pinned && !button.contains(e.relatedTarget)) hideInfo();
+});
+document.addEventListener("focusin", (e) => {
+  const button = e.target.closest && e.target.closest("button.info");
+  if (button && button !== infoTip.button && button.matches(":focus-visible")) showInfo(button, false);
+});
+document.addEventListener("focusout", (e) => {
+  if (e.target === infoTip.button && !infoTip.pinned) hideInfo();
+});
+document.addEventListener("click", (e) => {
+  const button = e.target.closest("button.info");
+  if (button) {
+    e.preventDefault();  // (in a section's summary: it stays open or shut)
+    if (infoTip.pinned && infoTip.button === button) hideInfo();
+    else showInfo(button, true);
+  } else if (e.target.closest(".info-text")) {
+    e.preventDefault();  // (its text clicked, in a summary: the same)
+  } else if (infoTip.pinned) {
+    hideInfo();
+  }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && infoTip.button) hideInfo(); });
+window.addEventListener("scroll", placeInfo, {passive: true, capture: true});
+window.addEventListener("resize", placeInfo);
+for (const button of document.querySelectorAll("button.info")) infoTextOf(button);  // (the page's: linked to their
+// texts from the start)
+
 // Tones
 
 let toneOptions = "";
@@ -950,10 +1070,11 @@ function toneSelect(first, value, onChange, same = false) {
 }
 
 // A tone's dropdown in a box showing the tone chosen as its number over its name (an "input" event on the
-// dropdown shows a value set from here, as a "change" would send it)
-function toneBox(select) {
+// dropdown shows a value set from here, as a "change" would send it). Inline: on one line, its name cut short, what
+// it's for (caption: "Palm mutes"...) before its number (a default: in italics, as over two lines)
+function toneBox(select, inline = false, caption = "") {
   const box = document.createElement("span");
-  box.className = "tonebox";
+  box.className = "tonebox" + (inline ? " inline" : "");
   const number = document.createElement("span");
   const name = document.createElement("span");
   number.className = "num";
@@ -964,9 +1085,10 @@ function toneBox(select) {
   const show = () => {
     const text = select.selectedOptions[0] ? select.selectedOptions[0].textContent : "";
     const m = /^(\d{3}) (.*?)( · default)?$/.exec(text);  // "296 GM OVERDRIVE", maybe " · default"
-    number.textContent = m ? m[1] + (m[3] ? " · default" : "") : select.value ? "" : "default";
+    number.textContent = inline ? [caption, m ? m[1] : ""].filter(Boolean).join(" ") :
+      m ? m[1] + (m[3] ? " · default" : "") : select.value ? "" : "default";
     name.textContent = m ? m[2] : text;
-    box.title = text;
+    box.title = caption ? `${caption}: ${text}` : text;
     box.classList.toggle("inherited", !select.value);
   };
   select.addEventListener("change", show);
@@ -1502,7 +1624,6 @@ function makeRollCard(spec) {
         if (wanted !== asked) return;
         data = d;
         shown = "";
-        r("title").textContent = picked ? `Keys · ${d.parts[0] ? d.parts[0].name : ""}` : `Keys · what the ${KB()} plays`;
         const kinds = [...new Set(d.parts.map((p) => p.kind))];
         r("legend").innerHTML = d.parts.map((p) =>
           `<span><span class="swatch" style="background: var(--${p.kind})"></span>${esc(p.name)}${p.lights ? "" : " (sounds, not lit)"}</span>`).join("") +
@@ -1560,7 +1681,7 @@ function makeRollCard(spec) {
   canvas.addEventListener("pointerup", letGo);
   canvas.addEventListener("pointercancel", letGo);
   canvas.addEventListener("lostpointercapture", letGo);
-  r("tone").append(keysToneControl());  // (the Launchkey's keys' tone: these keys play as they do)
+  r("tone").append(keysToneControl());  // (the Launchkey's keys' tone, at its top: these keys play as they do)
   r("ahead").value = String(ahead());
   r("ahead").addEventListener("change", () => {
     card.spec.ahead = rollAhead = Number(r("ahead").value) || 4;
@@ -1796,26 +1917,30 @@ function showCircuitKit(d) {
   }), casioKit(d));
 }
 
-// The keyboard's own drum kit, when the drums play on it (every song's): Standard, Power...
+// The keyboard's own drum kit, when the drums play on it (every song's): Standard, Power..., at the Drums card's top
 function showCasioSet(d) {
   const box = $("casioSet");
   box.hidden = !!d.device;
   if (box.hidden) return;
-  const row = document.createElement("label");
-  row.title = `The ${KB()}'s drum kit the drum parts play on (every song's)`;
-  const label = document.createElement("span");
-  label.className = "name";
-  label.textContent = "Drum kit";
+  box.replaceChildren(drumKitSelect(d.drum_sets, d.drum_set));
+}
+
+// Its dropdown, the Drums card's and the song card's drum part's (the same kit: a change shows in both, the song's
+// drum part told at once, the Drums card asking again as it sees it). POST /api/drums {"kit"}
+function drumKitSelect(kits, kit) {
   const pick = document.createElement("select");
-  pick.innerHTML = d.drum_sets.map(([program, name]) => `<option value="${program}">${esc(name)}</option>`).join("");
-  pick.value = String(d.drum_set);
+  pick.setAttribute("aria-label", "Drum kit");
+  pick.title = `The ${KB()}'s drum kit the drum parts play on (every song's)`;
+  pick.innerHTML = kits.map(([program, name]) => `<option value="${program}">${esc(name)}</option>`).join("");
+  pick.value = String(kit);
   pick.addEventListener("change", () => act(async () => {
-    await api("/api/drums", {song: selected.id, kit: Number(pick.value)});
-    drumsWanted = "";
-    if (selected) renderDrumsCard(selected);
+    const sid = selected.id, info = await api("/api/drums", {song: sid, kit: Number(pick.value)});
+    if (selected && selected.id === sid) {
+      selected = {...selected, drums: info};
+      renderSong();
+    }
   }));
-  row.append(label, pick);
-  box.replaceChildren(row);
+  return pick;
 }
 
 function casioKit(d) {
@@ -2883,7 +3008,7 @@ $("wuLadder").addEventListener("change", () => {
 requestAnimationFrame(warmupFrame);
 
 // The page's layout (✎ in the header): the middle column's cards in the order wanted, with copies of the ones that
-// can have several (Fretboard, Tab, Keys: each with its own part, a tab of the bass beside the lead's, say) and the
+// can have several (Fretboard, Tab, Keyboard: each with its own part, a tab of the bass beside the lead's, say) and the
 // rest there once or not at all; and the settings column's cards in order, or put away. Moved by dragging (⠿) or
 // ▲ ▼, removed with ✕, added from the bar over the cards. Kept in this browser (a phone has its own)
 const CARD_KINDS = {
@@ -2891,7 +3016,7 @@ const CARD_KINDS = {
   warmup: {name: "Warm-up", fixed: "warmupCard", first: true},
   fretboard: {name: "Fretboard", make: makeFretCard},
   tab: {name: "Tab", make: makeTabCard},
-  keys: {name: "Keys", make: makeRollCard},
+  keys: {name: "Keyboard", make: makeRollCard},
   drums: {name: "Drums", fixed: "drumsCard"},
   audio: {name: "Song Audio", fixed: "audioCard"},
   theory: {name: "Theory", fixed: "theoryCard"},
@@ -2928,7 +3053,7 @@ function loadLayout() {
           known: Object.keys(CARD_KINDS)};
 }
 let layout = loadLayout();
-let liveCards = [];  // the copies laid out (Fretboard, Tab, Keys): each {spec, root, render(s, f), frame()}
+let liveCards = [];  // the copies laid out (Fretboard, Tab, Keyboard): each {spec, root, render(s, f), frame()}
 function saveLayout() {
   store.set(LAYOUT_KEY, layout);
   for (const card of document.querySelectorAll("#middle > .card")) {  // (their names: a copy's part, say)
@@ -2974,10 +3099,17 @@ function applyLayout() {
   if (selected) renderSong();
 }
 
+// A settings card's title as it reads (its info icon's text left out)
+function cardTitle(card) {
+  const title = card.querySelector(":scope > h3");
+  return title ? [...title.childNodes].filter((n) => !(n.classList && n.classList.contains("info-text")))
+    .map((n) => n.textContent).join("").trim() : "";
+}
+
 // A card's name in the layout: its kind's (a copy: numbered, and its part), or its title (a settings card)
 function cardName(card) {
   const kind = CARD_KINDS[card.dataset.kind];
-  if (!kind) return (card.querySelector(":scope > h3") || {}).textContent || card.id;
+  if (!kind) return cardTitle(card) || card.id;
   const same = layout.middle.filter((c) => c.kind === card.dataset.kind);
   const spec = layout.middle.find((c) => c.id === card.dataset.card) || {};
   const number = same.length > 1 ? ` ${same.indexOf(spec) + 1}` : "";
@@ -3079,7 +3211,7 @@ function showLayoutBar() {
       ` title="${k.fixed ? (there ? "It's there already" : "Add it") : "Add one (another: its own part)"}">+ ${k.name}</button>`);
   }
   for (const id of layout.away) {
-    const name = ($(id).querySelector(":scope > h3") || {}).textContent || id;
+    const name = cardTitle($(id)) || id;
     out.push(`<button type="button" data-back="${esc(id)}" title="Back in the settings column">+ ${esc(name)}</button>`);
   }
   out.push(`<span class="spacer"></span><button type="button" data-reset title="As it was at first">Reset layout</button>`,
@@ -3119,18 +3251,23 @@ requestAnimationFrame(lyricsFrame);
 
 requestAnimationFrame(pedalTonesFrame);
 
-// A part's lit keys: on or off (the lit parts share the keyboard's 4, a moment at a time)
+// A part's lit keys: on or off, a bulb lit or dim (the lit parts share the keyboard's 4, a moment at a time: a
+// part's number of them only says whether it lights any)
+const BULB = '<svg viewBox="0 0 20 20" aria-hidden="true">' +
+  '<path class="rays" d="M10 .8v1.6M3.4 3.4l1.1 1.1M16.6 3.4l-1.1 1.1M.8 9.5h1.6M17.6 9.5h1.6"/>' +
+  '<path class="glass" d="M7.4 13.6c0-1.3-2.4-2.4-2.4-4.9a5 5 0 0 1 10 0c0 2.5-2.4 3.6-2.4 4.9z"/>' +
+  '<path d="M7.6 15.8h4.8M8.6 18h2.8"/></svg>';
 function litControl(value, others, onChange) {
-  const box = document.createElement("span");
-  box.className = "lit";
   const lit = document.createElement("button");
   lit.type = "button";
   lit.className = "lit-toggle" + (value ? " on" : "");
-  lit.textContent = value ? "On" : "Off";
-  lit.title = value ? "It shares the lit keys with the other lit parts: stop it lighting keys" : "Light its keys too";
+  lit.innerHTML = BULB;
+  lit.setAttribute("aria-pressed", String(!!value));
+  lit.setAttribute("aria-label", "Lights its keys");
+  lit.title = value ? `It lights its keys (sharing the ${KB()}'s 4 with the other lit parts): stop it lighting them` :
+    "It doesn't light its keys: light them too";
   lit.addEventListener("click", () => onChange(value ? 0 : 1));
-  box.append(lit);
-  return box;
+  return lit;
 }
 
 // Library
@@ -3552,9 +3689,10 @@ async function exportSong(what) {
   }
 }
 
-// The Song Audio card: the song's own audio (🎵) on or off, how loud and on which output (playOptions: showOptions
-// shows them), and its parts (stems): split from it (Split into parts: a minute or two, in the background), then each
-// at a volume of its own, a slider and a mute each (every song's: mute the band, keep the vocals...). POST /api/stems
+// The Song Audio card: the song's own audio (🎵) on or off, how loud and on which output, at its top (playOptions:
+// showOptions shows them), and its parts (stems): split from it (Split into parts: a minute or two, in the
+// background), then each at a volume of its own, a slider and a mute each (every song's: mute the band, keep the
+// vocals...). POST /api/stems
 const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys",
                     other: "Other (ambience, effects…)"};
 let stemsPoll = null, audioShown = "";
@@ -3573,12 +3711,13 @@ function renderAudioCard(s) {
   const chosen = d.separator || "demucs", madeBy = d.made_by || [];
   $("audioPartsNote").textContent = d.waiting ? "Waiting its turn: another song is being split…" :
     d.making ? `Splitting it into parts with ${name(d.making_by || chosen)}…` :
-    d.made && d.by === chosen ? `${name(d.by)}'s parts, each at a volume of its own (every song's):` :
-    d.made ? `${name(d.by)}'s parts play (split it with ${name(chosen)} for its own). Each part's volume:` :
+    d.made && d.by === chosen ? "" :  // (its parts' sliders say it all)
+    d.made ? `${name(d.by)}'s parts play (split it with ${name(chosen)} for its own).` :
     d.can ? "Split it to set the drums', bass', guitar's, vocals', keys' and the rest's volumes." :
     chosen === "roformer" ? "To split songs with BS-RoFormer SW, run tools/roformer-setup.sh in rs-keylights' folder." :
     "To split songs into parts, run tools/drums-setup.sh again (it now takes out the vocals and keys too).";
   if (d.error) $("audioPartsNote").textContent = `Couldn't split it: ${d.error}`;
+  $("audioPartsNote").parentElement.hidden = !$("audioPartsNote").textContent;  // (nothing to say: no room taken)
   const server = d.server, there = server && server.ok;  // (a split server: BS-RoFormer SW there, if it answers)
   const separator = $("audioSeparator");
   separator.replaceChildren(...(d.separators || []).map((x) => {
@@ -3726,7 +3865,8 @@ $("audioOn").addEventListener("click", () => changeOptions({audio: !(playOptions
 
 // The song's drum part: made from its audio (Make drum part: a minute or so, in the background), then played
 // along with its arrangements, playing or following, on the keyboard's drum channel or the device chosen for drums
-// (Other MIDI devices); its volume and mute. POST /api/drums
+// (Other MIDI devices); the keyboard's drum kit (playing there: the Drums card's too), its volume and mute.
+// POST /api/drums
 let drumsPoll = null;
 function drumsBlock(s) {
   const d = s.drums, block = document.createElement("div");
@@ -3739,6 +3879,14 @@ function drumsBlock(s) {
     "no drum part yet";
   name.innerHTML = `<b>Drums</b> <span class="muted small">${esc(detail)}</span>`;
   head.append(name);
+  if (d.made && !d.device && d.drum_sets) {  // (on the keyboard: its drum kit, in the middle, as a part's tone)
+    const kit = drumKitSelect(d.drum_sets, d.kit);
+    kit.classList.add("part-tone", "part-kit");
+    head.append(kit);
+  }
+  const controls = document.createElement("span");
+  controls.className = "part-controls";
+  head.append(controls);
   const send = (body) => act(async () => {
     const info = await api("/api/drums", {song: s.id, ...body});
     if (selected && selected.id === s.id) {
@@ -3754,6 +3902,7 @@ function drumsBlock(s) {
     slider.type = "range";
     slider.min = "0";
     slider.max = "100";
+    slider.setAttribute("aria-label", "The drums' volume");
     slider.value = String(percentOf(d.volume));
     const shown = document.createElement("output");
     shown.textContent = `${slider.value}%`;
@@ -3765,8 +3914,8 @@ function drumsBlock(s) {
     mute.textContent = d.play ? "🔊" : "🔇";
     mute.title = d.play ? "Mute the drums" : "Muted: play the drums";
     mute.addEventListener("click", (e) => { e.preventDefault(); send({play: !d.play}); });
-    volume.append("Volume", slider, shown, mute);
-    head.append(volume);
+    volume.append(slider, shown, mute);
+    controls.append(volume);
   }
   const make = document.createElement("button");
   make.type = "button";
@@ -3776,7 +3925,7 @@ function drumsBlock(s) {
   make.title = d.tools ? "Transcribe the drums from the song's audio (a minute or so, in the background)" :
     "The tools aren't there yet: run tools/drums-setup.sh in rs-keylights' folder";
   make.addEventListener("click", (e) => { e.preventDefault(); send({make: true}); });
-  head.append(make);
+  controls.append(make);
   block.append(head);
   if (d.making) {  // (how far it is: the separating as it goes, the rest reckoned)
     const done = Math.round((d.progress || 0) * 100);
@@ -3806,8 +3955,11 @@ function drumsBlock(s) {
   return block;
 }
 
-// A part: its name (and whether it's the one played in the game), the keys it lights, its volume and whether
-// it's muted (not played: no sound or lights), and under them its tones (o.change(field, value))
+// A part: its name (and whether it's the one played in the game), a tone (the one the Launchkey's knobs are on:
+// tone, palm mutes or harmonics, as its ▲ turns them), the keys it lights, its volume and whether it's muted (not
+// played: no sound or lights), and under them its other tones (o.change(field, value))
+const TONE_FIELDS = [["tone", "Tone"], ["mute_tone", "Palm mutes"], ["pinch_tone", "Harmonics"]];
+let toneField = 0;  // (the Launchkey knobs' tones' page, as the state last said)
 function partBlock(o) {
   const block = document.createElement("div");
   block.className = "part-block" + (o.play ? "" : " off");
@@ -3817,7 +3969,7 @@ function partBlock(o) {
     `<span class="muted small">${esc(o.detail)}</span>`;
   const lit = document.createElement("span");
   lit.className = "part-lit";
-  lit.append("Lit keys", litControl(o.lights, o.others, (n) => o.change("lights", n)));
+  lit.append(litControl(o.lights, o.others, (n) => o.change("lights", n)));
   const volume = document.createElement("label");  // (the Launchkey's mixer: Track ▷, then its knob)
   volume.className = "part-volume";
   volume.title = `Its volume on the ${KB()}: the same for the arrangement in its place in every song, playing ` +
@@ -3826,6 +3978,7 @@ function partBlock(o) {
   slider.type = "range";
   slider.min = "0";
   slider.max = "100";
+  slider.setAttribute("aria-label", `${o.name}'s volume`);
   slider.dataset.slot = String(o.slot);
   slider.value = String(percentOf((state.volumes || [])[o.slot] ?? 100));
   const shown = document.createElement("output");
@@ -3841,15 +3994,12 @@ function partBlock(o) {
     e.preventDefault();
     o.change("play", !o.play);
   });
-  volume.append("Volume", slider, shown, mute);
-  const fold = document.createElement("button");  // (its tones: folded away, as during a song; the Launchkey has them)
+  volume.append(slider, shown, mute);
+  const fold = document.createElement("button");  // (its other tones: folded away, as during a song; the Launchkey
+  // has them)
   fold.type = "button";
-  fold.className = "part-fold";
-  fold.textContent = "Tones";
-  fold.title = "Its tones: palm mutes, and harmonics (natural ones, and pinch harmonics' squeals) (and the song's tone changes)";
-  const head = document.createElement("div");
-  head.className = "part-head";
-  head.append(name, lit, volume, fold);
+  fold.className = "part-fold part-open";
+  fold.setAttribute("aria-label", "Its other tones");
   const defaults = defaultsFor(o.kind).text;
   const field = (text, control) => {
     const label = document.createElement("label");
@@ -3859,16 +4009,28 @@ function partBlock(o) {
     label.append(caption, control);
     return label;
   };
-  const tone = (key) => {
+  const tone = (key, inline = false, caption = "") => {
     const same = key !== "tone" && !!defaultsFor(o.kind).from[key];  // (a default to have the same tone over)
     const select = toneSelect(defaults[key], o.tones[key],
                               () => o.change(key, select.value === "" ? null : Number(select.value)), same);
-    return toneBox(select);
+    select.setAttribute("aria-label", `${o.name}'s ${(caption || "tone").toLowerCase()}`);
+    return toneBox(select, inline, caption);
   };
+  const [key, said] = TONE_FIELDS[toneField] || TONE_FIELDS[0];
+  const main = tone(key, true, key === "tone" ? "" : said);  // (on its line: the knobs' page's)
+  main.classList.add("part-tone");
+  const controls = document.createElement("span");
+  controls.className = "part-controls";
+  controls.append(lit, volume, fold);
+  const head = document.createElement("div");
+  head.className = "part-head";
+  head.append(name, main, controls);
   const tones = document.createElement("div");
   tones.className = "part-tones";
-  tones.append(field("Tone", tone("tone")), field("Palm mutes", tone("mute_tone")),
-               field("Harmonics", tone("pinch_tone")));
+  const others = TONE_FIELDS.filter(([k]) => k !== key);
+  tones.append(...others.map(([k, text]) => field(text, tone(k))));
+  fold.title = `Its other tones: ${others.map(([, text]) => text.toLowerCase()).join(" and ")} (harmonics: natural ` +
+    "ones, and pinch harmonics' squeals), and the song's tone changes";
   const more = document.createElement("div");
   more.append(tones);
   if (o.songTones && o.songTones.length) {
@@ -4127,6 +4289,11 @@ function showState(st) {
   noteFretClock(st);
   showSongTones(st);
   showKeys(st.keys);
+  if ((st.tone_field || 0) !== toneField) {  // (the Launchkey's ▲, or the game's TONES': each part's line shows that
+    // tone now)
+    toneField = st.tone_field || 0;
+    if (selected) renderSong();
+  }
   for (const slider of document.querySelectorAll("#parts .part-volume input[data-slot]")) {  // (the Launchkey's mixer
     // too; the drums' slider is the song's own)
     const volume = String(percentOf((st.volumes || [])[slider.dataset.slot] ?? 100));
@@ -4296,7 +4463,7 @@ function stepTone(select, delta, from) {
   select.dispatchEvent(new Event("change"));
 }
 
-function stepper(select, from) {
+function stepper(select, from, inline = false) {
   const wrap = document.createElement("span");
   wrap.className = "stepper";
   const button = (text, delta, title) => {
@@ -4307,7 +4474,7 @@ function stepper(select, from) {
     b.addEventListener("click", () => stepTone(select, delta, from));
     return b;
   };
-  wrap.append(button("‹", -1, "The tone before"), toneBox(select), button("›", 1, "The next tone"));
+  wrap.append(button("‹", -1, "The tone before"), toneBox(select, inline), button("›", 1, "The next tone"));
   return wrap;
 }
 
@@ -4411,16 +4578,17 @@ function fullScreen(on) {
 // The Launchkey's keys: the Casio's sound and lights for them, and the tone (set on a Keys card or with its knobs)
 
 let shownKeys = "";
-let keysTone = null;  // the tone they play (as the Mac last said), on every Keys card
+let keysTone = null;  // the tone they play (as the Mac last said), on every Keyboard card
 let midiPorts = [], midiPort = "";  // the MIDI outputs there are, and the keyboard's (the settings')
 
-// Their tone's dropdown, a Keys card's (its keys play as the Launchkey's do); each shows the tone once it's known
+// Their tone's dropdown, at a Keyboard card's top (its keys play as the Launchkey's do; on one line); each shows the
+// tone once it's known
 function keysToneControl() {
   const select = document.createElement("select");
   select.className = "keys-tone";
   select.setAttribute("aria-label", "Launchkey keys' tone");
   select.addEventListener("change", () => changeKeys({tone: Number(select.value)}));
-  const control = stepper(select, null);
+  const control = stepper(select, null, true);
   showKeysTone(select);
   return control;
 }
@@ -4521,8 +4689,10 @@ async function loadSettings() {
   const phone = $("phone");
   if (s.phone.length) {
     phone.innerHTML = s.phone.map((u) => `<span class="phone-link">${esc(u)}</span>`).join("<br>") +
-      ' <button type="button" id="copyPhone">Copy</button><div class="muted">Open it once on the phone, on the same ' +
-      "Wi-Fi; after that the address without the key works too.</div>";
+      ' <button type="button" id="copyPhone">Copy</button><button type="button" class="info" aria-label="About the ' +
+      'phone\'s address"></button><span class="info-text">Open it once on the phone, on the same Wi-Fi; after that ' +
+      "the address without the key works too.</span>";
+    infoTextOf(phone.querySelector("button.info"));
     $("copyPhone").addEventListener("click", () => act(async () => {
       if (!navigator.clipboard) throw new Error("Select the link and copy it");
       await navigator.clipboard.writeText(s.phone[0]);
@@ -4768,9 +4938,10 @@ for (const card of document.querySelectorAll("#side > .card")) {
   title.title = "Fold it into its title, or open it";
   card.classList.toggle("folded", !!store.get("rsk.fold." + card.id, FOLDED_AT_FIRST.has(card.id)));
   const flip = () => store.set("rsk.fold." + card.id, card.classList.toggle("folded"));
-  title.addEventListener("click", flip);
+  const own = (e) => !e.target.closest("button.info, .info-text");  // (its info icon: not a fold)
+  title.addEventListener("click", (e) => { if (own(e)) flip(); });
   title.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); }
+    if (own(e) && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); flip(); }
   });
 }
 // And their sections (the Keyboard's Default tones and Tone changes, the Guitar's pedal...): remembered, shut at first
