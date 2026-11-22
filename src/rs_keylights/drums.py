@@ -22,7 +22,11 @@ from .psarc import Archive, ArchiveError
 # second), then refined here (each hit's velocity from how loud it is; the toms as low, mid and high by their pitch;
 # the cymbals as crash or ride by their pattern; the hi-hats closed: open ones can't be told from the cymbals' wash
 # in the drum track) and snapped to
-# the chart's 16th notes, so it keeps time with the game's song (Riff Repeater and speed changes too).
+# the chart's 16th notes, so it keeps time with the game's song (Riff Repeater and speed changes too). With the kit's
+# pieces (DrumSep's kick, snare, toms, hi-hat, ride and crash, from BS-RoFormer SW's drums, on a split server), the
+# refining's from their own sound instead (refine_kit, as Riley and Dixon's ADTOF+DrumSep does it): crash or ride by
+# which of the two rises more as it's struck, a hi-hat open where it rings on, each hit's velocity from its own
+# piece.
 
 DRUMS_VERSION = 2  # (of the kept parts: another, made again; 2: hits no longer pulled onto the chart's beats)
 KICK, SNARE, CLOSED_HAT, OPEN_HAT, CRASH, RIDE = 36, 38, 42, 46, 49, 51  # General MIDI drums
@@ -137,6 +141,103 @@ def pick(strengths: Any, thresholds: Sequence[float] = THRESHOLDS) -> list[tuple
                 out.append((best / FPS, c, float(rise[best])))
             group = [i] if i is not None else []
     return sorted(out)
+
+
+KIT_HOP = 0.005  # seconds: a kit piece's loudness, its RMS in each this long (its envelope)
+OPEN_HOLDS = 0.75  # a hi-hat is open if its piece stays this loud (of its peak) after it's struck...
+OPEN_OVER = 0.15  # ...for this long, or till the next hi-hat (Riley and Dixon's)
+OPEN_LEAST = 0.03  # seconds to the next hi-hat at least, to tell (closer: closed)
+
+
+def envelope(wav: Path, hop: float = KIT_HOP) -> tuple[Any, float]:
+    """A WAV's loudness: its RMS (both channels, of 1) in each hop, read a piece at a time; and the hop, as it is."""
+    import numpy as np
+    with wave.open(str(wav)) as w:
+        rate, channels = w.getframerate(), w.getnchannels()
+        step = max(round(rate * hop), 1)
+        out = []
+        while True:
+            data = w.readframes(step * 8192)
+            if not data:
+                break
+            x = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            x = x[:len(x) // channels * channels].reshape(-1, channels)
+            n = -(-len(x) // step) * step
+            x = np.pad(x, ((0, n - len(x)), (0, 0)))
+            out.append(np.sqrt((x.reshape(-1, step, channels) ** 2).mean(axis=(1, 2))))
+    return (np.concatenate(out) if out else np.zeros(0, dtype=np.float32)), step / rate
+
+
+def _span(env: Any, hop: float, start: float, end: float) -> Any:
+    lo, hi = max(int(start / hop), 0), max(int(end / hop) + 1, 0)
+    return env[lo:min(hi, len(env))]
+
+
+def _peak(env: Any, hop: float, t: float) -> float:
+    """A piece's loudest as it's struck at t (10 ms before to 40 ms after)."""
+    got = _span(env, hop, t - 0.01, t + 0.04)
+    return float(got.max()) if len(got) else 0.0
+
+
+def _rise(env: Any, hop: float, t: float) -> float:
+    """How much a piece rises as it's struck at t: its loudest then over its average just before (80 to 20 ms)."""
+    before = _span(env, hop, t - 0.08, t - 0.02)
+    return _peak(env, hop, t) - (float(before.mean()) if len(before) else 0.0)
+
+
+def _open(env: Any, hop: float, t: float, until: float) -> bool:
+    """A hi-hat struck at t open: its piece stays OPEN_HOLDS of its peak from 10 ms after the peak until the next
+    hi-hat (until) or OPEN_OVER, whichever's first."""
+    import numpy as np
+    lo = max(int((t - 0.01) / hop), 0)
+    near = env[lo:max(int((t + 0.04) / hop) + 1, lo + 1)]
+    if not len(near) or near.max() <= 0:
+        return False
+    top = lo + int(np.argmax(near))
+    end = min(t + OPEN_OVER, until - 0.01)
+    if end - top * hop < OPEN_LEAST:
+        return False
+    after = env[top + 2:int(end / hop) + 1]
+    return bool(len(after)) and float(after.min()) >= OPEN_HOLDS * float(env[top])
+
+
+def refine_kit(picked: Sequence[tuple[float, int, float]], audio: Any, rate: int,
+               envelopes: dict[str, tuple[Any, float]], toms: Any = None) -> list[Hit]:
+    """The picked hits as General MIDI drums, refined from the kit's pieces (envelopes: each piece's, by stems.KIT's
+    names, and its hop; toms: the toms' piece, mono samples, for their pitch): the cymbals crash or ride by which of
+    the two rises more as it's struck (the louder one: a crash still ringing doesn't make the ride's hit a crash), the
+    hi-hats open where theirs rings on (_open), and each hit's velocity from its own piece (against that piece's
+    loudest). Whatever has no piece: as refine has it, from the drum track."""
+    import numpy as np
+    base = refine(picked, audio, rate)
+    notes = [h.note for h in base]
+    if toms is not None:  # (their pitch from their own sound)
+        at = [i for i, (_t, c, _s) in enumerate(picked) if c == 2]
+        for i, hit in zip(at, refine([picked[i] for i in at], toms, rate)):
+            notes[i] = hit.note
+    hats = [t for t, c, _s in picked if c == 3]
+    pieces: list[str | None] = []
+    for i, (t, c, _s) in enumerate(picked):
+        piece: str | None = {0: "kick", 1: "snare", 2: "toms", 3: "hh"}.get(c)
+        if c == 3 and "hh" in envelopes:
+            env, hop = envelopes["hh"]
+            later = hats[min(int(np.searchsorted(hats, t, side="right")), len(hats) - 1)]
+            notes[i] = OPEN_HAT if _open(env, hop, t, later if later > t else t + 10.0) else CLOSED_HAT
+        elif c == 4 and "ride" in envelopes and "crash" in envelopes:
+            ride, crash = _rise(*envelopes["ride"], t), _rise(*envelopes["crash"], t)
+            piece = "ride" if ride > crash else "crash"
+            notes[i] = RIDE if piece == "ride" else CRASH
+        elif c == 4:
+            piece = "ride" if notes[i] == RIDE else "crash"
+        pieces.append(piece if piece in envelopes else None)
+    loud = [_peak(*envelopes[piece], t) if piece is not None else 0.0 for (t, _c, _s), piece in zip(picked, pieces)]
+    velocity = [h.velocity for h in base]
+    for piece in {p for p in pieces if p is not None}:
+        members = [i for i, p in enumerate(pieces) if p == piece]
+        top = float(np.percentile([loud[i] for i in members], 95)) or 1.0
+        for i in members:
+            velocity[i] = int(np.clip(round(127 * (loud[i] / top) ** 0.6), 30, 127))
+    return [Hit(h.time, note, v) for h, note, v in zip(base, notes, velocity)]
 
 
 # Refined from the drum track: velocities, which tom, crash or ride, open or closed hi-hat
@@ -377,11 +478,15 @@ def _ready(pcm: Path) -> float | None:
 def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Path | None = None,
          stems_home: Path | None = None, say: Callable[[str], None] = lambda _text: None,
          cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None,
-         parts_cache: Path | None = None) -> list[Hit]:
+         parts_cache: Path | None = None, pieces: dict[str, Path] | None = None,
+         server: dict[str, str] | None = None) -> list[Hit]:
     """A song's drum part made (a minute or so) and kept: its audio from its archive, decoded and its drums separated
     (drums-setup.sh's rs-stems-drums, with Song Stems' model: a minute or so, the drums alone; the song split into
     its parts already, stems', in parts_cache: its drums from there, the better separator's), transcribed (ADTOF, in drums-setup.sh's Python), refined,
-    aligned to the chart and snapped to its beats. How far along it is goes to progress (0 to 1) as it goes."""
+    aligned to the chart and snapped to its beats. How far along it is goes to progress (0 to 1) as it goes. Refined
+    from the kit's pieces (refine_kit) if they're given (pieces: their WAVs, by stems.KIT's names), or if its drums are
+    BS-RoFormer SW's and a split server with DrumSep is (server: {"url", "key"}): split there from them (a minute or
+    so; not there, from the drum track as ever)."""
     from . import stems  # (it uses this module)
     import numpy as np
     tools = tools or tools_dir()
@@ -453,6 +558,8 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
             w.setsampwidth(2)
             w.setframerate(rate)
             w.writeframes(drums.tobytes())
+        if pieces is None and server is not None and split and split[0] == stems.ROFORMER:
+            pieces = _kit_from(server, work, say)
         say("transcribing them")
         worker = files("rs_keylights").joinpath("drums_activations.py")
         expected = max(len(drums) / rate * TRANSCRIBING, 1.0)  # (it doesn't say: reckoned, never quite there)
@@ -461,10 +568,44 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
         progress(TRANSCRIBED)
         strengths = np.load(work / "act.npy").astype(np.float32)
         mono = drums.astype(np.float32).mean(axis=1) / 32768.0
-        hits = align(refine(pick(strengths), mono, rate), beats)
+        del drums
+        found = {name: wav for name, wav in (pieces or {}).items() if name in stems.KIT and wav.exists()}
+        if found:
+            say("refining them from the kit's pieces")
+            envelopes = {name: envelope(wav) for name, wav in found.items()}
+            toms = None
+            if "toms" in found:
+                with wave.open(str(found["toms"])) as w:
+                    toms = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(
+                        -1, w.getnchannels()).astype(np.float32).mean(axis=1) / 32768.0
+            hits = align(refine_kit(pick(strengths), mono, rate, envelopes, toms), beats)
+        else:
+            hits = align(refine(pick(strengths), mono, rate), beats)
     keep(ref, hits, cache)
     progress(1.0)
     return hits
+
+
+def _kit_from(server: dict[str, str], work: Path, say: Callable[[str], None]) -> dict[str, Path] | None:
+    """The kit's pieces of work's drums.wav, split on a split server with DrumSep (its WAVs, in work/kit); None if it
+    hasn't DrumSep, or doesn't answer, or can't (the drum track alone then, as ever)."""
+    from . import splitserver, stems
+    try:
+        if not splitserver.has_kit(server["url"], server["key"]):
+            return None
+        say("splitting them into the kit's pieces (on the split server)")
+        kit = work / "kit"
+        kit.mkdir()
+        made = splitserver.split(server["url"], server["key"], work / "drums.wav", stems.KIT, kit, from_drums=True)
+    except (splitserver.SplitServerError, OSError):
+        return None
+    out = {}
+    for name, flac in made.items():
+        out[name] = kit / f"{name}.wav"
+        subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16", str(flac), str(out[name])], check=True,
+                       capture_output=True)
+        flac.unlink()
+    return out
 
 
 def decode(ref: ArrangementRef, game_dir: Path, out: Path, tools: Path | None = None) -> None:

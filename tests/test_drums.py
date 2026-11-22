@@ -309,3 +309,42 @@ np.save(sys.argv[-1], np.zeros((50, 5), dtype=np.float32))
         seen = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, 2).astype(np.float64)
     error = np.sqrt(np.mean((seen - drum_tone) ** 2)) / np.sqrt(np.mean(drum_tone.astype(np.float64) ** 2))
     assert error < 0.05
+
+
+def test_with_the_kits_pieces_crash_or_ride_open_or_closed_hats_and_velocities_come_from_their_own_sound(tmp_path):
+    import wave as wave_module
+
+    import numpy as np
+    rate = 48000
+    rng = np.random.default_rng(1)
+
+    def piece(name, bursts):  # (noise struck at each time, at a level, dying away over its seconds)
+        x = np.zeros(rate * 7, dtype=np.float32)
+        for at, level, rings in bursts:
+            n = int(rate * 1.5)
+            x[int(at * rate):int(at * rate) + n] += (rng.standard_normal(n) * level * np.exp(-np.arange(n) / (rings * rate)))[
+                :len(x) - int(at * rate)]
+        path = tmp_path / f"{name}.wav"
+        with wave_module.open(str(path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            pcm = np.clip(x * 32767, -32768, 32767).astype(np.int16)
+            w.writeframes(np.stack([pcm, pcm], axis=1).tobytes())
+        return path
+
+    pieces = {"hh": piece("hh", [(1.0, 0.5, 0.01), (2.0, 0.5, 2.0), (3.0, 0.5, 2.0), (3.02, 0.5, 0.01)]),
+              "crash": piece("crash", [(4.0, 0.6, 1.5)]), "ride": piece("ride", [(4.6, 0.4, 0.3)]),
+              "kick": piece("kick", [(5.0, 0.8, 0.05), (5.5, 0.2, 0.05)])}
+    envelopes = {name: drums.envelope(path) for name, path in pieces.items()}
+    assert abs(envelopes["hh"][1] - drums.KIT_HOP) < 1e-9 and len(envelopes["hh"][0]) == 7 * 200
+    picked = [(1.0, 3, 1.0), (2.0, 3, 1.0), (3.0, 3, 1.0), (3.02, 3, 1.0), (4.0, 4, 1.0), (4.6, 4, 1.0),
+              (5.0, 0, 1.0), (5.5, 0, 1.0)]
+    hits = drums.refine_kit(picked, np.zeros(rate * 7, dtype=np.float32), rate, envelopes)
+    notes = [h.note for h in hits]
+    assert notes[:3] == [drums.CLOSED_HAT, drums.OPEN_HAT, drums.CLOSED_HAT]  # (closed: it dies at once; open: it
+    # rings on; the next one at once after it: can't tell, closed)
+    assert notes[4:6] == [drums.CRASH, drums.RIDE]  # (the ride struck with the crash still ringing: a ride)
+    assert notes[6:] == [drums.KICK, drums.KICK] and hits[6].velocity > hits[7].velocity + 30  # (from the kick's own)
+    plain = drums.refine(picked, np.zeros(rate * 7, dtype=np.float32), rate)  # (without them: every hi-hat closed)
+    assert [h.note for h in plain][:4] == [drums.CLOSED_HAT] * 4

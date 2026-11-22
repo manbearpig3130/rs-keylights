@@ -13,6 +13,7 @@ import secrets
 import socket
 import socketserver
 import subprocess
+import shutil
 import tempfile
 import threading
 import time
@@ -1100,10 +1101,15 @@ class Gui:
         elif self._playing and self._playing["id"] == sid and not self._mute_now(sid):  # (muted or back at once,
             self._play_on(sid)  # if it can be; else played again with it)
 
-    def _make_drums(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> None:
-        """A song's drum part made, on a thread of its own; once it's made, played (and what plays goes on with it)."""
+    def _make_drums(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]],
+                    pieces: dict[str, Path] | None = None, kit: Path | None = None) -> None:
+        """A song's drum part made, on a thread of its own; once it's made, played (and what plays goes on with it).
+        From the kit's pieces if they're given (their WAVs: a split server's, with the song's parts, in kit, which goes
+        once it's made), else from the split server's if its drums are BS-RoFormer SW's (drums.make)."""
         with self._lock:
             if self._making.get(sid, {}).get("step"):
+                if kit is not None:
+                    shutil.rmtree(kit, ignore_errors=True)
                 return  # (being made)
             self._making[sid] = {"step": "starting", "error": None, "progress": 0.0}
             self.play_version += 1  # (every page shows it's being made, however it was asked for)
@@ -1118,12 +1124,16 @@ class Gui:
 
         def run() -> None:
             try:
-                drums.make(ref, beats, self.index.game_dir, say=step, progress=far)
+                drums.make(ref, beats, self.index.game_dir, say=step, progress=far, pieces=pieces,
+                           server=self.settings["split_server"])
             except Exception as exc:  # (a tool missing, or failing: said on the page)
                 self._making[sid] = {"step": None, "error": str(exc)}
                 with self._lock:
                     self.play_version += 1
                 return
+            finally:
+                if kit is not None:
+                    shutil.rmtree(kit, ignore_errors=True)
             self._making.pop(sid, None)
             with self._lock:
                 kept = dict(self.song_settings.get(sid, {}))
@@ -1967,12 +1977,21 @@ class Gui:
             def far(done: float, sid: str = sid) -> None:
                 self._splitting[sid] = {**self._splitting.get(sid, {}), "progress": round(done, 3)}
 
+            kit = Path(tempfile.mkdtemp(prefix="rs-keylights-kit-")) if separator == stems.ROFORMER else None
             try:
                 server = self.settings["split_server"] if separator == stems.ROFORMER else None
-                stems.make(ref, self.index.game_dir, progress=far, separator=separator, server=server)
+                pieces = stems.make(ref, self.index.game_dir, progress=far, separator=separator, server=server,
+                                    kit_out=kit)
                 self._splitting[sid] = {"making": False, "progress": None, "error": None}
+                if kit is not None:  # (BS-RoFormer SW's: its drum part made again from them, from its kit's pieces
+                    # too if the split server made them)
+                    self._make_drums(sid, self._load(sid), {p: kit / f"{p}.wav" for p in pieces or []} or None, kit)
+                    kit = None
             except Exception as exc:  # (the separator missing, or failing: said on the page)
                 self._splitting[sid] = {"making": False, "progress": None, "error": str(exc)}
+            finally:
+                if kit is not None:
+                    shutil.rmtree(kit, ignore_errors=True)
             with self._lock:
                 self.play_version += 1
                 self._splits_done += 1  # (following it: its parts to the game's song)

@@ -1697,8 +1697,8 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
                              "separators": [{"id": "roformer", "name": "BS-RoFormer SW"},
                                             {"id": "demucs", "name": "Demucs"}], "server": None}
     made, loaded = [], []  # (the separators it's split by; whose parts are read)
-    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None: made.append(separator)
-                        or progress(1.0))
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None:
+                        made.append(separator) or progress(1.0) or [])
     monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator in made)
     mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
     monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None, separator="demucs": loaded.append(separator)
@@ -1807,9 +1807,10 @@ def test_songs_are_split_one_at_a_time_the_others_waiting_their_turn(server, mon
     first, second = [s["id"] for s in call(server, "/api/library")[1]["songs"]][:2]
     go, started = threading.Event(), []
 
-    def make(ref, game, progress, separator, server=None):  # (a split taking a while: until it's let go)
-        started.append(ref)
+    def make(ref, game, progress, separator, server=None, kit_out=None):  # (a split taking a while: until it's let
+        started.append(ref)                                                # go)
         assert go.wait(5)
+        return []
 
     monkeypatch.setattr(stems, "make", make)
     gui.set_stems({"song": first, "make": True})
@@ -2062,7 +2063,7 @@ def test_following_a_split_song_its_parts_play_in_the_games_song_at_the_stem_mix
                 w.setnchannels(2)
                 w.setsampwidth(2)
                 w.setframerate(48000)
-                w.writeframes((np.ones((4800, 2)) * (k + 1) * 100).astype(np.int16).tobytes())
+                w.writeframes((np.ones((4800, 2)) * (k + 1) * 1000).astype(np.int16).tobytes())
         return out
     monkeypatch.setattr(stems, "decode", decode)
     ini = gui.index.game_dir / "RSMods.ini"
@@ -2101,3 +2102,22 @@ def test_following_a_split_song_its_parts_play_in_the_games_song_at_the_stem_mix
     assert wait_for(lambda: "SongStemsGuitarLevel = 0" in ini.read_text(), bool) and gui._game_parts is None
     gui._game_parts_follow(followed, game.status())  # (played again: made before, there at once)
     assert wait_for(lambda: gui._game_parts, bool) and len(decoded) == again
+
+
+def test_a_bs_roformer_split_makes_the_drum_part_again_from_its_kits_pieces(server, monkeypatch):
+    from rs_keylights import stems
+    gui, sid = server.gui, first_song(server)
+
+    def make(ref, game, progress, separator, server=None, kit_out=None):  # (a split server with DrumSep)
+        for piece in stems.KIT:
+            (kit_out / f"{piece}.wav").write_bytes(b"x")
+        return list(stems.KIT)
+    monkeypatch.setattr(stems, "make", make)
+    asked = []
+    monkeypatch.setattr(gui, "_make_drums", lambda sid, loaded, pieces=None, kit=None: asked.append((sid, pieces, kit)))
+    gui.set_stems({"song": sid, "make": True, "separator": "roformer"})
+    sid_made, pieces, kit = wait_for(lambda: asked, bool)[0]
+    assert sid_made == sid and set(pieces) == set(stems.KIT) and all(p.parent == kit and p.exists() for p in pieces.values())
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None: [])
+    gui.set_stems({"song": sid, "make": True, "separator": "demucs"})  # (Demucs': the quick one, no drum part)
+    assert wait_for(lambda: not gui.stems_info(sid)["making"], bool) and len(asked) == 1

@@ -28,6 +28,8 @@ from .library import ArrangementRef
 
 STEMS = ("drums", "bass", "guitar", "vocals", "piano", "other")
 SEPARATED = STEMS[:-1]  # (each taken out by the separator; other: what's left)
+KIT = ("kick", "snare", "toms", "hh", "ride", "crash")  # a drum part's pieces (DrumSep's, on a split server: for the
+# drum part, drums.make)
 STEMS_VERSION = 1
 BITRATE = 256000  # a part's AAC
 CACHE_MOST = 2_000_000_000  # bytes of parts kept, at most
@@ -97,15 +99,16 @@ def can_make(tools: Path | None = None, separator: str = DEMUCS) -> bool:
 
 def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_home: Path | None = None,
          cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None,
-         separator: str = DEMUCS, server: dict[str, str] | None = None) -> None:
+         separator: str = DEMUCS, server: dict[str, str] | None = None, kit_out: Path | None = None) -> list[str]:
     """A song's parts made by a separator and kept, how far along going to progress (0 to 1). Demucs: about 35 s for 4
     minutes of song (a separator built before separate-all, three times that); BS-RoFormer SW, a little longer than
-    the song here, or on a split server (server: {"url", "key"}), many times quicker. (tools: the separator's;
-    stems_home: Song Stems' model, Demucs'.)"""
+    the song here, or on a split server (server: {"url", "key"}), many times quicker, and, with kit_out, its drums'
+    pieces too if the server has DrumSep (roformer.make). The pieces made. (tools: the separator's; stems_home: Song
+    Stems' model, Demucs'.)"""
     if separator == ROFORMER:
         from . import roformer
-        roformer.make(ref, game_dir, tools=tools, cache=cache, progress=progress, server=server)
-        return
+        return roformer.make(ref, game_dir, tools=tools, cache=cache, progress=progress, server=server,
+                             kit_out=kit_out)
     import numpy as np
     tools = tools or drums.tools_dir()
     stems_home = stems_home or Path.home() / "Library" / "Application Support" / "RS Re-ARMed" / "stems"
@@ -165,6 +168,7 @@ def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_h
             _write_wav(work / f"{stem}.wav", part, rate)
             del part
         store(ref, {stem: work / f"{stem}.wav" for stem in SEPARATED}, rate, DEMUCS, cache, progress, SEPARATING)
+    return []
 
 
 def store(ref: ArrangementRef, wavs: dict[str, Path], rate: int, separator: str = DEMUCS, cache: Path | None = None,

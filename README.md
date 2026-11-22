@@ -560,6 +560,21 @@ gives the same result in 1.2 GB of memory, where ADTOF's own way takes 6 GB.
 The model hears only those 5 kinds of drum, so a part has 8 at most. Hi-hats are all closed: open ones can't be told
 from cymbal wash.
 
+**From the song's parts, and the kit's pieces.** A song split into its parts has its drum part made from their drums
+(the better separator's) instead of separating them again. Split with BS-RoFormer SW, its drum part is made again
+from them as soon as the split's done (any made before, from Demucs' drums, replaced). With a split server that has
+DrumSep, its drums come back split into the kit's pieces too, and the part is refined from those (as Riley and
+Dixon's ADTOF+DrumSep does it; ADTOF still finds the hits):
+- a cymbal is a crash or a ride by which of the two pieces rises more as it's struck (a ride struck while a crash
+  still rings is a ride);
+- a hi-hat is open if its piece stays at 75% of its peak for 150 ms after it's struck (or until the next hi-hat);
+- the toms' pitch comes from the toms' piece;
+- each hit's velocity comes from its own piece, against that piece's loudest.
+
+A song already split with BS-RoFormer SW but without a drum part sends just its drums to the split server for their
+pieces (a minute or so). A song not split keeps the quick way: the drum part's pad (dim on the Launchkey) separates
+its drums alone with Demucs, about 45 s for 5 minutes, refined from the drum track as above.
+
 ### The Casio's drums as samples
 
 `rs-keylights sample-drums` records the Casio's drums for a sampler, such as a Circuit (through Novation
@@ -617,7 +632,11 @@ for CUDA, the model's code and the model, about 5 GB, nothing system-wide, no ro
 card's **Split on another computer**. Songs split with BS-RoFormer SW are then sent to it (about 60 MB up for 10
 minutes of song, its parts back as lossless FLAC); if it doesn't answer, they're split on the Mac instead (if
 `tools/roformer-setup.sh` has been run). It listens on your network on port 8042, answering only requests with its
-key. Its model is let go of 10 minutes after the last song, so the GPU's memory is free for games.
+key. Its models are let go of 10 minutes after the last song, so the GPU's memory is free for games. It also has
+DrumSep (aufr33 and jarredou's MDX23C model, 440 MB more on its first run): with it, a BS-RoFormer SW split brings
+back the drums' kit pieces too (kick, snare, toms, hi-hat, ride, crash, split from its drums in the same job), and
+the song's drum part is made again from them as soon as the parts are in (see
+[How a drum part is made](#how-a-drum-part-is-made)). An older copy of the script on the PC just splits the parts.
 The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
 and mute, the same for every song. This needs the `drums` and `listen` extras and `tools/drums-setup.sh`.

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """rs-keylights-split-server.py: splits songs into their parts (stems) for rs-keylights, with BS-RoFormer SW on this
 computer's NVIDIA GPU. rs-keylights (on the Mac) sends a song's audio; this sends back its drums, bass, guitar,
-vocals and piano, and the Mac keeps them as it does its own.
+vocals and piano, and the Mac keeps them as it does its own. It splits the drums into the kit's pieces too (DrumSep:
+kick, snare, toms, hi-hat, ride, crash), for rs-keylights' drum parts: crash or ride, and open or closed hi-hats,
+from the cymbals' own sound.
 
     python3 rs-keylights-split-server.py [--port 8042] [--data DIR] [--device cuda|cpu|mps]
 
@@ -12,10 +14,12 @@ root, and changes nothing outside its own folder (DIR, by default ~/.local/share
   venv/    a Python of its own: PyTorch 2.14.1 for CUDA 12.6 (with its own CUDA libraries: any NVIDIA driver from
            525 on), numpy, scipy, soundfile, pyyaml, einops, rotary-embedding-torch, beartype. About 4 GB. Made with
            uv if it's installed (it fetches Python 3.12 for it, into uv's own folder), else with this Python's venv.
-  code/    the model's code: two files of ZFTurbo's Music-Source-Separation-Training (MIT licence) at a fixed
-           commit, each checked by its SHA-256.
-  model/   the model: jarredou's BS-Rofo-SW-Fixed checkpoint (700 MB) and its settings, from the FractalSurfer mirror
-           on Hugging Face at a fixed revision, checked by SHA-256. Its licence is unstated: for your own use.
+  code/    the models' code: three files of ZFTurbo's Music-Source-Separation-Training (MIT licence) at a fixed
+           commit, each checked by its SHA-256, and a few lines of this script's own in place of the rest of theirs.
+  model/   the models: jarredou's BS-Rofo-SW-Fixed checkpoint (700 MB) and its settings, from the FractalSurfer
+           mirror on Hugging Face at a fixed revision; and aufr33 and jarredou's DrumSep (MDX23C, 6 pieces: 440 MB)
+           and its settings, from openmirlab's copy on GitHub (its own hosting's gone). Each checked by SHA-256.
+           Neither's licence is stated: for your own use.
   key      a random key, made once: rs-keylights needs it (it's printed when this starts). Without it, nothing's
            answered (403).
   jobs/    songs being split and their parts, each gone once rs-keylights has them (or an hour after).
@@ -26,15 +30,19 @@ so the GPU's memory is free for games. Ctrl-C stops it. To remove it all, delete
 
 What rs-keylights asks it (each with the header X-RS-Keylights-Key: the key):
   GET    /status                    what it is, the GPU it runs on, how many songs are waiting
-  POST   /split?parts=drums,bass…   a song's audio (WAV or FLAC, any rate): {"id": …}, split in turn
+  POST   /split?parts=drums,bass…   a song's audio (WAV or FLAC, any rate): {"id": …}, split in turn. Its parts:
+                                    BS-RoFormer SW's (drums, bass, other, vocals, guitar, piano) and DrumSep's
+                                    (kick, snare, toms, hh, ride, crash: from BS-RoFormer SW's drums); &from=drums:
+                                    the audio's a drum part already, just DrumSep's
   GET    /split/ID                  {"state": waiting|splitting|done|failed, "progress": 0-1, "error": …}
   GET    /split/ID/PART.flac        a part once it's done: 16-bit FLAC, as long as the song, at its rate
   DELETE /split/ID                  its files gone
 
-The split is ZFTurbo's own (their utils/model_utils.py demix): the song at 44.1 kHz, mirrored half a chunk past
-either end, chunks of the model's 588 800 samples (13.35 s) half a chunk apart, each through the model at
-half-precision, cross-faded (linear, a tenth of a chunk) and added up; a song at another rate taken to 44.1 kHz and
-its parts back (scipy's resample_poly: zero-phase, each part in line with the song).
+The split is ZFTurbo's own (their utils/model_utils.py demix): the song at 44.1 kHz, mirrored past either end,
+chunks of the model's (BS-RoFormer SW's 588 800 samples, 13.35 s, half a chunk apart; DrumSep's 130 560, 2.96 s, a
+quarter apart), each through the model at half-precision, cross-faded (linear, a tenth of a chunk) and added up; a
+song at another rate taken to 44.1 kHz and its parts back (scipy's resample_poly: zero-phase, each part in line with
+the song).
 """
 # pyright: reportMissingImports=false, reportMissingModuleSource=false
 # (torch, numpy, scipy, soundfile and yaml: in its own Python, set up as it starts)
@@ -59,7 +67,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-VERSION = 1
+VERSION = 2  # (2: DrumSep's kit pieces too)
 PORT = 8042
 DATA = Path.home() / ".local" / "share" / "rs-keylights-split"
 KEY_HEADER = "X-RS-Keylights-Key"
@@ -74,14 +82,31 @@ CODE_URL = ("https://raw.githubusercontent.com/ZFTurbo/Music-Source-Separation-T
 CODE = {  # (ZFTurbo's files: SHA-256)
     "models/bs_roformer/bs_roformer.py": "a6f670325cdb8a7a212914f62602119b23eb888df9bcfe4a85f9be74728b3ef4",
     "models/bs_roformer/attend.py": "c7abbc40a3fd20ff7f6001fa9f8ee9ad5df6452272712a5e719b8f8468bf2223",
+    "models/mdx23c_tfc_tdf_v3.py": "45b29c37cbba4b06e49dcd6bef668d372501df2517392b71b93804355cb7d535e",
     "LICENSE": "3282dc057695ef5b9a64909a7092ca40b2c292c232580fc6ace6e5d665cc0207",
 }
+# In place of ZFTurbo's utils/model_utils.py (which brings in their training's packages too): the one function the
+# MDX23C model's code takes from it, as theirs does it
+MODEL_UTILS = '''"""rs-keylights-split-server's stand-in for ZFTurbo's utils/model_utils.py: prefer_target_instrument alone."""
+
+
+def prefer_target_instrument(config):
+    target = config.training.get("target_instrument")
+    return [target] if target else list(config.training.instruments)
+'''
 MODEL_URL = ("https://huggingface.co/FractalSurfer/BS-RoFormer-SW-6stem/resolve/"
              "2b98254b19bdab07ce225d884ec4aa9dd8aafce1/")
 CHECKPOINT, SETTINGS = "BS-Rofo-SW-Fixed.ckpt", "BS-Rofo-SW-Fixed.yaml"
 MODEL = {
     CHECKPOINT: "24e7d35ee9c64415673d3fd33e06a67cac2c103c5df6267ba1576459c775916e",
     SETTINGS: "f9fada9f94e5ba2d2e4600196299459294bc5f532b314c209cc156ac63e4329b",
+}
+KIT_URL = "https://github.com/openmirlab/mdxnet-infer/releases/download/weights-drumsep-v1/"
+KIT_CHECKPOINT = "aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt"
+KIT_SETTINGS = "aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.yaml"
+KIT_MODEL = {  # (as openmirlab's release has them, the same as the UVR and MSST-WebUI mirrors')
+    KIT_CHECKPOINT: "d2a4aa53eb584d21eead358a4e66d1882ad182911be018f052b5da73be9096d0",
+    KIT_SETTINGS: "17d1649a227f841165bdb4c11a42082898192a1ea3ceab7e7e0b9293d6589dd6",
 }
 
 RATE = 44100  # (the model's)
@@ -115,10 +140,12 @@ def check(data: Path, device: str) -> None:
                 missing.append(f"a working NVIDIA driver (nvidia-smi says: {(gpus.stderr or gpus.stdout).strip()})")
             else:
                 say(f"GPU: {gpus.stdout.strip().splitlines()[0]}")
-    if not (data / "venv" / "ready.json").exists():
+    first = not (data / "venv" / "ready.json").exists()
+    if first or not (data / "model" / KIT_CHECKPOINT).exists():  # (its first run; or DrumSep's, set up before it)
         free = shutil.disk_usage(data if data.exists() else data.parent if data.parent.exists() else Path.home()).free
-        if free < 6e9:
-            missing.append(f"6 GB of free disk for its first run ({free / 1e9:.1f} GB free where {data} goes)")
+        if free < (6e9 if first else 1e9):
+            missing.append(f"{6 if first else 1} GB of free disk for what it downloads ({free / 1e9:.1f} GB free "
+                           f"where {data} goes)")
         if shutil.which("uv") is None and sys.version_info >= (3, 14):
             missing.append("uv (sudo pacman -S uv), or a Python 3.10 to 3.13: PyTorch has nothing for Python "
                            f"{sys.version_info.major}.{sys.version_info.minor} yet")
@@ -150,11 +177,14 @@ def set_up(data: Path, device: str) -> Path:
         ready.write_text(json.dumps(wanted))
     for name, sha in CODE.items():
         fetch(CODE_URL + name, data / "code" / name, sha)
-    for package in ("models", "models/bs_roformer"):  # (just the files needed: not ZFTurbo's package's own __init__,
-        # which brings in every other model)
+    for package in ("models", "models/bs_roformer", "utils"):  # (just the files needed: not ZFTurbo's package's own
+        (data / "code" / package).mkdir(parents=True, exist_ok=True)  # __init__, which brings in every other model)
         (data / "code" / package / "__init__.py").touch()
+    (data / "code" / "utils" / "model_utils.py").write_text(MODEL_UTILS)
     for name, sha in MODEL.items():
         fetch(MODEL_URL + name, data / "model" / name, sha)
+    for name, sha in KIT_MODEL.items():
+        fetch(KIT_URL + name, data / "model" / name, sha)
     key = data / "key"
     if not key.exists():
         key.write_text(secrets.token_urlsafe(18) + "\n")
@@ -204,11 +234,34 @@ def _sha256(path: Path) -> str:
 # Splitting: in its own Python
 # ------------------------------------------------------------------------------------------------------------------
 
-class Separator:
-    """BS-RoFormer SW on the device: loaded for a song, let go of IDLE seconds after the last."""
+SONGS, KIT = "BS-RoFormer SW", "DrumSep"  # (its two models: a song's parts, and the drums' pieces)
 
-    def __init__(self, data: Path, device: str):
-        self.data, self.device = data, device
+
+class Settings(dict):
+    """A model's settings, as its yaml has them, each also an attribute (MDX23C's code reads them so, as ZFTurbo's
+    ConfigDict has them)."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+def _settings(value: Any) -> Any:
+    if isinstance(value, dict):
+        return Settings({k: _settings(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return [_settings(v) for v in value]
+    return value
+
+
+class Separator:
+    """A model on the device (BS-RoFormer SW, or DrumSep): loaded for a song, let go of IDLE seconds after the last."""
+
+    def __init__(self, data: Path, device: str, name: str = SONGS):
+        self.data, self.device, self.name = data, device, name
+        self.checkpoint, self.settings = (KIT_CHECKPOINT, KIT_SETTINGS) if name == KIT else (CHECKPOINT, SETTINGS)
         self._model: Any = None
         self._config: dict[str, Any] = {}
         self._used = 0.0
@@ -222,14 +275,14 @@ class Separator:
         if not self._config:
             import yaml
 
-            class Loader(yaml.SafeLoader):  # (its settings have Python tuples in them, which the model's code
+            class Loader(yaml.SafeLoader):  # (their settings have Python tuples in them, which the models' code
                 pass  # checks are tuples: those, and nothing else of Python's)
 
             def as_tuple(loader: Any, node: Any) -> tuple[Any, ...]:
                 return tuple(loader.construct_sequence(node))
 
             Loader.add_constructor("tag:yaml.org,2002:python/tuple", as_tuple)
-            self._config = yaml.load((self.data / "model" / SETTINGS).read_text(), Loader=Loader)
+            self._config = _settings(yaml.load((self.data / "model" / self.settings).read_text(), Loader=Loader))
         return self._config
 
     def describe(self) -> str:
@@ -242,13 +295,19 @@ class Separator:
         import torch
         with self._lock:
             if self._model is None:
-                sys.path.insert(0, str(self.data / "code"))
-                from models.bs_roformer.bs_roformer import BSRoformer  # pyright: ignore[reportMissingImports]
-                model = BSRoformer(**self.config()["model"])
-                state = torch.load(self.data / "model" / CHECKPOINT, map_location="cpu", weights_only=True)
+                code = str(self.data / "code")
+                if code not in sys.path:
+                    sys.path.insert(0, code)
+                if self.name == KIT:
+                    from models.mdx23c_tfc_tdf_v3 import TFC_TDF_net  # pyright: ignore[reportMissingImports]
+                    model = TFC_TDF_net(self.config())
+                else:
+                    from models.bs_roformer.bs_roformer import BSRoformer  # pyright: ignore[reportMissingImports]
+                    model = BSRoformer(**self.config()["model"])
+                state = torch.load(self.data / "model" / self.checkpoint, map_location="cpu", weights_only=True)
                 model.load_state_dict(state.get("state_dict", state) if isinstance(state, dict) else state)
                 self._model = model.eval().to(self.device)
-                say(f"Model on {self.describe()}")
+                say(f"{self.name} on {self.describe()}")
             self._used = time.monotonic()
             return self._model
 
@@ -270,8 +329,9 @@ class Separator:
             torch.cuda.synchronize()
         took = time.monotonic() - loaded
         step = chunk // int(config["inference"]["num_overlap"])
-        say(f"Checked: loaded in {loaded - started:.0f} s; a {chunk / RATE:.1f} s chunk in {took:.1f} s, so a "
-            f"10-minute song in about {600 / (step / RATE) * took / 60:.1f} minutes (out: {tuple(out.shape)})")
+        what = "drum part" if self.name == KIT else "song"
+        say(f"Checked {self.name}: loaded in {loaded - started:.0f} s; a {chunk / RATE:.1f} s chunk in {took:.2f} s, "
+            f"so a 10-minute {what} in about {600 / (step / RATE) * took / 60:.1f} minutes (out: {tuple(out.shape)})")
 
     def let_go_if_idle(self) -> None:
         import torch
@@ -280,7 +340,7 @@ class Separator:
                 self._model = None
                 if self.device == "cuda":
                     torch.cuda.empty_cache()
-                say("Model let go of (idle)")
+                say(f"{self.name} let go of (idle)")
 
     def separate(self, audio: Any, wanted: list[int], progress: Callable[[float], None]) -> Any:
         """The parts wanted (by the model's sources' index) of a song ([2, frames], at RATE): [parts, 2, frames]. As
@@ -338,16 +398,17 @@ class Jobs:
         shutil.rmtree(folder, ignore_errors=True)  # (any from before: gone)
         folder.mkdir(parents=True)
         self._jobs: dict[str, dict[str, Any]] = {}
-        self._waiting: list[tuple[str, bytes]] = []
+        self._waiting: list[tuple[str, bytes, dict[str, Any]]] = []
         self._lock = threading.Condition()
         threading.Thread(target=self._work, name="splitting", daemon=True).start()
 
-    def add(self, audio: bytes, parts: list[str]) -> str:
+    def add(self, audio: bytes, parts: list[str], **options: Any) -> str:
+        """A song to split into parts (options: the split's own, from_drums), in turn: its job's ID."""
         job = uuid.uuid4().hex[:12]
         with self._lock:
             self._jobs[job] = {"state": "waiting", "progress": 0.0, "error": None, "parts": parts,
                                "made": time.monotonic()}
-            self._waiting.append((job, audio))
+            self._waiting.append((job, audio, options))
             self._lock.notify()
         return job
 
@@ -380,7 +441,7 @@ class Jobs:
                     self._forget_old()
                     if not self._waiting:
                         self._idle()
-                job, audio = self._waiting.pop(0)
+                job, audio, options = self._waiting.pop(0)
                 self._jobs[job]["state"] = "splitting"
                 parts = self._jobs[job]["parts"]
 
@@ -392,7 +453,7 @@ class Jobs:
             started = time.monotonic()
             try:
                 (self.folder / job).mkdir()
-                self._split(audio, parts, self.folder / job, progress)
+                self._split(audio, parts, self.folder / job, progress, **options)
                 state, error = "done", None
                 say(f"{job}: split in {time.monotonic() - started:.0f} s")
             except Exception as exc:  # (said to rs-keylights, and here)
@@ -411,26 +472,44 @@ class Jobs:
             shutil.rmtree(self.folder / job, ignore_errors=True)
 
 
-def splitter(separator: Separator) -> Callable[[bytes, list[str], Path, Callable[[float], None]], None]:
-    """A song's audio (WAV or FLAC, any rate) to its parts' FLACs (16-bit, at its rate), in a folder."""
+def splitter(songs: Separator, kit: Separator | None = None) -> Callable[..., None]:
+    """A song's audio (WAV or FLAC, any rate) to its parts' FLACs (16-bit, at its rate), in a folder: BS-RoFormer SW's,
+    and DrumSep's from its drums (from_drums: the audio's a drum part already, just DrumSep's)."""
 
-    def split(audio: bytes, parts: list[str], out: Path, progress: Callable[[float], None]) -> None:
+    def split(audio: bytes, parts: list[str], out: Path, progress: Callable[[float], None],
+              from_drums: bool = False) -> None:
         import numpy as np
         import soundfile
         from scipy.signal import resample_poly
         pcm, rate = soundfile.read(io.BytesIO(audio), dtype="float32", always_2d=True)
         frames, channels = pcm.shape
-        say(f"Splitting {frames / rate / 60:.1f} minutes at {rate} Hz into {', '.join(parts)}")
+        say(f"Splitting {frames / rate / 60:.1f} minutes at {rate} Hz into {', '.join(parts)}"
+            + (" (a drum part)" if from_drums else ""))
         song = (pcm.T[:2] if channels > 1 else np.repeat(pcm.T, 2, axis=0)).astype(np.float32)
         del pcm
         divisor = int(np.gcd(rate, RATE))
         if rate != RATE:
             song = resample_poly(song, RATE // divisor, rate // divisor, axis=-1).astype(np.float32)
-        sources = separator.sources
-        made = separator.separate(song, [sources.index(p) for p in parts], progress)
+        pieces = [p for p in parts if kit is not None and p in kit.sources]
+        made: dict[str, Any] = {}
+        if from_drums:
+            drums = song
+        else:  # (the song's parts: its drums too, for the pieces)
+            wanted = [p for p in parts if p in songs.sources]
+            wanted += ["drums"] if pieces and "drums" not in wanted else []
+            share = 0.75 if pieces else 1.0
+            got = songs.separate(song, [songs.sources.index(p) for p in wanted], lambda done: progress(share * done))
+            made.update(zip(wanted, got))
+            drums = made.get("drums")
         del song
-        for k, name in enumerate(parts):
-            part = made[k]
+        if pieces and kit is not None:
+            first = 0.0 if from_drums else 0.75
+            got = kit.separate(np.ascontiguousarray(drums, dtype=np.float32), [kit.sources.index(p) for p in pieces],
+                               lambda done: progress(first + (1 - first) * done))
+            made.update(zip(pieces, got))
+        del drums
+        for name in parts:
+            part = made.pop(name)
             if rate != RATE:
                 part = resample_poly(part, rate // divisor, RATE // divisor, axis=-1)
             part = part[:, :frames]
@@ -497,12 +576,16 @@ def handler(key: str, jobs: Jobs, describe: Callable[[], dict[str, Any]]) -> typ
             if not 0 < size <= MOST_UPLOAD:
                 return self._json(400, {"error": "Expected a song's audio (WAV or FLAC), up to 1 GB"})
             audio = self.rfile.read(size)  # (all of it, before any answer: else the sender's cut off mid-song)
-            known = describe()["parts"]
-            parts = [p for p in ",".join(parse_qs(url.query).get("parts", [])).split(",") if p] or \
-                [p for p in known if p != "other"]
-            if any(p not in known for p in parts):
-                return self._json(400, {"error": f"The parts: {', '.join(known)}"})
-            job = jobs.add(audio, parts)
+            said = describe()
+            query = parse_qs(url.query)
+            from_drums = query.get("from", [""])[0] == "drums"
+            known = said.get("kit", []) if from_drums else said["parts"]
+            parts = [p for p in ",".join(query.get("parts", [])).split(",") if p] or \
+                [p for p in known if p != "other" and p not in said.get("kit", [])]
+            if not parts or any(p not in known for p in parts):
+                return self._json(400, {"error": f"The parts{' of a drum part' if from_drums else ''}: "
+                                                 f"{', '.join(known) or 'none'}"})
+            job = jobs.add(audio, parts, **({"from_drums": True} if from_drums else {}))
             say(f"{job}: a song from {self.client_address[0]} ({size / 1e6:.0f} MB)")
             self._json(200, {"id": job})
 
@@ -530,28 +613,34 @@ def addresses(port: int) -> list[str]:
 
 
 def serve(data: Path, device: str, host: str, port: int) -> None:
-    separator = Separator(data, device)
-    split = splitter(separator)
-    jobs = Jobs(split, data / "jobs", separator.let_go_if_idle)
-    gpu = separator.describe()
+    songs, kit = Separator(data, device), Separator(data, device, KIT)
+    split = splitter(songs, kit)
+
+    def idle() -> None:
+        songs.let_go_if_idle()
+        kit.let_go_if_idle()
+
+    jobs = Jobs(split, data / "jobs", idle)
+    gpu = songs.describe()
     if device == "cuda" and "CUDA" not in gpu:
         say("PyTorch can't use the NVIDIA GPU (torch.cuda isn't available): is the driver loaded? (nvidia-smi)")
         sys.exit(1)
-    try:
-        separator.check()
-    except Exception as exc:  # (said whole: what to show rs-keylights' maker)
-        import traceback
-        traceback.print_exc()
-        say(f"\nThe model didn't run here: {type(exc).__name__}: {exc}")
-        sys.exit(1)
+    for separator in (songs, kit):
+        try:
+            separator.check()
+        except Exception as exc:  # (said whole: what to show rs-keylights' maker)
+            import traceback
+            traceback.print_exc()
+            say(f"\n{separator.name} didn't run here: {type(exc).__name__}: {exc}")
+            sys.exit(1)
 
     def describe() -> dict[str, Any]:
-        return {"server": "rs-keylights split", "version": VERSION, "model": "BS-RoFormer SW", "device": gpu,
-                "parts": separator.sources}
+        return {"server": "rs-keylights split", "version": VERSION, "model": SONGS, "models": [SONGS, KIT],
+                "device": gpu, "parts": songs.sources + kit.sources, "kit": kit.sources}
 
     key = (data / "key").read_text().strip()
     server = ThreadingHTTPServer((host, port), handler(key, jobs, describe))
-    say(f"\nrs-keylights split server: BS-RoFormer SW on {gpu}")
+    say(f"\nrs-keylights split server: {SONGS} and {KIT} on {gpu}")
     say("In rs-keylights (the page's Song's audio card, Split on another computer), its address and key:")
     for address in addresses(port):
         say(f"  address  {address}")
@@ -563,7 +652,8 @@ def serve(data: Path, device: str, host: str, port: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Splits songs into their parts for rs-keylights (BS-RoFormer SW).")
+    parser = argparse.ArgumentParser(description="Splits songs into their parts for rs-keylights (BS-RoFormer SW), "
+                                                 "and their drums into the kit's pieces (DrumSep).")
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--host", default="0.0.0.0", help="the address to listen on (default: every one this has)")
     parser.add_argument("--data", type=Path, default=DATA, help=f"its own folder (default {DATA})")

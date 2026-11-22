@@ -57,16 +57,25 @@ def status(url: str, key: str, timeout: float = 3.0) -> dict[str, Any]:
     return got
 
 
+def has_kit(url: str, key: str) -> bool:
+    """Whether it splits a drum part into the kit's pieces too (DrumSep: kick, snare, toms, hh, ride, crash; a server
+    from before it doesn't)."""
+    from .stems import KIT
+    return all(piece in (status(url, key).get("kit") or []) for piece in KIT)
+
+
 def split(url: str, key: str, song: Path, parts: Sequence[str], out: Path,
-          progress: Callable[[float], None] = lambda _done: None) -> dict[str, Path]:
+          progress: Callable[[float], None] = lambda _done: None, from_drums: bool = False) -> dict[str, Path]:
     """A song's parts (song: its audio, a WAV) made there: each part's FLAC, in out. How far along: 0 to 1, to
-    progress (sent by SENT, made by MADE, then fetched)."""
-    known = status(url, key).get("parts") or []  # (there, the key right, the parts its: else said before the song's
-    # sent)
+    progress (sent by SENT, made by MADE, then fetched). From drums: the audio's a drum part already, the parts the
+    kit's pieces (DrumSep's)."""
+    said = status(url, key)  # (there, the key right, the parts its: else said before the song's sent)
+    known = (said.get("kit") if from_drums else said.get("parts")) or []
     if any(part not in known for part in parts):
-        raise SplitServerError(f"The parts: {', '.join(known)}")
+        raise SplitServerError(f"The parts{' of a drum part' if from_drums else ''}: {', '.join(known) or 'none'}")
     with open(song, "rb") as audio:
-        job = _json(url, key, f"/split?parts={','.join(parts)}", method="POST", data=audio,
+        job = _json(url, key, f"/split?parts={','.join(parts)}" + ("&from=drums" if from_drums else ""), method="POST",
+                    data=audio,
                     headers={"Content-Type": "audio/wav", "Content-Length": str(song.stat().st_size)},
                     timeout=120)["id"]
     progress(SENT)
