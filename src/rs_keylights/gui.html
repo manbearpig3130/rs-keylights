@@ -3451,8 +3451,8 @@ function renderAudioCard(s) {
   split.title = !d.can ? (chosen === "roformer" ?
       "BS-RoFormer SW isn't set up: run tools/roformer-setup.sh in rs-keylights' folder" :
       "The separator needs rebuilding: run tools/drums-setup.sh in rs-keylights' folder") :
-    chosen === "roformer" ? "Split it with BS-RoFormer SW: the cleanest parts, in about the song's length (the Mac's " +
-      "GPU, in the background)" :
+    chosen === "roformer" ? "Split it with BS-RoFormer SW: the cleanest parts, in a little longer than the song " +
+      "itself (the Mac's GPU, in the background)" :
     "Split it with Demucs: quick (a minute or two), its parts rougher";
   split.dataset.song = s.id;
   const done = Math.round((d.progress || 0) * 100);

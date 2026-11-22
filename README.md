@@ -587,7 +587,9 @@ The **Song's audio** card sets its volume and output.
 with the **separator** chosen beside it:
 
 - **BS-RoFormer SW** (jarredou's 6-stem model, as jonkubis' Core ML port has it): much the cleaner parts, the guitar
-  most of all, in about the song's own length on the Mac's GPU. It needs `tools/roformer-setup.sh` run once.
+  most of all, in a little longer than the song itself on the Mac's GPU (in the background, out of the game's way).
+  It needs `tools/roformer-setup.sh` run once (it downloads the model, 330 MB, and its own Python), and Song Stems'
+  decoder from `tools/drums-setup.sh`. The model's weights are jarredou's, their licence unstated: for your own use.
 - **Demucs** (Song Stems' htdemucs_6s): quick, about 35 s for a 4-minute song on the Neural Engine, all five parts
   from one pass of the model, but rougher (a separator built before that takes one pass a part, about two minutes:
   run `tools/drums-setup.sh` again).
