@@ -288,3 +288,34 @@ def test_what_the_server_prints_and_how_far_it_is_are_asked_for_from_a_line_on(s
     monkeypatch.setattr(splitserver, "log", lambda *a, **k: (_ for _ in ()).throw(splitserver.SplitServerError(
         "No such thing")))  # (a copy of the script from before it)
     assert "copy the new one" in gui.split_server_log()["error"]
+
+
+def test_the_server_tracks_the_vocals_melody_from_its_own_vocals_or_a_vocal_part_sent(tmp_path, monkeypatch):
+    import json as json_module
+    stand_ins(monkeypatch)
+    songs = FakeModel(["bass", "drums", "other", "vocals", "guitar", "piano"], 0.1)
+
+    class FakeMelody:  # (RMVPE: a pitch every 10 ms)
+        name, seen = "RMVPE", []
+
+        def track(self, audio, progress=lambda done: None):
+            self.seen.append(audio.copy())
+            progress(1.0)
+            n = len(audio) // server_script.MELODY_HOP + 1
+            return np.full(n, 220.0, dtype=np.float32), np.full(n, 0.9, dtype=np.float32)
+
+    melody = FakeMelody()
+    split = server_script.splitter(songs, None, melody)
+    write_wav(tmp_path / "song.wav", (np.ones((44100, 2)) * 10000).astype(np.int16), rate=44100)
+    audio = (tmp_path / "song.wav").read_bytes()
+    (tmp_path / "song.wav").unlink()
+    (out := tmp_path / "out").mkdir()
+    far = []
+    split(audio, ["guitar", "melody"], out, far.append)
+    assert songs.seen[0][1] == [4, 3]  # (the guitar, and its vocals for the melody: not written)
+    assert sorted(p.name for p in out.iterdir()) == ["guitar.flac", "melody.json"]
+    got = json_module.loads((out / "melody.json").read_text())
+    assert got["hop"] == 0.01 and got["f0"][0] == 220.0 and got["sure"][0] == 0.9 and far[-1] == 1.0
+    (alone := tmp_path / "alone").mkdir()
+    split(audio, ["melody"], alone, far.append, from_vocals=True)  # (a vocal part sent: just its melody)
+    assert len(songs.seen) == 1 and len(melody.seen) == 2 and [p.name for p in alone.iterdir()] == ["melody.json"]

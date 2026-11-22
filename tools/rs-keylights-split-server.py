@@ -3,7 +3,7 @@
 computer's NVIDIA GPU. rs-keylights (on the Mac) sends a song's audio; this sends back its drums, bass, guitar,
 vocals and piano, and the Mac keeps them as it does its own. It splits the drums into the kit's pieces too (DrumSep:
 kick, snare, toms, hi-hat, ride, crash), for rs-keylights' drum parts: crash or ride, and open or closed hi-hats,
-from the cymbals' own sound.
+from the cymbals' own sound; and tracks the vocals' pitch (RMVPE), for the vocal melody rs-keylights plays on the keys.
 
     python3 rs-keylights-split-server.py [--port 8042] [--data DIR] [--device cuda|cpu|mps]
 
@@ -19,7 +19,9 @@ root, and changes nothing outside its own folder (DIR, by default ~/.local/share
   model/   the models: jarredou's BS-Rofo-SW-Fixed checkpoint (700 MB) and its settings, from the FractalSurfer
            mirror on Hugging Face at a fixed revision; and aufr33 and jarredou's DrumSep (MDX23C, 6 pieces: 440 MB)
            and its settings, from openmirlab's copy on GitHub (its own hosting's gone). Each checked by SHA-256.
-           Neither's licence is stated: for your own use.
+           Neither's licence is stated: for your own use. And RMVPE (RVC's, MIT: 180 MB), the vocals' pitch, from
+           its Hugging Face repository at a fixed revision, with RVC's code for it (two stand-ins of this script's own
+           for the rest of theirs).
   key      a random key, made once: rs-keylights needs it (it's printed when this starts). Without it, nothing's
            answered (403).
   jobs/    songs being split and their parts, each gone once rs-keylights has them (or an hour after).
@@ -32,8 +34,9 @@ What rs-keylights asks it (each with the header X-RS-Keylights-Key: the key):
   GET    /status                    what it is, the GPU it runs on, how many songs are waiting
   POST   /split?parts=drums,bass…   a song's audio (WAV or FLAC, any rate): {"id": …}, split in turn. Its parts:
                                     BS-RoFormer SW's (drums, bass, other, vocals, guitar, piano) and DrumSep's
-                                    (kick, snare, toms, hh, ride, crash: from BS-RoFormer SW's drums); &from=drums:
-                                    the audio's a drum part already, just DrumSep's
+                                    (kick, snare, toms, hh, ride, crash: from BS-RoFormer SW's drums), and melody
+                                    (the vocals' pitch every 10 ms, RMVPE's: melody.json); &from=drums: the audio's a
+                                    drum part already, just DrumSep's; &from=vocals: a vocal part, just its melody
   GET    /split/ID                  {"state": waiting|splitting|done|failed, "progress": 0-1, "error": …}
   GET    /split/ID/PART.flac        a part once it's done: 16-bit FLAC, as long as the song, at its rate
   DELETE /split/ID                  its files gone
@@ -69,7 +72,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-VERSION = 2  # (2: DrumSep's kit pieces too)
+VERSION = 3  # (2: DrumSep's kit pieces too; 3: the vocals' melody)
 PORT = 8042
 DATA = Path.home() / ".local" / "share" / "rs-keylights-split"
 KEY_HEADER = "X-RS-Keylights-Key"
@@ -77,7 +80,7 @@ KEY_HEADER = "X-RS-Keylights-Key"
 TORCH = "torch==2.14.1"
 TORCH_INDEX = {"cuda": "https://download.pytorch.org/whl/cu126", "cpu": "https://download.pytorch.org/whl/cpu"}
 PACKAGES = ("numpy", "scipy", "soundfile", "pyyaml", "packaging", "einops==0.8.1", "rotary-embedding-torch==0.3.5",
-            "beartype==0.14.1")
+            "beartype==0.14.1", "librosa==0.11.0")  # (librosa: RMVPE's mel filters)
 
 CODE_URL = ("https://raw.githubusercontent.com/ZFTurbo/Music-Source-Separation-Training/"
             "1523206d12a521bdb20673726562524cf0f9635b/")
@@ -103,6 +106,36 @@ MODEL = {
     CHECKPOINT: "24e7d35ee9c64415673d3fd33e06a67cac2c103c5df6267ba1576459c775916e",
     SETTINGS: "f9fada9f94e5ba2d2e4600196299459294bc5f532b314c209cc156ac63e4329b",
 }
+RVC_URL = ("https://raw.githubusercontent.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI/"
+           "81eed5e8f68b6bed1789f682fe78cdd324495afc/")
+RVC_CODE = {  # (RVC's files: SHA-256)
+    "infer/rmvpe.py": "074171aec63e4b68f04d8691c62af50a1d99b9bc6dc56c4d6749fad4ba64853a",
+    "LICENSE": "bec61ed1eb9a3748644ddbc50303aa6978e14eeaba46822e59a006c722b52585",
+}
+RVC_STAND_INS = {  # (in place of RVC's own: what RMVPE's code takes from them, as theirs does it on one GPU)
+    "infer/__init__.py": "",
+    "tools/__init__.py": "",
+    "tools/cuda_graph.py": '''"""rs-keylights-split-server's stand-in for RVC's tools/cuda_graph.py: run as it is (no CUDA graph)."""
+
+
+def run_cuda_graph(module, name, run, value):
+    return run(value)
+''',
+    "configs/__init__.py": "",
+    "configs/config.py": '''"""rs-keylights-split-server's stand-in for RVC's configs/config.py: a GPU at half precision, else the CPU."""
+import torch
+
+infer_device, infer_dtype = "cpu", torch.float32
+
+
+def get_device_dtype_sm(index):
+    return torch.device(f"cuda:{index}"), torch.float16, None, None
+''',
+}
+MELODY_URL = "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/e6d0c1a17da07c33557852f9dfa2bd44cc75737d/"
+MELODY_MODEL = {"rmvpe.pt": "6d62215f4306e3ca278246188607209f09af3dc77ed4232efdd069798c4ec193"}
+MELODY_RATE, MELODY_HOP = 16000, 160  # (RMVPE's: its pitch every 10 ms)
+MELODY_CHUNK, MELODY_PAD = 30.0, 0.5  # seconds tracked at a time, and either side of each (no edge)
 KIT_URL = "https://github.com/openmirlab/mdxnet-infer/releases/download/weights-drumsep-v1/"
 KIT_CHECKPOINT = "aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt"
 KIT_SETTINGS = "aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.yaml"
@@ -196,7 +229,8 @@ def check(data: Path, device: str) -> None:
             else:
                 say(f"GPU: {gpus.stdout.strip().splitlines()[0]}")
     first = not (data / "venv" / "ready.json").exists()
-    if first or not (data / "model" / KIT_CHECKPOINT).exists():  # (its first run; or DrumSep's, set up before it)
+    if first or not (data / "model" / KIT_CHECKPOINT).exists() or not (data / "model" / "rmvpe.pt").exists():  # (its
+        # first run; or DrumSep's or RMVPE's, set up before them)
         free = shutil.disk_usage(data if data.exists() else data.parent if data.parent.exists() else Path.home()).free
         if free < (6e9 if first else 1e9):
             missing.append(f"{6 if first else 1} GB of free disk for what it downloads ({free / 1e9:.1f} GB free "
@@ -217,6 +251,14 @@ def set_up(data: Path, device: str) -> Path:
     if sys.platform == "darwin":  # (a Mac: PyTorch's own build, for trying it out there)
         wanted["index"] = None
     ready = venv / "ready.json"
+    had = json.loads(ready.read_text()) if ready.exists() else None
+    if had is not None and had != wanted and (had.get("torch"), had.get("index")) == (TORCH, wanted["index"]):
+        added = [package for package in PACKAGES if package not in had.get("packages", [])]  # (PyTorch as it is:
+        say(f"Adding to its Python: {', '.join(added)}")                                  # just the new ones)
+        uv = shutil.which("uv")
+        run(([uv, "pip", "install", "--python", str(python)] if uv else
+             [str(python), "-m", "pip", "install", "--disable-pip-version-check"]) + added)
+        ready.write_text(json.dumps(wanted))
     if not ready.exists() or json.loads(ready.read_text()) != wanted:
         say(f"Setting up its Python in {venv} (the first time: about 4 GB to download)")
         shutil.rmtree(venv, ignore_errors=True)
@@ -240,6 +282,13 @@ def set_up(data: Path, device: str) -> Path:
         fetch(MODEL_URL + name, data / "model" / name, sha)
     for name, sha in KIT_MODEL.items():
         fetch(KIT_URL + name, data / "model" / name, sha)
+    for name, sha in RVC_CODE.items():
+        fetch(RVC_URL + name, data / "code" / "rvc" / name, sha)
+    for name, text in RVC_STAND_INS.items():
+        (data / "code" / "rvc" / name).parent.mkdir(parents=True, exist_ok=True)
+        (data / "code" / "rvc" / name).write_text(text)
+    for name, sha in MELODY_MODEL.items():
+        fetch(MELODY_URL + name, data / "model" / name, sha)
     key = data / "key"
     if not key.exists():
         key.write_text(secrets.token_urlsafe(18) + "\n")
@@ -443,6 +492,74 @@ class Separator:
         return np.nan_to_num(out, copy=False)
 
 
+class Melody:
+    """RMVPE (RVC's) on the device: a vocal part's pitch every 10 ms, and how sure it is of it. Loaded for a song, let go
+    of IDLE seconds after the last."""
+
+    name = "RMVPE"
+
+    def __init__(self, data: Path, device: str):
+        self.data, self.device = data, device
+        self._model: Any = None
+        self._used = 0.0
+        self._lock = threading.Lock()
+
+    def model(self) -> Any:
+        with self._lock:
+            if self._model is None:
+                code = str(self.data / "code" / "rvc")
+                if code not in sys.path:
+                    sys.path.insert(0, code)
+                from infer.rmvpe import RMVPE  # pyright: ignore[reportMissingImports]
+                device = "cuda:0" if self.device == "cuda" else self.device
+                self._model = RMVPE(str(self.data / "model" / "rmvpe.pt"), is_half=self.device == "cuda", device=device)
+                say(f"{self.name} on {device}")
+            self._used = time.monotonic()
+            return self._model
+
+    def track(self, audio: Any, progress: Callable[[float], None] = lambda _done: None) -> tuple[Any, Any]:
+        """A vocal part's pitch (mono, at MELODY_RATE): Hz every 10 ms (0: none), and how sure (its salience's
+        peak), MELODY_CHUNK seconds at a time, each with MELODY_PAD more either side (no edge)."""
+        import numpy as np
+        import torch
+        model = self.model()
+        chunk, pad = int(MELODY_CHUNK * MELODY_RATE), int(MELODY_PAD * MELODY_RATE)
+        frames = len(audio) // MELODY_HOP + 1
+        f0, sure = np.zeros(frames, dtype=np.float32), np.zeros(frames, dtype=np.float32)
+        starts = list(range(0, len(audio), chunk))
+        for k, start in enumerate(starts):
+            lo, hi = max(start - pad, 0), min(start + chunk + pad, len(audio))
+            with torch.inference_mode():
+                mel = model.extract_mel(np.ascontiguousarray(audio[lo:hi], dtype=np.float32), center=True)
+                hidden = model.mel2hidden(mel).squeeze(0).float().cpu().numpy()
+            pitch = model.decode(hidden, thred=0.03)
+            first, last = start // MELODY_HOP, min((start + chunk) // MELODY_HOP, frames)
+            skip = (start - lo) // MELODY_HOP
+            take = min(last - first, len(pitch) - skip)
+            f0[first:first + take] = pitch[skip:skip + take]
+            sure[first:first + take] = hidden.max(axis=1)[skip:skip + take]
+            progress((k + 1) / len(starts))
+            self._used = time.monotonic()
+        return f0, sure
+
+    def check(self) -> None:
+        import numpy as np
+        started = time.monotonic()
+        self.model()
+        loaded = time.monotonic()
+        self.track(np.zeros(MELODY_RATE * 10, dtype=np.float32))
+        say(f"Checked {self.name}: loaded in {loaded - started:.0f} s; 10 s of vocals in {time.monotonic() - loaded:.2f} s")
+
+    def let_go_if_idle(self) -> None:
+        import torch
+        with self._lock:
+            if self._model is not None and time.monotonic() - self._used > IDLE:
+                self._model = None
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
+                say(f"{self.name} let go of (idle)")
+
+
 class Jobs:
     """Songs to split, in turn on a thread of their own, and their parts kept (in folder) until fetched; idle, now and
     then, while there are none."""
@@ -480,7 +597,7 @@ class Jobs:
         info = self.info(job)
         if info is None or info["state"] != "done" or part not in info["parts"]:
             return None
-        return self.folder / job / f"{part}.flac"
+        return self.folder / job / (f"{part}.json" if part == "melody" else f"{part}.flac")
 
     def remove(self, job: str) -> bool:
         with self._lock:
@@ -529,12 +646,13 @@ class Jobs:
             shutil.rmtree(self.folder / job, ignore_errors=True)
 
 
-def splitter(songs: Separator, kit: Separator | None = None) -> Callable[..., None]:
+def splitter(songs: Separator, kit: Separator | None = None, melody: Melody | None = None) -> Callable[..., None]:
     """A song's audio (WAV or FLAC, any rate) to its parts' FLACs (16-bit, at its rate), in a folder: BS-RoFormer SW's,
-    and DrumSep's from its drums (from_drums: the audio's a drum part already, just DrumSep's)."""
+    DrumSep's from its drums (from_drums: the audio's a drum part already, just DrumSep's), and its vocals' melody
+    (melody.json: RMVPE's pitch every 10 ms, from its vocals; from_vocals: the audio's a vocal part already)."""
 
     def split(audio: bytes, parts: list[str], out: Path, progress: Callable[[float], None],
-              from_drums: bool = False) -> None:
+              from_drums: bool = False, from_vocals: bool = False) -> None:
         import numpy as np
         import soundfile
         from scipy.signal import resample_poly
@@ -548,24 +666,45 @@ def splitter(songs: Separator, kit: Separator | None = None) -> Callable[..., No
         if rate != RATE:
             song = resample_poly(song, RATE // divisor, rate // divisor, axis=-1).astype(np.float32)
         pieces = [p for p in parts if kit is not None and p in kit.sources]
+        tracked = "melody" in parts and melody is not None
+        # (each stage's share of how far it's got: the song's parts most, then the drums' pieces, then the melody)
+        stages = [(name, share) for name, share, needed in (("songs", 1.0, not (from_drums or from_vocals)),
+                                                            ("kit", 0.35, bool(pieces)), ("melody", 0.1, tracked))
+                  if needed]
+        total = sum(share for _name, share in stages) or 1.0
+        begins, at = {}, 0.0
+        for name, share in stages:
+            begins[name] = (at / total, share / total)
+            at += share
+
+        def along(stage: str) -> Callable[[float], None]:
+            first, share = begins[stage]
+            return lambda done: progress(first + share * done)
+
         made: dict[str, Any] = {}
-        if from_drums:
-            drums = song
-        else:  # (the song's parts: its drums too, for the pieces)
+        drums = vocals = song if (from_drums or from_vocals) else None
+        if not (from_drums or from_vocals):  # (the song's parts: its drums and vocals too, for the pieces and melody)
             wanted = [p for p in parts if p in songs.sources]
             wanted += ["drums"] if pieces and "drums" not in wanted else []
-            share = 0.75 if pieces else 1.0
-            got = songs.separate(song, [songs.sources.index(p) for p in wanted], lambda done: progress(share * done))
+            wanted += ["vocals"] if tracked and "vocals" not in wanted else []
+            got = songs.separate(song, [songs.sources.index(p) for p in wanted], along("songs"))
             made.update(zip(wanted, got))
-            drums = made.get("drums")
+            drums, vocals = made.get("drums"), made.get("vocals")
         del song
-        if pieces and kit is not None:
-            first = 0.0 if from_drums else 0.75
+        if pieces and kit is not None and drums is not None:
             got = kit.separate(np.ascontiguousarray(drums, dtype=np.float32), [kit.sources.index(p) for p in pieces],
-                               lambda done: progress(first + (1 - first) * done))
+                               along("kit"))
             made.update(zip(pieces, got))
-        del drums
+        if tracked and melody is not None and vocals is not None:
+            mono = resample_poly(np.asarray(vocals, dtype=np.float32).mean(axis=0), MELODY_RATE // 100, RATE // 100)
+            f0, sure = melody.track(mono.astype(np.float32), along("melody"))
+            (out / "melody.json").write_text(json.dumps({
+                "hop": MELODY_HOP / MELODY_RATE, "f0": [round(float(v), 2) for v in f0],
+                "sure": [round(float(v), 3) for v in sure]}))
+        del drums, vocals
         for name in parts:
+            if name == "melody":
+                continue
             part = made.pop(name)
             if rate != RATE:
                 part = resample_poly(part, rate // divisor, RATE // divisor, axis=-1)
@@ -613,12 +752,12 @@ def handler(key: str, jobs: Jobs, describe: Callable[[], dict[str, Any]]) -> typ
             if len(path) == 2 and path[0] == "split":
                 info = jobs.info(path[1])
                 return self._json(200, info) if info else self._json(404, {"error": "No such song (gone?)"})
-            if len(path) == 3 and path[0] == "split" and path[2].endswith(".flac"):
-                found = jobs.file(path[1], path[2][:-len(".flac")])
+            if len(path) == 3 and path[0] == "split" and path[2].endswith((".flac", ".json")):
+                found = jobs.file(path[1], path[2].rsplit(".", 1)[0])
                 if found is None or not found.exists():
                     return self._json(404, {"error": "No such part (not done yet, or gone)"})
                 self.send_response(200)
-                self.send_header("Content-Type", "audio/flac")
+                self.send_header("Content-Type", "application/json" if found.suffix == ".json" else "audio/flac")
                 self.send_header("Content-Length", str(found.stat().st_size))
                 self.end_headers()
                 with open(found, "rb") as f:
@@ -638,14 +777,16 @@ def handler(key: str, jobs: Jobs, describe: Callable[[], dict[str, Any]]) -> typ
             audio = self.rfile.read(size)  # (all of it, before any answer: else the sender's cut off mid-song)
             said = describe()
             query = parse_qs(url.query)
-            from_drums = query.get("from", [""])[0] == "drums"
-            known = said.get("kit", []) if from_drums else said["parts"]
+            source = query.get("from", [""])[0]  # (drums, vocals: a part of a song already, its own made of it)
+            from_drums, from_vocals = source == "drums", source == "vocals"
+            known = said.get("kit", []) if from_drums else ["melody"] if from_vocals else said["parts"]
             parts = [p for p in ",".join(query.get("parts", [])).split(",") if p] or \
-                [p for p in known if p != "other" and p not in said.get("kit", [])]
+                [p for p in known if p != "other" and p != "melody" and p not in said.get("kit", [])]
             if not parts or any(p not in known for p in parts):
-                return self._json(400, {"error": f"The parts{' of a drum part' if from_drums else ''}: "
+                return self._json(400, {"error": f"The parts{f' of a {source} part' if source else ''}: "
                                                  f"{', '.join(known) or 'none'}"})
-            job = jobs.add(audio, parts, **({"from_drums": True} if from_drums else {}))
+            job = jobs.add(audio, parts, **({"from_drums": True} if from_drums else {"from_vocals": True}
+                                             if from_vocals else {}))
             say(f"{job}: a song from {self.client_address[0]} ({size / 1e6:.0f} MB)")
             self._json(200, {"id": job})
 
@@ -673,19 +814,20 @@ def addresses(port: int) -> list[str]:
 
 
 def serve(data: Path, device: str, host: str, port: int) -> None:
-    songs, kit = Separator(data, device), Separator(data, device, KIT)
-    split = splitter(songs, kit)
+    songs, kit, melody = Separator(data, device), Separator(data, device, KIT), Melody(data, device)
+    split = splitter(songs, kit, melody)
 
     def idle() -> None:
         songs.let_go_if_idle()
         kit.let_go_if_idle()
+        melody.let_go_if_idle()
 
     jobs = Jobs(split, data / "jobs", idle)
     gpu = songs.describe()
     if device == "cuda" and "CUDA" not in gpu:
         say("PyTorch can't use the NVIDIA GPU (torch.cuda isn't available): is the driver loaded? (nvidia-smi)")
         sys.exit(1)
-    for separator in (songs, kit):
+    for separator in (songs, kit, melody):
         try:
             separator.check()
         except Exception as exc:  # (said whole: what to show rs-keylights' maker)
@@ -695,12 +837,12 @@ def serve(data: Path, device: str, host: str, port: int) -> None:
             sys.exit(1)
 
     def describe() -> dict[str, Any]:
-        return {"server": "rs-keylights split", "version": VERSION, "model": SONGS, "models": [SONGS, KIT],
-                "device": gpu, "parts": songs.sources + kit.sources, "kit": kit.sources}
+        return {"server": "rs-keylights split", "version": VERSION, "model": SONGS, "models": [SONGS, KIT, melody.name],
+                "device": gpu, "parts": songs.sources + kit.sources + ["melody"], "kit": kit.sources, "melody": True}
 
     key = (data / "key").read_text().strip()
     server = ThreadingHTTPServer((host, port), handler(key, jobs, describe))
-    say(f"\nrs-keylights split server: {SONGS} and {KIT} on {gpu}")
+    say(f"\nrs-keylights split server: {SONGS}, {KIT} and {melody.name} on {gpu}")
     say("In rs-keylights (the page's Song's audio card, Split on another computer), its address and key:")
     for address in addresses(port):
         say(f"  address  {address}")
