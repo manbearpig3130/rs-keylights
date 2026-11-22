@@ -1973,3 +1973,41 @@ def test_the_progress_log_is_each_drills_speed_a_day_and_the_days_in_a_row(serve
     assert chromatic["speed"] == 56 and chromatic["first"] == 40 and chromatic["tuning"] is None  # (from its start)
     assert rows["scale|B natural minor|B standard"]["points"][0][1:] == [52, 90]
     assert rows["scale|B natural minor|B standard"]["tuning"] == "B standard"
+
+
+def test_a_part_or_the_drum_part_muted_as_a_song_plays_goes_at_once_and_the_rest_play_on(server):
+    from rs_keylights import drums
+    gui, sid = server.gui, first_song(server)
+    drums.keep(gui._load(sid)[0][0], [drums.Hit(2.0, drums.KICK, 110)])  # (made, not played)
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    player = gui._session.player
+    assert player.muted == {"drums"} and "drums" in player.names  # (there, to come in at once)
+    out = server.outs[-1]
+    sent = len(out.sent)
+    gui.change_part("rhythm", {"play": False})  # (the Launchkey's pad)
+    assert gui._session.player is player and player.muted == {"rhythm", "drums"}
+    assert not [m for m in out.sent[sent:] if m[0] & 0xF0 == 0xB0 and m[1] == 123]  # (no notes off everywhere)
+    assert [p["part"] for p in gui._playing["parts"]] == ["lead"]
+    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": True}}})  # (the page's)
+    assert gui._session.player is player and player.muted == {"drums"}
+    gui.change_part("drums", {"play": True})
+    assert gui._session.player is player and player.muted == frozenset()
+    gui.change_part("lead", {"lights": 2})  # (anything else: played again with it)
+    assert wait_for(lambda: gui._session.player is not player, bool)
+    call(server, "/api/stop", {})
+
+
+def test_following_a_part_muted_and_back_goes_at_once_in_the_player_playing(server):
+    server.overlay.state = {"memoryReadout": {"songTimer": 5.0, "songID": "song", "arrangementID": "L"},
+                            "currentState": 4}
+    call(server, "/api/follow/settings", {"sound": True, "parts": {"L": {"R": {"play": True}}}})
+    call(server, "/api/follow", {})
+    gui = server.gui
+    follower = wait_for(lambda: gui._session.follower, lambda f: f._player is not None and len(f.planned) == 2)
+    player = follower._player
+    call(server, "/api/follow/settings", {"parts": {"L": {"R": {"play": False}}}})  # (muted: there still)
+    assert follower._player is player and player.muted == {"rhythm"}
+    assert [p["name"] for p in call(server, "/api/state")[1]["follow"]["parts"]] == ["Lead"]
+    call(server, "/api/follow/settings", {"parts": {"L": {"R": {"play": True}}}})  # (back, at once)
+    assert follower._player is player and player.muted == frozenset()
+    call(server, "/api/stop", {})

@@ -7,14 +7,14 @@ import time
 import urllib.error
 import urllib.request
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Protocol, Sequence
 
 from .keyboard import Keyboard
 from .library import ArrangementRef
 from .keyshow import KeyShow
 from .lights import LIGHTS_EARLY, MIN_PERIOD
-from .parts import Part, PlanCache, PlannedPart, VoicesFor, plan, player_for
+from .parts import DRUMS, Part, PlanCache, PlannedPart, VoicesFor, plan, player_for
 from .player import SEEK_AHEAD, Player, Track
 from .sng import Arrangement
 from .tones import Tone
@@ -48,7 +48,8 @@ GameTime = Callable[[], "tuple[float | None, str | None] | tuple[float | None, s
 MENUS = (0, 1)  # currentState: no game, menus
 
 # The parts to play while an arrangement is played: arrangements of its song, each with the keys it lights
-PartsFor = Callable[[ArrangementRef], Sequence[tuple[ArrangementRef, int]]]
+PartsFor = Callable[[ArrangementRef], Sequence[tuple[ArrangementRef, int] | tuple[ArrangementRef, int, bool]]]
+# (each part to play and its lit keys; a third, False: planned muted, so it can be unmuted at once: Player.mute)
 
 
 class OverlayError(RuntimeError):
@@ -412,6 +413,7 @@ class Follower:
         self._voices_for = voices_for  # with sound: the voices (channels and tones) for each arrangement
         self._parts_for = parts_for  # None: just the arrangement played, on every key
         self._extras_for: Callable[[ArrangementRef], Sequence[Track]] | None = None  # tracks besides the parts (drums)
+        self._extras_muted_for: Callable[[ArrangementRef], bool] | None = None  # (and whether they're muted)
         self._extras: list[Track] = []  # (and those playing)
         self._made = PlanCache()  # (the parts' lights and tracks as made: a change remakes just the part changed)
         self.lights_early = lights_early  # seconds the keys light before the notes
@@ -520,13 +522,13 @@ class Follower:
         current, player = self.current, self._player
         if player is None or current is None:
             return None
-        planned = self._plan(current, voices_for, parts_for)
+        planned = self._plan(current, voices_for, parts_for, keep_muted=True)
         if _sound_of(planned) == _sound_of(self._planned):
             return Prepared(current, None, [], None)  # (the same: what plays goes on as it is)
         extras = list(self._extras_for(current)) if self._extras_for else []
         return Prepared(current, planned, extras,
                         player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=extras,
-                                   cache=self._made))
+                                   cache=self._made, extra_muted=self._extras_muted()))
 
     def use_parts(self, prepared: Prepared | None, voices_for: VoicesFor | None, parts_for: PartsFor | None) -> None:
         """Other voices or parts from now, with what prepare_parts made of them (made for another song, or another
@@ -730,14 +732,19 @@ class Follower:
         return self._plan(self.current) if self.current is not None and self._planned else []
 
     def _plan(self, current: ArrangementRef, voices_for: VoicesFor | None | bool = False,
-              parts_for: PartsFor | None | bool = False) -> list[PlannedPart]:
+              parts_for: PartsFor | None | bool = False, keep_muted: bool = False) -> list[PlannedPart]:
         """The parts to play while this arrangement is played, read when first needed (with voices and parts other
-        than the ones it has, if they're given)."""
+        than the ones it has, if they're given). Keeping those muted: the parts it plays now that aren't chosen any
+        more stay in it muted (they can come back at once)."""
         voices = self._voices_for if voices_for is False else voices_for
         parts_of = self._parts_for if parts_for is False else parts_for
-        chosen = parts_of(current) if callable(parts_of) else [(current, 4)]
+        chosen = list(parts_of(current) if callable(parts_of) else [(current, 4)])
+        if keep_muted:
+            have = {ref.persistent_id for ref, *_rest in chosen}
+            chosen += [(p.part.ref, p.part.lights, False) for p in self._planned
+                       if p.part.ref.persistent_id not in have and p.part.ref.persistent_id in self._loaded]
         parts = []
-        for ref, lights in chosen:
+        for ref, lights, *played in chosen:
             arrangement = self._loaded.get(ref.persistent_id)
             if arrangement is None:
                 try:
@@ -745,43 +752,92 @@ class Follower:
                 except Exception as exc:  # a broken song file: the other parts play on
                     self._status(f"{ref.title} ({ref.name}): can't read its notes: {exc}")
                     continue
-            parts.append(Part(ref, arrangement, lights))
+            parts.append(Part(ref, arrangement, lights, muted=bool(played) and not played[0]))
         return plan(parts, voices if callable(voices) else None, strict=False,
                     first=current, cache=self._made)  # (one that doesn't fit the keyboard's channels: just lit)
 
-    def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
-        """Tracks to play besides the parts, for the arrangement played (its song's drum part), or none; the song
-        playing goes on with them from where it is."""
-        self._extras_for = extras_for
+    def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None,
+                   muted_for: Callable[[ArrangementRef], bool] | None = None) -> None:
+        """Tracks to play besides the parts, for the arrangement played (its song's drum part), or none, and whether
+        they're muted (in the player: they can come back at once); the song playing goes on with them from where it
+        is."""
+        self._extras_for, self._extras_muted_for = extras_for, muted_for
         if self._player is None or self.current is None:
             return
-        if (list(extras_for(self.current)) if extras_for else []) == self._extras:
-            return  # (the same: what plays goes on as it is, its notes sounding)
+        if (list(extras_for(self.current)) if extras_for else []) == self._extras:  # (the same: what plays goes on
+            self._player.mute(self._player.muted - {DRUMS} | ({DRUMS} if self._extras_muted() else set()))  # as it
+            return  # is, its notes sounding; muted or back, at once)
         player = self._player_with(self._planned)
         player.retime(rate=self._player.rate)
         self._player.stop()
         self._player = player  # the next step seeks it to where the song is
 
+    def _extras_muted(self) -> bool:
+        return bool(self._extras_muted_for and self.current is not None and self._extras_muted_for(self.current))
+
+    def _mutes(self, parts_for: PartsFor | None) -> set[str] | None:
+        """The parts to mute as parts_for has them now (the same parts, lighting the same keys) in the player as it
+        is; None if it can't (a part to play that it hasn't, or has without a sound)."""
+        current, player = self.current, self._player
+        if player is None or current is None or not callable(parts_for):
+            return None
+        by_id = {p.part.ref.persistent_id: p for p in self._planned}
+        chosen = {ref.persistent_id: (lights, bool(played[0]) if played else True)
+                  for ref, lights, *played in parts_for(current)}
+        if not set(chosen) <= set(by_id):  # (one to play it hasn't)
+            return None
+        muted = {DRUMS} if self._extras_muted() else set()
+        for pid, p in by_id.items():
+            lights, play = chosen.get(pid, (p.part.lights, False))  # (not chosen now: muted)
+            if not play:
+                muted.add(p.part.ref.part)
+            elif p.part.lights != lights or (callable(self._voices_for) and p.voices is None):
+                return None
+        return muted
+
+    def prepare_mutes(self, parts_for: PartsFor | None) -> None:
+        """What mute_parts needs made first, changing nothing (Player.prepare_mute)."""
+        muted, player = self._mutes(parts_for), self._player
+        if muted is not None and player is not None:
+            player.prepare_mute(muted)
+
+    def mute_parts(self, parts_for: PartsFor | None) -> bool:
+        """The parts muted and unmuted as parts_for has them now (the same parts, lighting the same keys), at once
+        (Player.mute): nothing else stopped or struck again. False if the player can't (a part to play that it
+        hasn't, or has without a sound): then set_parts."""
+        muted, player, current = self._mutes(parts_for), self._player, self.current
+        if muted is None or player is None or current is None:
+            return False
+        player.mute(muted)
+        self._planned = [replace(p, part=replace(p.part, muted=p.part.ref.part in muted)) for p in self._planned]
+        self._parts_for = parts_for
+        self._status(f"{current.title} ({current.name}): {self._describe(self._planned) or 'lights only'}")
+        return True
+
     def _player_with(self, planned: list[PlannedPart]) -> Player:
         self._planned = planned
         self._extras = list(self._extras_for(self.current)) if self._extras_for and self.current is not None else []
         return player_for(planned, self.keyboard, self.lights_early, self.fastest_flash, extra=self._extras,
+                          extra_muted=self._extras_muted(),
                           cache=self._made)
 
     def _describe(self, planned: list[PlannedPart]) -> str:
         """How the parts play; for the arrangement played alone on every key, just its voices."""
-        if [(p.part.ref, p.part.lights) for p in planned] == [(self.current, 4)]:
-            return planned[0].voices.describe() if planned[0].voices else ""
+        heard = [p for p in planned if not p.part.muted]
+        if [(p.part.ref, p.part.lights) for p in heard] == [(self.current, 4)]:
+            return heard[0].voices.describe() if heard[0].voices else ""
         return "; ".join(
             f"{p.part.ref.name or p.part.ref.part} lighting {_keys(p.part.lights)}, "
             f"{p.voices.describe() if p.voices else 'silent'}"
-            for p in planned
+            for p in heard
         ) or "nothing plays"
 
     def playing(self) -> list[dict[str, object]]:
         """What plays, part by part: its lit keys, notes, octaves up, and tones (None: silent)."""
         out: list[dict[str, object]] = []
         for p in self._planned:
+            if p.part.muted:
+                continue
             voices = p.voices
             out.append({
                 "name": p.part.ref.name or p.part.ref.part, "lights": p.part.lights, "notes": len(p.lights),
@@ -837,9 +893,9 @@ def _sng_name(ref: ArrangementRef) -> str:
     return ref.sng.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
 
 
-def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, bool, int, object]]:
-    """What makes parts play differently: which, their lit keys (pooled or not), octave shift and voices."""
-    return [(p.part.ref.persistent_id, p.part.lights, p.pooled, p.shift, p.voices) for p in planned]
+def _sound_of(planned: list[PlannedPart]) -> list[tuple[str, int, bool, int, object, bool]]:
+    """What makes parts play differently: which, their lit keys (pooled or not), octave shift, voices, muted."""
+    return [(p.part.ref.persistent_id, p.part.lights, p.pooled, p.shift, p.voices, p.part.muted) for p in planned]
 
 
 def _tone_text(tone: Tone) -> str:

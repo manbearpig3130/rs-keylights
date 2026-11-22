@@ -4,7 +4,7 @@ import math
 import time
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Collection, Protocol, Sequence
 
 from .lights import MIN_PERIOD, KeyLight, Light, merge_keys
 from .sound import Squeal
@@ -93,12 +93,19 @@ class Player:
     """Lights the keys and plays the notes of one or more parts, for a song position that moves forward
     and now and then jumps. The keys follow one timeline per key made from every lit part (so two parts
     on the same key don't fight over it); each part's notes sound on their own, each pitch as long as it
-    rings (a note sounding twice at once stops once both are done)."""
+    rings (a note sounding twice at once stops once both are done). A part can be muted as it plays (mute): the
+    rest go on untouched."""
 
     def __init__(self, tracks: Sequence[Track], keys: KeysProtocol, rate: float = 1.0, lead: float = 0.0,
                  min_period: float = MIN_PERIOD, most_keys: int | None = None,
-                 cache: dict[int, tuple[Track, Any]] | None = None, spare: Sequence[int] = ()):
+                 cache: dict[int, tuple[Track, Any]] | None = None, spare: Sequence[int] = (),
+                 names: Sequence[str | None] = (), muted: Collection[str] = ()):
         self.tracks = list(tracks)
+        # each track's part, by name (a song's arrangement's part, "drums"; None: none), for muting it; those muted
+        self.names = tuple(names)[:len(self.tracks)] + (None,) * max(len(self.tracks) - len(names), 0)
+        self._muted = self._named(muted)
+        self._displays: dict[tuple[Any, ...], tuple[list[KeyLight], list[float]]] = {}  # (the keys' timelines made,
+        # by the tracks lit and the timing: a part muted and back, or made before it's muted, prepare_mute)
         # the keyboard's channels no part sounds on: a note whose pitch moves borrows one (_borrowing), if the
         # keyboard can make one like a part's channel
         self.spare = tuple(spare) if callable(getattr(keys, "borrow", None)) else ()
@@ -117,11 +124,32 @@ class Player:
         self._own = self._borrowing()  # each track's notes on a spare channel: their place in its sounds -> it
         self._build()
 
+    def _named(self, names: Collection[str]) -> set[int]:
+        """The tracks of the parts named."""
+        return {ti for ti, name in enumerate(self.names) if name is not None and name in names}
+
+    def _display_for(self, muted: set[int]) -> tuple[list[KeyLight], list[float]]:
+        """The keys' timeline with these tracks muted (and when each key lights), made once for each (most of a
+        mute's time: tens of milliseconds)."""
+        lit = tuple(ti for ti, t in enumerate(self.tracks) if t.lit and ti not in muted)
+        key = (lit, self.rate, self.lead, self.min_period)
+        got = self._displays.get(key)
+        if got is None:
+            display = merge_keys([self.tracks[ti].lights for ti in lit], self.rate, self.lead, self.min_period,
+                                 self.most_keys, [self.tracks[ti].priority for ti in lit])
+            got = (display, [k.on for k in display])
+            if len(self._displays) >= 8:
+                self._displays.clear()
+            self._displays[key] = got
+        return got
+
+    def prepare_mute(self, names: Collection[str]) -> None:
+        """What mute(names) needs made first, changing nothing (so it can be done without holding up the notes: the
+        keys' timeline for it)."""
+        self._display_for(self._named(names))
+
     def _build(self) -> None:
-        lit = [t for t in self.tracks if t.lit]
-        self.display: list[KeyLight] = merge_keys([t.lights for t in lit], self.rate, self.lead, self.min_period,
-                                                  self.most_keys, [t.priority for t in lit])
-        self._display_ons = [k.on for k in self.display]
+        self.display, self._display_ons = self._display_for(self._muted)
         made = [self._made(ti, t, self._own[ti]) for ti, t in enumerate(self.tracks)]
         self._sounds = [m[0] for m in made]  # (what each part sounds: its lights and their extras)
         self._ons = [m[1] for m in made]
@@ -296,9 +324,11 @@ class Player:
         while self._next < len(self._actions) and self._actions[self._next][0] <= position:
             _time, kind, ti, i, ending = self._actions[self._next]
             if kind == 3:
-                self._start(ti, i, places=ending)
+                if ti not in self._muted:  # (muted: not struck; its tone changes go on, below, to come back in it)
+                    self._start(ti, i, places=ending)
             elif kind == 2:
-                self._control(ti, i)
+                if ti not in self._muted:
+                    self._control(ti, i)
             elif kind == 1:
                 self._change(ti, i)
             else:
@@ -316,20 +346,74 @@ class Player:
             if self.display[i].off > position:
                 self._start(KEY, i)
         for ti, t in enumerate(self.tracks):  # (the tone there, and the notes still sounding there)
-            if t.voices is not None and t.changes:
+            if t.voices is not None and t.changes:  # (muted too: it comes back in its tone)
                 self._change(ti, bisect_right([change[0] for change in t.changes], position) - 1)
-            if t.voices is not None:
-                for li in range(bisect_right(self._ons[ti], position - min(self._longest[ti], sounding)),
-                                bisect_right(self._ons[ti], position)):
-                    self._start(ti, li, position)
-            latest: dict[tuple[int, str], int] = {}  # (and a bend or vibrato going on there: its latest)
-            for ci, (at, li, what, _value) in enumerate(self._controls[ti]):
-                if at <= position < self._sound_end(t, self._sounds[ti][li]) and \
-                        self._sounds[ti][li].on >= position - sounding:
-                    latest[(li, what)] = ci
-            for ci in sorted(latest.values()):
-                self._control(ti, ci)
+            if ti not in self._muted:
+                self._sound_from(ti, position, sounding)
         self._position = position
+
+    def _sound_from(self, ti: int, position: float, sounding: float = math.inf) -> None:
+        """A track's notes still sounding at a position struck again, from there (those struck at most sounding
+        seconds before it), and the bend or vibrato going on there."""
+        t = self.tracks[ti]
+        if t.voices is None:
+            return
+        for li in range(bisect_right(self._ons[ti], position - min(self._longest[ti], sounding)),
+                        bisect_right(self._ons[ti], position)):
+            self._start(ti, li, position)
+        latest: dict[tuple[int, str], int] = {}  # (its latest of each)
+        for ci, (at, li, what, _value) in enumerate(self._controls[ti]):
+            if at <= position < self._sound_end(t, self._sounds[ti][li]) and \
+                    self._sounds[ti][li].on >= position - sounding:
+                latest[(li, what)] = ci
+        for ci in sorted(latest.values()):
+            self._control(ti, ci)
+
+    @property
+    def muted(self) -> frozenset[str]:
+        """The parts muted, by name."""
+        return frozenset(name for ti, name in enumerate(self.names) if ti in self._muted and name is not None)
+
+    def mute(self, names: Collection[str]) -> None:
+        """The parts named muted, the rest not, going on from where it is with nothing else stopped or struck again:
+        a part muted has its notes stopped (and its bends let go) and its lit keys go out; one unmuted strikes its
+        notes still ringing there (only its own), and its keys light. A muted part's tone changes go on meanwhile,
+        so it comes back in its tone; its keys' room, the keys pooled, goes to the others."""
+        wanted = self._named(names)
+        if wanted == self._muted:
+            return
+        going, coming = wanted - self._muted, self._muted - wanted
+        position = self._position
+        for ti in sorted(going):
+            self._silence(ti)
+        self._muted = wanted
+        if any(self.tracks[ti].lit for ti in going | coming):  # (the keys' timeline made again, as retime does)
+            lit = set(self.keys_at(position)) if position is not None else set()
+            self._build()
+            if position is not None:
+                now = set(self.keys_at(position))
+                if lit - now:
+                    self.keys.unlight(tuple(sorted(lit - now)))
+                if now - lit:
+                    self.keys.light(tuple(sorted(now - lit)))
+                self._next = bisect_right(self._times, position)
+        if position is not None:
+            for ti in sorted(coming):
+                self._sound_from(ti, position)
+
+    def _silence(self, ti: int) -> None:
+        """A track's notes sounding stopped (only its own), and its bends and vibrato let go."""
+        channels = set()
+        for key in [key for key in self._sounding if key[0] == ti]:
+            channel, sounding = self._sounding[key]
+            channels.add(channel)
+            self._end(ti, key[1], tuple(sounding))
+        voices = self.tracks[ti].voices
+        if voices is not None and voices.techniques and self._controls[ti]:
+            sound = self._sound(ti)
+            for channel in sorted(channels):
+                sound.bend(channel, 0.0)
+                sound.modulate(channel, 0)
 
     def keys_at(self, position: float) -> list[int]:
         """The keys lit at a song position."""

@@ -31,6 +31,7 @@ class Part:
     ref: ArrangementRef
     arrangement: Arrangement
     lights: int  # keys it lights (0: none); the keyboard lights 4 in all
+    muted: bool = False  # planned, but not played until it's unmuted (Player.mute): as it plays, at once
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ def channels_needed(voices: Voices) -> int:
 
 
 MOST_LIT = 4  # keys the keyboard lights at once
+DRUMS = "drums"  # a drum part's name in a player (Player.mute)
 
 CHANNELS_USED_UP = (f"The keyboard's {len(KEYBOARD_CHANNELS)} channels are used up: play fewer parts on it, give "
                     "fewer palm-mute and pinch-harmonic tones of their own, or move one to another MIDI device")
@@ -113,13 +115,16 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
     on another MIDI device, none). Too many for them: a ValueError (strict), else the parts that don't fit just
     light their keys. Pooled, the lit parts share the keyboard's 4 lit keys, a moment at a time, as many different
     keys as they play (one two parts play: one key), the one first (the arrangement played in the game), then the
-    rest in turn, ranked first; else each lights as many as it's given."""
+    rest in turn, ranked first; else each lights as many as it's given. Muted parts are planned too, so they can
+    be unmuted as the song plays, after the rest: they take the channels left (none left, just lit, never a
+    ValueError), and their keys don't move the lit parts' shared shift."""
     full = KeyRange()
-    lit_shift = full.octave_shift([n for p in parts if p.lights for n in p.arrangement.notes])
+    lit_shift = full.octave_shift([n for p in parts if p.lights and not p.muted for n in p.arrangement.notes])
     free = list(KEYBOARD_CHANNELS)
-    planned = []
+    out: list[PlannedPart | None] = [None] * len(parts)
     ranked = sorted(range(len(parts)), key=lambda i: (first is None or parts[i].ref != first, i))
-    for i, part in enumerate(parts):
+    for i in sorted(range(len(parts)), key=lambda i: parts[i].muted):  # (the parts played first, then the muted)
+        part = parts[i]
         own = full.octave_shift(part.arrangement.notes)
         shift = lit_shift if part.lights else own
         voices, channels = None, ()
@@ -132,7 +137,7 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
             if not squeals:
                 wanted = replace(wanted, squeal=None)
             need = channels_needed(wanted)
-            if need > len(free) and strict:
+            if need > len(free) and strict and not part.muted:
                 raise ValueError(CHANNELS_USED_UP)
             if need <= len(free):
                 channels, free = tuple(free[:need]), free[need:]
@@ -148,9 +153,8 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
             schedule(part.arrangement.notes, KeyRange(max_lit=most), shift, part.arrangement.shapes, overlap,
                      part.arrangement.anchors, part.arrangement.capo, part.arrangement.arpeggios,
                      part.arrangement.muted)
-        planned.append(PlannedPart(part, shift, lights, voices, channels, pooled and bool(part.lights),
-                                   ranked.index(i)))
-    return planned
+        out[i] = PlannedPart(part, shift, lights, voices, channels, pooled and bool(part.lights), ranked.index(i))
+    return [p for p in out if p is not None]
 
 
 @dataclass(frozen=True)
@@ -256,9 +260,11 @@ def place(hits: Sequence[Hit], drums: Sequence[int]) -> dict[int, list[Hit]]:
 
 
 def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float = LIGHTS_EARLY,
-               min_period: float = MIN_PERIOD, extra: Sequence[Track] = (), cache: PlanCache | None = None) -> Player:
+               min_period: float = MIN_PERIOD, extra: Sequence[Track] = (), cache: PlanCache | None = None,
+               extra_muted: bool = False) -> Player:
     """Sets the parts' tones on the keyboard and makes their player (lead: seconds the keys light early;
-    min_period: repeats closer than this flash on every other note), with extra tracks of their own (a drum part)."""
+    min_period: repeats closer than this flash on every other note), with extra tracks of their own (a drum part,
+    named "drums" in it: muted, extra_muted). Each part is named by its arrangement's part; the muted ones muted."""
     for track in extra:
         if isinstance(track.voices, DrumVoices):  # (its channel's volume; its device's drum sounds as they are)
             sound: Any = track.sound or keyboard  # (a Keyboard or a Synth: both set a channel's volume)
@@ -279,9 +285,11 @@ def player_for(planned: Sequence[PlannedPart], keyboard: Keyboard, lead: float =
             for channel, semitones in bend_ranges(p).items():
                 keyboard.bend_range(channel, semitones)
     tracks = [cache.track(p) if cache is not None else _track(p) for p in planned]
+    names = [p.part.ref.part for p in planned] + [DRUMS] * len(extra)
+    muted = {p.part.ref.part for p in planned if p.part.muted} | ({DRUMS} if extra_muted else set())
     return Player([*tracks, *extra], keyboard, lead=lead, min_period=min_period, most_keys=MOST_LIT,
                   cache=cache.player if cache is not None else None,  # (pooled or not: at most the 4 the keyboard lights, the first ranked first)
-                  spare=spare_channels(planned, extra))
+                  spare=spare_channels(planned, extra), names=names, muted=muted)
 
 
 def spare_channels(planned: Sequence[PlannedPart], extra: Sequence[Track] = ()) -> tuple[int, ...]:

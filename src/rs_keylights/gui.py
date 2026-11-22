@@ -32,7 +32,8 @@ from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light
 from . import drums, midiexport, theory
-from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
+from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan,
+                    player_for)
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
@@ -874,7 +875,7 @@ class Gui:
             # moment later, a remote's taps once they stop)
             followed = session.follower.plan_now()
             if followed and song_id(followed[0].part.ref) == sid:
-                planned = followed
+                planned = [pp for pp in followed if not pp.part.muted]  # (what's heard: not those muted)
         if planned is None:  # (playing it, or not: its parts as chosen now)
             parts = [Part(ref, a, chosen["lights"]) for (ref, a), chosen in zip(loaded, self._song_parts(sid, loaded))
                      if chosen["play"]]
@@ -952,11 +953,11 @@ class Gui:
         beats = next((a.beats for _r, a in loaded if a.beats), ())
         return drums.kept(loaded[0][0], beats=beats)
 
-    def _drum_tracks(self, sid: str) -> list[Track]:
-        """A song's drum part as a track, if it's made and played (and there's sound): on the keyboard's drum
-        channel, or the device chosen for drums (outputs), its notes mapped."""
+    def _drum_tracks(self, sid: str, muted_too: bool = False) -> list[Track]:
+        """A song's drum part as a track, if it's made and played (or muted, muted_too: a player mutes it) and
+        there's sound: on the keyboard's drum channel, or the device chosen for drums (outputs), its notes mapped."""
         chosen = self._drum_settings(sid)
-        if self.play_options["silent"] or not chosen["play"]:
+        if self.play_options["silent"] or not (chosen["play"] or muted_too):
             return []
         try:
             hits = self._drum_hits(sid)
@@ -1074,9 +1075,9 @@ class Gui:
         with self._lock:
             session = self._session
         if isinstance(session, Following) and session.running:
-            session.set_extras(lambda ref: self._drum_tracks(song_id(ref)))
-        elif self._playing and self._playing["id"] == sid:
-            self._play_on(sid)
+            self._follow_extras(session)
+        elif self._playing and self._playing["id"] == sid and not self._mute_now(sid):  # (muted or back at once,
+            self._play_on(sid)  # if it can be; else played again with it)
 
     def _make_drums(self, sid: str, loaded: list[tuple[ArrangementRef, Arrangement]]) -> None:
         """A song's drum part made, on a thread of its own; once it's made, played (and what plays goes on with it)."""
@@ -1155,6 +1156,10 @@ class Gui:
             self.song_settings[sid] = kept
             self.play_version += 1
             replays = any(field != "start" for field in body if field != "song")
+            if change and "start" not in body and all(set(fields) <= {"play"} for fields in change.values()) and \
+                    self._mute_now(sid):  # (parts muted or back, alone: at once, the rest going on untouched)
+                self._save_songs()
+                return self.song(sid) if answer else {}
             if replays and later > 0:  # (a remote's turns, coming quickly: each kept as it comes, and checked, saved
                 # and played once they stop, as the last that fit if they don't; each step's planning would lag it)
                 self._fit_before.setdefault(sid, was)
@@ -1211,7 +1216,8 @@ class Gui:
         keyboard, or the other MIDI device it sounds on."""
         session = self._session
         if isinstance(session, Playback) and session.running and self._playing:
-            sounding = [(p["slot"], track.voices) for p, track in zip(self._playing["parts"], session.player.tracks)]
+            sounding = [(self._slot(pp.part.ref), track.voices)
+                        for pp, track in zip(self._planned_now, session.player.tracks)]
         elif isinstance(session, Following) and session.running:
             sounding = [(self._slot(ref), planned.voices)
                         for (ref, _channels), planned in zip(session.follower.sounding(), session.follower.planned)]
@@ -1528,10 +1534,44 @@ class Gui:
         if not isinstance(session, Playback) or not session.running or not self._playing or self._playing["id"] != sid:
             return
         planned, length = self._plan(sid)
-        session.replace(player_for(planned, session.keyboard, *self._light_timing(), extra=self._drum_tracks(sid),
+        session.replace(player_for(planned, session.keyboard, *self._light_timing(), **self._drums_extra(sid),
                                   cache=self._made),
                         length)
         self._playing, self._planned_now = self._describe(sid, planned), planned
+
+    def _drums_extra(self, sid: str) -> dict[str, Any]:
+        """A player's drum part (player_for's extra), muted in it if it isn't played."""
+        return {"extra": self._drum_tracks(sid, muted_too=True), "extra_muted": not self._drum_settings(sid)["play"]}
+
+    def _mute_now(self, sid: str) -> bool:
+        """The song playing's parts (and its drum part) muted and unmuted as they're chosen now, at once: nothing
+        else stopped or struck again (Player.mute). False if its player can't: a part played that it doesn't have
+        (or has without the keyboard's channels), or a drum part made since; then it's played again with them."""
+        with self._lock:
+            session = self._session
+            if not isinstance(session, Playback) or not session.running or not self._playing or \
+                    self._playing["id"] != sid:
+                return False
+            by_name = {pp.part.ref.part: pp for pp in self._planned_now}
+            silent = bool(self.play_options["silent"])
+            muted = set()
+            for chosen in self._song_parts(sid, self._load(sid)):
+                pp = by_name.get(chosen["part"])
+                if pp is None or pp.part.lights != chosen["lights"] or \
+                        (chosen["play"] and not silent and pp.voices is None):
+                    return False
+                if not chosen["play"]:
+                    muted.add(chosen["part"])
+            if self._drum_settings(sid)["play"]:
+                if DRUMS not in session.player.names and self._drum_tracks(sid):
+                    return False
+            else:
+                muted.add(DRUMS)
+            session.mute(muted)
+            planned = [replace(pp, part=replace(pp.part, muted=pp.part.ref.part in muted)) for pp in self._planned_now]
+            self._playing, self._planned_now = self._describe(sid, planned), planned
+            self.play_version += 1
+            return True
 
     def _load(self, sid: str) -> list[tuple[ArrangementRef, Arrangement]]:
         with self._lock:
@@ -1635,12 +1675,10 @@ class Gui:
         volume: dict[str, int] = {}
         fixed: set[str] = set()  # parts whose tone stays as chosen when the song's switches
         parts = []
-        for slot, chosen in enumerate(self._song_parts(sid, loaded)):
-            if not chosen["play"]:
-                continue
+        for slot, chosen in enumerate(self._song_parts(sid, loaded)):  # (muted ones too: they can come back at once)
             name = chosen["part"]
             ref, arrangement = by_part[name]
-            parts.append(Part(ref, arrangement, chosen["lights"]))
+            parts.append(Part(ref, arrangement, chosen["lights"], muted=not chosen["play"]))
             own, defaults = chosen["tones"], self.follow_settings[kind(ref)]
 
             def pick(field: str) -> Any:  # (SAME_TONE: over a default)
@@ -1651,7 +1689,7 @@ class Gui:
             volume[name] = self._volume(slot)
             if pick("follow_tones") is False:
                 fixed.add(name)
-        if not silent and parts:
+        if not silent and any(not p.muted for p in parts):
             self._check_sound_channel()
         choice = None if silent else SoundChoice(main, pinch, mute, bool(self.play_options["real_pitch"]),
                                                  ring=bool(self.settings["ring"]), tone_map=self._tones_for_kinds(),
@@ -1676,7 +1714,7 @@ class Gui:
             "title": first.title,
             "parts": [{"part": pp.part.ref.part, "name": pp.part.ref.name, "slot": order.index(pp.part.ref.part),
                        "sound": pp.voices.describe() if pp.voices else "silent",
-                       "lights": pp.part.lights} for pp in planned],
+                       "lights": pp.part.lights} for pp in planned if not pp.part.muted],
         }
 
     def play(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -1692,7 +1730,7 @@ class Gui:
                 keyboard = self._open_keyboard()
                 try:
                     playback = Playback(player_for(planned, keyboard, *self._light_timing(),
-                                                   extra=self._drum_tracks(sid), cache=self._made),
+                                                   **self._drums_extra(sid), cache=self._made),
                                         keyboard, length, start, speed)
                 except Exception:
                     keyboard.close()
@@ -2234,7 +2272,10 @@ class Gui:
             session = self._session
             if isinstance(session, Following) and session.running:
                 session.set_offset(settings["offset_ms"] / 1000)
-                self._replay("follow", lambda: self._follow_on(session), later)
+                if not (set(body) == {"parts"} and all(set(fields) <= {"play"} for chosen in body["parts"].values()
+                                                       for fields in chosen.values())
+                        and session.mute_parts(self._follow_parts())):  # (parts muted or back, alone: at once)
+                    self._replay("follow", lambda: self._follow_on(session), later)
             if any(kind_ in body for kind_ in KINDS) and self._playing:  # a song playing takes new defaults
                 self._play_on(self._playing["id"])
         return self.follow_info()
@@ -2243,7 +2284,13 @@ class Gui:
         """The arrangement played goes on with the parts and tones as chosen now."""
         if session is self._session and session.running:
             session.set_parts(self._follow_voices(), self._follow_parts())
-            session.set_extras(lambda ref: self._drum_tracks(song_id(ref)))
+            self._follow_extras(session)
+
+    def _follow_extras(self, session: Following) -> None:
+        """Following, the drum part of the song played: there if it's made (muted if it isn't played: it can come
+        back at once)."""
+        session.set_extras(lambda ref: self._drum_tracks(song_id(ref), muted_too=True),
+                           lambda ref: not self._drum_settings(song_id(ref))["play"])
 
     def _replay(self, key: str, action: Callable[[], None], later: float) -> None:
         """(Holding _lock.) Plays the parts again with changes: now, or once they stop coming for later seconds
@@ -2286,7 +2333,7 @@ class Gui:
                                       self.follow_settings["offset_ms"] / 1000, *self._light_timing(),
                                       parts_for=self._follow_parts(), trace=self._trace,
                                       game_time=self._riff_loop.time)
-                following.set_extras(lambda ref: self._drum_tracks(song_id(ref)))  # (its song's drum part)
+                self._follow_extras(following)  # (its song's drum part)
                 following.start()
                 self._session, self._followed = following, None
         return self.state()
@@ -3280,7 +3327,10 @@ class Gui:
                     return planned.part.arrangement.notes, planned.part.ref.bass
             return None
         if isinstance(session, Playback) and session.running and self._planned_now:
-            best = max(self._planned_now, key=lambda planned: planned.part.lights)
+            heard = [planned for planned in self._planned_now if not planned.part.muted]
+            if not heard:
+                return None
+            best = max(heard, key=lambda planned: planned.part.lights)
             return best.part.arrangement.notes, best.part.ref.bass
         return None
 
@@ -3479,7 +3529,8 @@ class Gui:
         """The parts to play while an arrangement is played, and their lit keys."""
         settings = self.follow_settings
 
-        def parts_for(played: ArrangementRef) -> list[tuple[ArrangementRef, int]]:
+        def parts_for(played: ArrangementRef) -> list[tuple[ArrangementRef, int]]:  # (one muted as it plays stays
+            # in what plays, muted: Follower.mute_parts)
             return [(r, lights) for r, play, lights in parts_chosen(settings, played, self._song_refs(played)) if play]
 
         return parts_for

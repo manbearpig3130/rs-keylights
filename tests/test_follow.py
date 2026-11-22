@@ -389,11 +389,15 @@ def test_tracks_besides_the_parts_rebuild_what_plays_only_when_they_change():
     follower = Follower(None, None, None)  # type: ignore[arg-type]
     built = []
     follower._player_with = lambda planned: built.append(planned) or SimpleNamespace(rate=1.0, stop=lambda: None, retime=lambda **_k: None)  # type: ignore[method-assign]
-    follower.current, follower._player = object(), SimpleNamespace(rate=1.0, stop=lambda: None)  # (one playing)
+    mutes = []
+    follower.current, follower._player = object(), SimpleNamespace(rate=1.0, stop=lambda: None, muted=frozenset(),
+                                                                   mute=lambda names: mutes.append(set(names)))
     drums = [drum_track([Hit(1.0, KICK, 100)], DrumVoices())]
     follower._extras = list(drums)
     follower.set_extras(lambda ref: [drum_track([Hit(1.0, KICK, 100)], DrumVoices())])  # (the same: nothing)
-    assert built == []
+    assert built == [] and mutes == [set()]
+    follower.set_extras(lambda ref: [drum_track([Hit(1.0, KICK, 100)], DrumVoices())], lambda ref: True)  # (muted:
+    assert built == [] and mutes[-1] == {"drums"}  # at once, in the player as it is)
     follower.set_extras(lambda ref: [drum_track([Hit(1.0, KICK, 100)], DrumVoices(volume=60))])  # (another)
     assert len(built) == 1
 

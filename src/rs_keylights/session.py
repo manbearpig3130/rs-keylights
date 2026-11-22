@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 from collections import deque
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
 
 from .follow import TICK, Follower, GameTime, OverlayClient, PartsFor
 from .library import ArrangementRef
@@ -170,6 +170,13 @@ class Playback:
         with self._lock:
             self.player.retime(lead=lead, min_period=min_period)
 
+    def mute(self, names: Collection[str]) -> None:
+        """Parts muted by name, the rest not, as it plays (Player.mute): nothing else stopped. (Made first, the notes
+        going on meanwhile; then taken at once.)"""
+        self.player.prepare_mute(names)
+        with self._lock:
+            self.player.mute(names)
+
     def replace(self, player: Player, length: float | None = None) -> None:
         """Plays on with another player (other parts, tones or lights), from where the song is."""
         with self._lock:
@@ -274,10 +281,19 @@ class Following:
         with self._lock:
             self.follower.use_parts(prepared, voices_for, parts_for)
 
-    def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None) -> None:
-        """Tracks besides the parts (a song's drum part): what plays goes on with them from where the song is."""
+    def set_extras(self, extras_for: Callable[[ArrangementRef], Sequence[Track]] | None,
+                   muted_for: Callable[[ArrangementRef], bool] | None = None) -> None:
+        """Tracks besides the parts (a song's drum part), and whether they're muted: what plays goes on with them
+        from where the song is."""
         with self._lock:
-            self.follower.set_extras(extras_for)
+            self.follower.set_extras(extras_for, muted_for)
+
+    def mute_parts(self, parts_for: PartsFor | None) -> bool:
+        """The parts muted and unmuted as chosen now, at once, if they can be (Follower.mute_parts; made first, the
+        notes going on meanwhile)."""
+        self.follower.prepare_mutes(parts_for)
+        with self._lock:
+            return self.follower.mute_parts(parts_for)
 
     @property
     def showing(self) -> bool:

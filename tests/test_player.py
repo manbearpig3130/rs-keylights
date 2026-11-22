@@ -423,3 +423,52 @@ def test_a_spare_channel_is_borrowed_again_once_its_note_has_died_away():
     for position in (0.4, 0.55, 1.0, 1.6, 2.1, 2.5, 3.6):
         player.advance(position)
     assert [e for e in keys.events if e[0] == "borrow"] == [("borrow", 5, 11), ("borrow", 6, 11), ("borrow", 5, 11)]
+
+
+class OtherVoices(FakeVoices):
+    def pick(self, light):
+        return 12, light.keys or light.pitches, 90
+
+
+def test_a_part_muted_as_it_plays_stops_alone_and_comes_back_with_its_ringing_notes():
+    keys = FakeKeys()
+    lead = [Light(1.0, 3.0, (60,)), Light(4.0, 4.5, (62,))]
+    rhythm = [Light(1.0, 3.0, (48,)), Light(2.5, 5.0, (50,))]
+    changes = [(-math.inf, 12, 30, 0), (2.0, 12, 31, 0)]
+    player = Player([Track(lead, FakeVoices()), Track(rhythm, OtherVoices(), changes=changes)], keys,
+                    names=["lead", "rhythm"])
+    player.advance(0.5)
+    player.advance(1.2)
+    assert keys.lit == {60, 48}
+    keys.events.clear()
+    player.mute({"rhythm"})  # its note and its key alone: the lead's not stopped, nor struck again
+    assert keys.events == [("stop", 12, (48,)), ("off", (48,))] and player.muted == {"rhythm"}
+    keys.events.clear()
+    player.advance(2.1)  # its tone changes go on, muted, so it comes back in its tone
+    assert keys.events == [("voice", 12, 31, 0)]
+    player.advance(2.6)  # its next note isn't struck
+    assert not [e for e in keys.events if e[0] == "play"]
+    keys.events.clear()
+    player.mute(set())  # back: its notes still ringing struck again (its own alone) and its keys lit
+    assert ("play", 12, (48,), 90) in keys.events and ("play", 12, (50,), 90) in keys.events
+    assert ("on", (48, 50)) in keys.events and keys.lit == {60, 48, 50}
+    assert not [e for e in keys.events if e[0] in ("play", "stop", "all off") and (len(e) < 2 or e[1] == 11)]
+    player.advance(3.1)
+    assert ("stop", 11, (60,)) in keys.events and ("stop", 12, (48,)) in keys.events  # (each as it ends)
+    player.mute({"lead", "nothing"})  # (the lead muted, the rhythm back; a name it hasn't: nothing)
+    keys.events.clear()
+    player.seek(1.2)  # a seek: the muted part's notes not struck, the rest's (and the rhythm's tone there)
+    assert [e for e in keys.events if e[0] == "play"] == [("play", 12, (48,), 90)]
+    assert ("voice", 12, 30, 0) in keys.events
+
+
+def test_a_part_muted_from_the_start_is_planned_but_never_heard_until_unmuted():
+    keys = FakeKeys()
+    player = Player([Track(LIGHTS, FakeVoices()), Track([Light(1.0, 2.0, (48,))], OtherVoices(), lit=False)], keys,
+                    names=["lead", "drums"], muted={"drums"})
+    player.advance(0.5)
+    player.advance(1.2)
+    assert not [e for e in keys.events if e[0] == "play" and e[1] == 12] and player.muted == {"drums"}
+    player.mute(())
+    assert ("play", 12, (48,), 90) in keys.events
+    assert ("all off",) not in keys.events[1:]  # (only the first step's)

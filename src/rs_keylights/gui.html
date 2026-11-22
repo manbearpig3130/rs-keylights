@@ -286,6 +286,8 @@
   .wu-spark .hit:hover + .day, .wu-spark .hit:hover + .now { stroke: var(--text); stroke-width: 2; }
   .drumkit svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
   .drumkit .piece { cursor: pointer; }
+  .drumkit { user-select: none; -webkit-user-select: none; touch-action: manipulation; }  /* (clicked fast: no text
+     picked, no zoom) */
   .drumkit .shell { fill: var(--input); stroke: var(--muted); stroke-width: 1.5; }
   .drumkit .head { fill: var(--panel); stroke: var(--muted); stroke-width: 1.5; }
   .drumkit .metal { fill: color-mix(in srgb, var(--warn) 30%, var(--panel)); stroke: var(--muted); stroke-width: 1.2; }
@@ -1592,7 +1594,9 @@ function renderDrumsCard(s) {
   if (!$("drumkit").firstChild) {
     $("drumkit").innerHTML = kitSvg();
     for (const g of $("drumkit").querySelectorAll(".piece")) {
-      g.addEventListener("click", () => {
+      g.addEventListener("pointerdown", e => {  // (as it's pressed, as a pad: not as it's let go)
+        if (e.button !== 0) return;
+        e.preventDefault();  // (no text picked, however fast)
         const d = KIT[g.dataset.drum];
         drumsFlash.set(g.dataset.drum, {at: performance.now(), velocity: 110});
         act(() => api("/api/drums/hit", {note: d.notes[0]}));
