@@ -117,9 +117,9 @@ def plan(parts: Sequence[Part], voices_for: VoicesFor | None, strict: bool = Tru
     keys as they play (one two parts play: one key), the one first (the arrangement played in the game), then the
     rest in turn, ranked first; else each lights as many as it's given. Muted parts are planned too, so they can
     be unmuted as the song plays, after the rest: they take the channels left (none left, just lit, never a
-    ValueError), and their keys don't move the lit parts' shared shift."""
+    ValueError); muted, a part still lights its keys, if it lights any (its notes heard from its stem, say)."""
     full = KeyRange()
-    lit_shift = full.octave_shift([n for p in parts if p.lights and not p.muted for n in p.arrangement.notes])
+    lit_shift = full.octave_shift([n for p in parts if p.lights for n in p.arrangement.notes])
     free = list(KEYBOARD_CHANNELS)
     out: list[PlannedPart | None] = [None] * len(parts)
     ranked = sorted(range(len(parts)), key=lambda i: (first is None or parts[i].ref != first, i))

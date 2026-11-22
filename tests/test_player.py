@@ -441,17 +441,17 @@ def test_a_part_muted_as_it_plays_stops_alone_and_comes_back_with_its_ringing_no
     player.advance(1.2)
     assert keys.lit == {60, 48}
     keys.events.clear()
-    player.mute({"rhythm"})  # its note and its key alone: the lead's not stopped, nor struck again
-    assert keys.events == [("stop", 12, (48,)), ("off", (48,))] and player.muted == {"rhythm"}
+    player.mute({"rhythm"})  # its note alone: the lead's not stopped, nor struck again; its key lit still (it
+    assert keys.events == [("stop", 12, (48,))] and player.muted == {"rhythm"} and keys.lit == {60, 48}  # lights it)
     keys.events.clear()
     player.advance(2.1)  # its tone changes go on, muted, so it comes back in its tone
     assert keys.events == [("voice", 12, 31, 0)]
     player.advance(2.6)  # its next note isn't struck
     assert not [e for e in keys.events if e[0] == "play"]
     keys.events.clear()
-    player.mute(set())  # back: its notes still ringing struck again (its own alone) and its keys lit
+    assert keys.lit == {60, 48, 50}  # (muted, its next note lit as ever: not heard)
+    player.mute(set())  # back: its notes still ringing struck again (its own alone)
     assert ("play", 12, (48,), 90) in keys.events and ("play", 12, (50,), 90) in keys.events
-    assert ("on", (48, 50)) in keys.events and keys.lit == {60, 48, 50}
     assert not [e for e in keys.events if e[0] in ("play", "stop", "all off") and (len(e) < 2 or e[1] == 11)]
     player.advance(3.1)
     assert ("stop", 11, (60,)) in keys.events and ("stop", 12, (48,)) in keys.events  # (each as it ends)

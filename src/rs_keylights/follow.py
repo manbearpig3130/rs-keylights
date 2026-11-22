@@ -741,7 +741,7 @@ class Follower:
         chosen = list(parts_of(current) if callable(parts_of) else [(current, 4)])
         if keep_muted:
             have = {ref.persistent_id for ref, *_rest in chosen}
-            chosen += [(p.part.ref, p.part.lights, False) for p in self._planned
+            chosen += [(p.part.ref, 0, False) for p in self._planned  # (not chosen: not played, nor lit)
                        if p.part.ref.persistent_id not in have and p.part.ref.persistent_id in self._loaded]
         parts = []
         for ref, lights, *played in chosen:
@@ -788,11 +788,11 @@ class Follower:
             return None
         muted = {DRUMS} if self._extras_muted() else set()
         for pid, p in by_id.items():
-            lights, play = chosen.get(pid, (p.part.lights, False))  # (not chosen now: muted)
+            lights, play = chosen.get(pid, (0, False))  # (not chosen now: muted, not lit)
+            if p.part.lights != lights or (play and callable(self._voices_for) and p.voices is None):
+                return None  # (its keys too: planned again)
             if not play:
                 muted.add(p.part.ref.part)
-            elif p.part.lights != lights or (callable(self._voices_for) and p.voices is None):
-                return None
         return muted
 
     def prepare_relight(self, parts_for: PartsFor | None) -> tuple[Any, ...] | None:

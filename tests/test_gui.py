@@ -1471,7 +1471,11 @@ def test_the_keys_card_has_what_the_keyboard_plays_on_its_keys(server):
     assert roll["notes"] and all(36 <= key <= 96 and end > start for start, end, key, _part, _lit in roll["notes"])
     assert {part for *_rest, part, _lit in roll["notes"]} == {0, 1} and any(lit for *_rest, lit in roll["notes"])
     assert [n[0] for n in roll["notes"]] == sorted(n[0] for n in roll["notes"])  # (in time)
-    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": False}}})  # (as chosen: the lead)
+    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"play": False}}})  # (muted, its keys lit
+    _, muted = call(server, f"/api/roll?id={urllib.request.quote(sid)}")                     # still: just them)
+    assert [(p["part"], p["muted"]) for p in muted["parts"]] == [("lead", False), ("rhythm", True)]
+    assert all(lit for *_rest, part, lit in muted["notes"] if part == 1)  # (not heard: its lit notes alone)
+    call(server, "/api/song/settings", {"song": sid, "parts": {"rhythm": {"lights": 0}}})  # (and not lit: gone)
     assert [p["part"] for p in call(server, f"/api/roll?id={urllib.request.quote(sid)}")[1]["parts"]] == ["lead"]
     _, alone = call(server, f"/api/roll?id={urllib.request.quote(sid)}&part=rhythm")  # (one alone, muted or not)
     assert [(p["part"], p["lights"]) for p in alone["parts"]] == [("rhythm", 4)] and not alone["pooled"]
@@ -1481,8 +1485,8 @@ def test_the_keys_card_has_what_the_keyboard_plays_on_its_keys(server):
 def test_the_keys_card_shows_a_change_before_the_song_playing_takes_it(server):
     sid = first_song(server)
     call(server, "/api/play", {"song": sid, "start": 1})
-    server.gui.set_song({"song": sid, "parts": {"rhythm": {"play": False}}}, later=30)  # (a Launchkey's tap: the
-    # song playing takes it once the taps stop)
+    server.gui.set_song({"song": sid, "parts": {"rhythm": {"play": False, "lights": 0}}}, later=30)  # (a
+    # Launchkey's taps: the song playing takes them once the taps stop)
     _, roll = call(server, f"/api/roll?id={urllib.request.quote(sid)}")
     assert [p["part"] for p in roll["parts"]] == ["lead"]  # (as chosen now, not as it still plays)
     server.gui.set_song({"song": sid, "parts": {"lead": {"lights": 0}}}, later=30)
@@ -2201,4 +2205,15 @@ def test_a_drum_part_made_again_as_its_song_plays_is_played_with_its_new_hits(se
     assert gui._session.player is not player  # (played again with its new hits, not the old ones)
     assert sum(len(t.lights) for t, name in zip(gui._session.player.tracks, gui._session.player.names)
                if name == "drums") == 2
+    call(server, "/api/stop", {})
+
+
+def test_a_part_muted_that_lights_its_keys_lights_them_still_its_sound_alone_gone(server):
+    gui, sid = server.gui, first_song(server)
+    call(server, "/api/song/settings", {"song": sid, "parts": {"lead": {"lights": 1}, "rhythm": {"lights": 1}}})
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    player = gui._session.player
+    gui.change_part("rhythm", {"play": False})  # (its stem heard instead, say: its keys lit still)
+    assert gui._session.player is player and "rhythm" in player.muted and player.names[:2] == ("lead", "rhythm")
+    assert [lit for _l, lit, _r in player._shown[:2]] == [True, True]  # (both lit)
     call(server, "/api/stop", {})

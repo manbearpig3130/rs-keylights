@@ -345,7 +345,8 @@ Starting the warm-up stops a song playing or following, and playing a song stops
 - The arrangement you play lights the keys and sounds (unless muted).
 - Unmute the others to have a backing band. Your choices are kept for each song and arrangement.
 - Muting an arrangement (or the drum part) while it plays takes effect at once, here or playing a song: its notes
-  stop and its keys go out, and nothing else is cut off or struck again. It stays in what plays, muted, so unmuting
+  stop, and nothing else is cut off or struck again. Its keys still light if its lit keys are on (the pad below
+  it): hear its part from the song's own audio (its stem) and still see its notes on the keys. It stays in what plays, muted, so unmuting
   it is just as quick: its notes still ringing are struck again (only its own), in its tone.
 - The speed, loops and position are the game's.
 

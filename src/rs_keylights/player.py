@@ -133,10 +133,11 @@ class Player:
 
     def _display_for(self, muted: set[int], shown: list[tuple[Sequence[Light], bool, int]] | None = None) -> \
             tuple[list[KeyLight], list[float]]:
-        """The keys' timeline with these tracks muted, their keys as shown has them (and when each key lights), made
-        once for each (most of a mute's time: tens of milliseconds)."""
+        """The keys' timeline, their keys as shown has them (and when each key lights), made once for each (tens of
+        milliseconds). A part muted lights its keys still, if it lights them (its notes heard from the song's own
+        audio instead, say: its stem); muted, the sound alone goes."""
         shown = self._shown if shown is None else shown
-        lit = tuple(ti for ti, (_lights, on, _rank) in enumerate(shown) if on and ti not in muted)
+        lit = tuple(ti for ti, (_lights, on, _rank) in enumerate(shown) if on)
         lights = tuple(shown[ti][0] for ti in lit)
         key = (lit, tuple(id(each) for each in lights), tuple(shown[ti][2] for ti in lit), self.rate, self.lead,
                self.min_period)
@@ -414,9 +415,9 @@ class Player:
 
     def mute(self, names: Collection[str]) -> None:
         """The parts named muted, the rest not, going on from where it is with nothing else stopped or struck again:
-        a part muted has its notes stopped (and its bends let go) and its lit keys go out; one unmuted strikes its
-        notes still ringing there (only its own), and its keys light. A muted part's tone changes go on meanwhile,
-        so it comes back in its tone; its keys' room, the keys pooled, goes to the others."""
+        a part muted has its notes stopped (and its bends let go); one unmuted strikes its notes still ringing there
+        (only its own). Its keys light either way, as it lights them (relight: none, if it lights none). A muted
+        part's tone changes go on meanwhile, so it comes back in its tone."""
         wanted = self._named(names)
         if wanted == self._muted:
             return
@@ -425,8 +426,6 @@ class Player:
         for ti in sorted(going):
             self._silence(ti)
         self._muted = wanted
-        if any(self._shown[ti][1] for ti in going | coming):  # (the keys' timeline made again, as retime does)
-            self._redisplay()
         if position is not None:
             for ti in sorted(coming):
                 self._sound_from(ti, position)

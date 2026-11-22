@@ -910,10 +910,12 @@ class Gui:
             # moment later, a remote's taps once they stop)
             followed = session.follower.plan_now()
             if followed and song_id(followed[0].part.ref) == sid:
-                planned = [pp for pp in followed if not pp.part.muted]  # (what's heard: not those muted)
+                planned = [pp for pp in followed if not pp.part.muted or pp.part.lights]  # (what's heard or lit:
+                # a part muted that lights its keys still lights them)
         if planned is None:  # (playing it, or not: its parts as chosen now)
-            parts = [Part(ref, a, chosen["lights"]) for (ref, a), chosen in zip(loaded, self._song_parts(sid, loaded))
-                     if chosen["play"]]
+            parts = [Part(ref, a, chosen["lights"], muted=not chosen["play"])
+                     for (ref, a), chosen in zip(loaded, self._song_parts(sid, loaded)) if chosen["play"] or
+                     chosen["lights"]]  # (muted, lit: its lit notes alone)
             planned = plan(parts, None, pooled=pooled)
         keys = KeyRange()
 
@@ -936,11 +938,13 @@ class Gui:
                     ring = light.rings[j] if j < len(light.rings) else light.off
                     ends[key] = max(ends.get(key, light.off), ring if key not in lit else light.off)
                 for key, end in sorted(ends.items()):
+                    if pp.part.muted and key not in lit:
+                        continue  # (muted: not heard, just lit)
                     notes.append([round(light.on, 3), round(max(end, light.on + 0.05), 3), key, i, int(key in lit)])
         notes.sort(key=lambda n: (n[0], n[2]))
         return {"parts": [{"part": pp.part.ref.part, "name": pp.part.ref.name or pp.part.ref.part,
-                           "kind": kind(pp.part.ref), "lights": pp.part.lights, "priority": pp.priority}
-                          for pp in planned],
+                           "kind": kind(pp.part.ref), "lights": pp.part.lights, "priority": pp.priority,
+                           "muted": pp.part.muted} for pp in planned],
                 "notes": notes, "lowest": keys.lowest, "highest": keys.highest, "most_lit": keys.max_lit,
                 "pooled": pooled and len(planned) > 1}
 
@@ -3792,9 +3796,11 @@ class Gui:
         """The parts to play while an arrangement is played, and their lit keys."""
         settings = self.follow_settings
 
-        def parts_for(played: ArrangementRef) -> list[tuple[ArrangementRef, int]]:  # (one muted as it plays stays
-            # in what plays, muted: Follower.mute_parts)
-            return [(r, lights) for r, play, lights in parts_chosen(settings, played, self._song_refs(played)) if play]
+        def parts_for(played: ArrangementRef) -> list[tuple[ArrangementRef, int, bool]]:  # (one muted that lights
+            # its keys: planned muted, lighting them; one muted as it plays stays in what plays, muted:
+            # Follower.mute_parts)
+            return [(r, lights, play) for r, play, lights in parts_chosen(settings, played, self._song_refs(played))
+                    if play or lights]
 
         return parts_for
 
