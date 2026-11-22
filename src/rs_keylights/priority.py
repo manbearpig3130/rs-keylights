@@ -6,11 +6,14 @@ where it can't (another system, or macOS saying no): the notes play as before.
 - Activity: while a song plays, the process says it's latency-critical work the user started (NSProcessInfo's
   activity): no App Nap, which slows the timers of an app whose window isn't seen (the Dock app's, closed or
   hidden), and timers as precise as they go.
+- settle(): what's kept for long (the songs' index, songs read) out of Python's full garbage collections, which
+  hold up every thread while they go over all of it.
 """
 from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import gc
 import sys
 from typing import Any
 
@@ -30,6 +33,15 @@ def playing_thread() -> bool:
     set_qos.argtypes = [ctypes.c_uint, ctypes.c_int]
     set_qos.restype = ctypes.c_int
     return set_qos(QOS_CLASS_USER_INTERACTIVE, 0) == 0
+
+
+def settle() -> None:
+    """Everything kept so far left out of Python's full garbage collections from now on (gc.freeze): each goes over
+    every object there is, holding up every thread meanwhile. With the songs' index that's about 15 ms, and the
+    song's audio, asked for more every 11 ms, missed a block (and a song's notes come late). Collected first, so what's
+    left out is what's kept; what's let go of later is still freed as it's let go of (nothing kept makes cycles)."""
+    gc.collect()
+    gc.freeze()
 
 
 class Activity:

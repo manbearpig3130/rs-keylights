@@ -1,6 +1,6 @@
 import numpy as np
 
-from rs_keylights.songaudio import HOP, JUMP, MOST_CATCH, SongAudio, Stretcher
+from rs_keylights.songaudio import CAUGHT, DRIFT, HOP, JUMP, MOST_CATCH, SEEK, SongAudio, Stretcher, _heard
 
 RATE = 44100
 
@@ -37,30 +37,80 @@ def test_slowed_down_its_pitch_is_kept_and_it_goes_on_more_slowly():
 
 
 class Song:
-    def __init__(self):
-        self.position, self.speed = 0.0, 1.0
+    """Where a song is: at position when the clock's at origin (None: paused), going on at its speed."""
 
-    def where(self):
-        return self.position, self.speed
+    def __init__(self, origin=0.0):
+        self.position, self.speed, self.origin = 0.0, 1.0, origin
+
+    def where(self, at):
+        return (None if self.position is None else self.position + (at - self.origin) * self.speed), self.speed
 
 
 def test_it_plays_where_the_song_is_jumping_there_or_catching_up():
     x = tones()
     song = Song()
     audio = SongAudio(x, RATE, song.where, volume=0.5)
-    first = audio.fill(4410)
+    first = audio.fill(4410, at=0.0)
     assert np.allclose(first, x[:4410] * 0.5, atol=1e-5)
     song.position = 2.0  # (sought: far off, it goes there)
-    audio.fill(441, latency=0.01)
+    audio.fill(441, at=0.01)
     assert abs(audio._stretcher.position - (2.01 * RATE + 441)) < 2
-    song.position = 2.02 + 441 / RATE  # (a little ahead: caught up, not jumped)
+    song.position = 2.0 + DRIFT / 2  # (a little ahead, less than a drift: played on as it is, not caught up)
     before = audio._stretcher.position
-    audio.fill(4410)
+    played = audio.fill(4410, at=0.01 + 441 / RATE)
+    assert audio._stretcher.position - before == 4410 and not audio._catching
+    song.position = 2.0 + DRIFT * 2  # (further: caught up, not jumped)
+    before = audio._stretcher.position
+    audio.fill(4410, at=0.01 + 4851 / RATE)
     gone = audio._stretcher.position - before
-    assert 4410 < gone <= 4410 * (1 + MOST_CATCH) + HOP and JUMP > 0.02
+    assert 4410 < gone <= 4410 * (1 + MOST_CATCH) + HOP and JUMP > DRIFT * 2 and audio._catching
     song.position = None  # (paused: silence, where it was)
     at = audio._stretcher.position
-    assert not audio.fill(1000).any() and audio._stretcher.position == at
+    assert not audio.fill(1000, at=1.0).any() and audio._stretcher.position == at
+    assert played.any() and CAUGHT < DRIFT
+    song.position = at / RATE - 1.0 + DRIFT / 4  # (on again, a little off: from just where it is, out of silence)
+    audio.fill(441, at=1.0)
+    assert abs(audio._stretcher.position - (at + DRIFT / 4 * RATE + 441)) < 2
+
+
+def test_at_its_own_speed_it_plays_on_frame_after_frame_as_it_is():
+    t = np.arange(RATE * 3) / RATE
+    swell = (0.05 + 0.9 * t / 3) * np.sin(2 * np.pi * 220 * t)  # (louder a period on: searched, a frame went there)
+    x = np.stack([swell, swell], axis=1).astype(np.float32)
+    stretcher = Stretcher(x)
+    stretcher.seek(1000)
+    assert np.allclose(stretcher.read(RATE * 2, 1.0), x[1000:1000 + RATE * 2], atol=1e-5)
+    stretcher.read(HOP * 7 + 300, 1.003)  # (caught up a while: frames fitted where they go best)
+    at = int(stretcher.position) + HOP * 2
+    later = stretcher.read(RATE // 2, 1.0)[HOP * 2:]  # (then on as it is, from where it's got to: within a search)
+    start = next(k for k in range(at - SEEK - HOP, at + SEEK + HOP) if np.allclose(later[:64], x[k:k + 64], atol=1e-5))
+    assert np.allclose(later, x[start:start + len(later)], atol=1e-5)
+
+
+def test_a_block_is_timed_by_the_sound_devices_clock_for_when_its_heard():
+    import time
+
+    class Time:
+        def __init__(self, dac, current):
+            self.outputBufferDacTime, self.currentTime = dac, current
+
+    now = time.monotonic()
+    assert _heard(Time(now + 0.011, now)) == (now + 0.011, True)  # (the Mac's clock: its own time, exact)
+    at, exact = _heard(Time(5.011, 5.0))  # (another clock: now and its delay)
+    assert abs(at - (time.monotonic() + 0.011)) < 0.005 and not exact
+    assert abs(_heard(None)[0] - time.monotonic()) < 0.005 and not _heard(None)[1]
+
+
+def test_blocks_the_sound_device_missed_are_gone_over_at_once_not_caught_up():
+    x = tones()
+    song = Song()
+    audio = SongAudio(x, RATE, song.where)
+    audio.fill(441, at=0.0, exact=True)
+    audio.fill(441, at=441 / RATE, exact=True)
+    audio.fill(441, at=(441 * 3) / RATE, exact=True)  # (a block missed: 10 ms gone, less than a drift)
+    assert abs(audio._stretcher.position - 441 * 4) < 2 and not audio._catching
+    audio.fill(441, at=(441 * 4) / RATE + DRIFT / 4)  # (not exact: the same gap's just played on from)
+    assert abs(audio._stretcher.position - 441 * 5) < 2
 
 
 class FakeStream:
@@ -78,9 +128,10 @@ class FakeStream:
 
 
 def test_it_plays_on_a_stream_of_the_audios_rate_and_channels():
+    import time
     streams = []
-    audio = SongAudio(tones(1.0), RATE, Song().where, stream_factory=lambda **kw: streams.append(FakeStream(**kw))
-                      or streams[-1])
+    audio = SongAudio(tones(1.0), RATE, Song(origin=time.monotonic()).where,
+                      stream_factory=lambda **kw: streams.append(FakeStream(**kw)) or streams[-1])
     audio.start()
     stream = streams[0]
     assert stream.started and stream.kwargs["samplerate"] == RATE and stream.kwargs["channels"] == 2

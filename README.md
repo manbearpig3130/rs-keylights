@@ -574,7 +574,8 @@ Afterwards the Casio is back on its Standard kit. A song's drum part sets the ki
 🎵 in the header plays the song's own audio from the Mac along with a song you play:
 
 - It's paused, moved and looped with the song.
-- It's slowed or sped up without changing pitch.
+- It's slowed or sped up without changing pitch. At the song's own speed it plays exactly as it is, each block timed
+  by the sound device's own clock for when it's heard, so it never needs stretching to keep up.
 - It's decoded from the song's archive in a fraction of a second (a split song with its parts: about a second).
   It stays decoded for a minute after it stops, so playing it again starts at once.
 - It's off each time rs-keylights starts, and it doesn't play while following.
@@ -585,6 +586,10 @@ The **Song's audio** card sets its volume and output.
 Song Stems' Demucs model: about 20 s a part for a 4-minute song, once. The parts are kept as AAC in
 `~/Library/Caches/rs-keylights/stems/`, at most 2 GB, the least used going first. Each part then gets its own volume
 and mute, the same for every song. This needs the `drums` and `listen` extras and `tools/drums-setup.sh`.
+
+Other isn't kept: it's the song less the five parts, so it also has whatever the separator left of them, often the
+drums' cymbals and some of their hits. With the drums muted and Other up, a faint, choppy ghost of the drums comes
+through; mute Other too for a part on its own (the vocals alone, say).
 
 The Launchkey's mixer has a page for the parts (see [The mixer](#the-mixer)). While following, that page controls
 the game's own song instead.
@@ -831,8 +836,11 @@ once, and Riff Repeater's speed is measured from it. RS Companion isn't read at 
 **On time while the Mac is busy.** The thread that plays the notes is macOS's most urgent kind (user-interactive:
 the performance cores first), and while a song plays the process tells macOS it's latency-critical work, so App Nap
 doesn't slow its timers (the Dock app's window may be closed or hidden). Python hands between its threads every
-millisecond instead of every 5. Following, the trace (`--trace`) sums up every 30 s how many steps came more than 10,
-20, 50 and 100 ms late, and notes any step held up longer than 150 ms.
+millisecond instead of every 5. What's kept for long (the songs' index, songs read) is left out of Python's full
+garbage collections, which hold up every thread while they go over it all (about 15 ms with the index: longer than a
+block of the song's audio, so a bit of it was lost each time a part was changed as it played). The song's audio asks
+where the song is without waiting for the song's thread. Following, the trace (`--trace`) sums up every 30 s how
+many steps came more than 10, 20, 50 and 100 ms late, and notes any step held up longer than 150 ms.
 
 **The timing, with RS Companion.** RS Companion updates the song timer about 4 times a second. `follow` reads it 10
 times a second and keeps its own clock in between. Each value arrives a little late, never early, so the clock goes

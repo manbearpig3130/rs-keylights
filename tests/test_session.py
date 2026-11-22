@@ -197,6 +197,24 @@ def test_playback_position_pause_seek_and_speed():
     assert p.position == 0.0
 
 
+def test_where_the_playback_is_at_a_time_without_waiting_for_its_lock():
+    now = [100.0]
+    k, _out = keyboard()
+    p = Playback(Player([Track([Light(1.0, 2.0, (60,))])], k), k, length=10.0, start=2.0, clock=lambda: now[0])
+    with p._lock:  # (held by its thread, as it plays notes: the song's audio asks all the same)
+        assert p.where_at(101.5) == (3.5, 1.0)
+    p.set_speed(0.5)
+    assert p.where_at(102.0) == (3.0, 0.5)
+    p.pause()
+    assert p.where_at(150.0) == (None, 0.5)
+    now[0] = 110.0
+    p.resume()
+    p.seek(9.0)
+    assert p.where_at(112.0) == (10.0, 0.5)  # (not past the end)
+    p.replace(Player([Track([Light(1.0, 2.0, (64,))])], k), length=5.0)
+    assert p.where_at(110.0) == (5.0, 0.5)
+
+
 def test_playback_runs_to_the_end_and_closes_the_keyboard_when_stopped():
     k, out = keyboard()
     p = Playback(Player([Track([Light(0.05, 0.1, (60,))])], k), k, length=0.2)

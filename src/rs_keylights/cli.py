@@ -20,6 +20,7 @@ from .lights import LIGHTS_EARLY, MIN_PERIOD
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, HOP, LOWEST, RATE, Detector
 from .library import NO_NOTES, ArrangementRef, SongIndex, read_arrangements
 from .player import play
+from .priority import settle
 from .psarc import ArchiveError
 from .riffloop import RiffLoop
 from .tonemessages import SOURCE, ToneSender, read_rig, virtual_source
@@ -409,6 +410,7 @@ def run_gui(args: argparse.Namespace) -> int:
             trace.flush()
 
     gui = Gui(index, overlay_port=args.overlay_port, overrides=overrides, trace=record if trace is not None else None)
+    settle()  # (the index, out of the full garbage collections' way: they'd hold up the song's notes and audio)
     try:
         server = GuiServer(gui, args.port, lan=args.lan)
     except OSError as exc:

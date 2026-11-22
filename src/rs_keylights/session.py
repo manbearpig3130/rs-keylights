@@ -64,6 +64,7 @@ class Playback:
         self._lock = threading.Lock()
         self._from = min(max(start, 0.0), length)  # song position at _since
         self._since = clock()
+        self._timed()
         self.loop: tuple[float, float] | None = None  # from, to: reaching its end, back to a little before its start
         self._last = self._from  # the position last played to (passing the loop's end from there: back)
         player.retime(rate=speed)
@@ -77,6 +78,19 @@ class Playback:
         with self._lock:
             return self._now()
 
+    def where_at(self, at: float) -> tuple[float | None, float]:
+        """Where the song is at a time on its clock (None: paused, or ended) and how fast it goes, without waiting for
+        its lock: the song's audio asks from its sound device's thread, which can't wait while this one plays notes or
+        another player is put in (the sound it was to make missed)."""
+        start, since, speed, paused = self._timing
+        if paused:
+            return None, speed
+        return min(start + (at - since) * speed, self.length), speed
+
+    def _timed(self) -> None:
+        """(Its timing changed: kept together for where_at, swapped whole.)"""
+        self._timing = (self._from, self._since, self.speed, self.paused)
+
     @property
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -85,6 +99,7 @@ class Playback:
         _quick_switches()
         self._activity.begin()
         self._since = self._clock()
+        self._timed()
         self._thread = threading.Thread(target=self._run, name="rs-keylights playback", daemon=True)
         self._thread.start()
 
@@ -93,6 +108,7 @@ class Playback:
             if not self.paused:
                 self._from, self._since = self._now(), self._clock()
                 self.paused = True
+                self._timed()
                 self.player.stop()
 
     def resume(self) -> None:
@@ -100,6 +116,7 @@ class Playback:
             if self.paused:
                 self._since = self._clock()
                 self.paused = False
+                self._timed()
 
     def seek(self, position: float) -> None:
         with self._lock:
@@ -109,6 +126,7 @@ class Playback:
         self._from, self._since = min(max(position, 0.0), self.length), self._clock()
         self._last = self._from  # (moved past the loop's end: it plays on, until it's back before it)
         self.ended = False
+        self._timed()
         if not self.paused:
             self.player.seek(self._from)
 
@@ -125,6 +143,7 @@ class Playback:
         with self._lock:
             self._from, self._since = self._now(), self._clock()
             self.speed = speed
+            self._timed()
             self.player.retime(rate=speed)
 
     @property
@@ -162,6 +181,7 @@ class Playback:
                 self.length = length
                 position = min(position, length)
                 self._from, self._since = position, self._clock()
+                self._timed()
             if not self.paused:
                 player.seek(position)
 
@@ -199,6 +219,7 @@ class Playback:
                             self.ended = True
                             self.paused = True
                             self._from = self.length
+                            self._timed()
                             self.player.stop()
                         upcoming = self.player.next_time()
                         wait = 0.05 if upcoming is None else min(max(upcoming - position, 0.0) / self.speed, 0.05)

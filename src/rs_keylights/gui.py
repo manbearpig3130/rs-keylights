@@ -34,6 +34,7 @@ from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light
 from . import drums, midiexport, theory
 from .parts import CHANNELS_USED_UP, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan, player_for
 from .player import Track, squeal_bends
+from .priority import settle
 from .session import Following, Playback
 from . import gamestems, stems, warmup
 from .songaudio import SongAudio, song_samples
@@ -748,6 +749,7 @@ class Gui:
         library = {"game_dir": str(self.index.game_dir), "songs": out}
         with self._lock:
             self._library = library
+        settle()
         return library
 
     def song(self, sid: str) -> dict[str, Any]:
@@ -1532,6 +1534,7 @@ class Gui:
             self._loaded[sid] = loaded
             while len(self._loaded) > 8:
                 self._loaded.popitem(last=False)
+        settle()  # (kept a while: out of the full collections' way)
         return loaded
 
     def song_key(self, sid: str) -> dict[str, Any] | None:
@@ -1701,12 +1704,12 @@ class Gui:
         self._audio_token += 1
         token = self._audio_token
 
-        def where() -> tuple[float | None, float]:
+        def where(at: float) -> tuple[float | None, float]:  # (the sound device's thread: nothing waited for)
             session = self._session
-            if not isinstance(session, Playback) or not session.running or session.paused or session.ended \
-                    or not self._playing or self._playing["id"] != sid:
+            if not isinstance(session, Playback) or not session.running or not self._playing \
+                    or self._playing["id"] != sid:
                 return None, 1.0
-            return session.position, session.speed
+            return session.where_at(at)
 
         def run() -> None:
             try:

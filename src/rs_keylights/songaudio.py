@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 import wave
 from collections import deque
 from pathlib import Path
@@ -12,14 +13,21 @@ from .library import ArrangementRef
 # The song's own audio (from its archive: drums.decode, a fraction of a second), played on the Mac with a song
 # rs-keylights plays, where the song is: it follows the song's position (paused, sought, looped, at its speed), the
 # speed slowed or quickened with its pitch kept (WSOLA: frames of it overlapped, each where it fits the last best).
+# At the song's own speed it's the audio as it is, frame after frame. Each block's timed by the sound device's own
+# clock for when it's heard (exact: no jitter to chase), and only a real drift, DRIFT or more, is caught up (stretched
+# a little meanwhile, which roughens it). Blocks the device missed (Python busy elsewhere: its sound broken there
+# already) are gone over at once, not caught up.
 
 FRAME = 2048  # samples a frame of it (46 ms at 44.1 kHz), overlapped by half
 HOP = FRAME // 2
 SEEK = 512  # samples either way each frame's searched for where it fits best...
 DECIMATE = 4  # ...on every 4th sample of it, mono
-JUMP = 0.15  # seconds the audio's off where the song is to jump there (a seek, a loop); less is caught up...
-CATCH = 1.0  # ...by playing up to MOST_CATCH faster or slower: this much faster a second it's behind
+JUMP = 0.15  # seconds the audio's off where the song is to jump there (a seek, a loop); less, from DRIFT on...
+DRIFT = 0.02  # (the sound device's clock and the Mac's drift a few ms a minute apart; a block it missed, more)
+CAUGHT = 0.002  # ...is caught up to this close by playing up to MOST_CATCH faster or slower: this much faster a
+CATCH = 1.0  # second it's behind
 MOST_CATCH = 0.02
+SKIPPED = 0.001  # seconds later than the last block's end a block's heard: blocks between missed
 BLOCK = 512  # samples the sound device's asked for at once (12 ms: steady, the delay made up for where it's heard)
 
 
@@ -106,7 +114,10 @@ class Stretcher:
     def _frame(self, speed: float) -> None:
         import numpy as np
         start = int(round(self._nominal))
-        if self._follows is not None and -SEEK <= start <= self._length + SEEK:
+        if self._follows is not None and speed == 1.0:  # (as it is: on from the last, where it's heard from now)
+            start = self._follows
+            self._nominal = float(start)
+        elif self._follows is not None and -SEEK <= start <= self._length + SEEK:
             start = self._best(start)
         self._sum += self._segment(start) * self._window
         self._chunks.append((self._sum[:HOP].copy(), self._nominal, speed))
@@ -134,13 +145,13 @@ class Stretcher:
 
 
 class SongAudio:
-    """A song's audio played where the song is: where() says where it is (seconds; None: not playing) and how fast,
-    each time it's asked for more. Too far off (JUMP), it goes there; a little, it catches up (MOST_CATCH at most,
-    unheard); not playing, silence. volume: 0 to 1."""
+    """A song's audio played where the song is: where(at) says where it is at a time on time.monotonic's clock
+    (seconds; None: not playing) and how fast, each time it's asked for more, for when that's heard. Too far off
+    (JUMP), it goes there; from DRIFT off, it catches up (MOST_CATCH at most); not playing, silence. volume: 0 to 1."""
 
-    def __init__(self, samples: Any, rate: int, where: Callable[[], tuple[float | None, float]], volume: float = 1.0,
-                 stream_factory: Callable[..., Any] | None = None, weights: dict[str, float] | None = None,
-                 search: Any = None):
+    def __init__(self, samples: Any, rate: int, where: Callable[[float], tuple[float | None, float]],
+                 volume: float = 1.0, stream_factory: Callable[..., Any] | None = None,
+                 weights: dict[str, float] | None = None, search: Any = None):
         self.rate = rate
         self.volume = volume
         self._where = where
@@ -148,6 +159,9 @@ class SongAudio:
         self._factory = stream_factory
         self._stream: Any = None
         self._lock = threading.Lock()
+        self._catching = False
+        self._next: float | None = None  # (when the next block's heard, on the sound device's clock)
+        self._silent = True  # (the last block: silence, the song not playing)
 
     @property
     def channels(self) -> int:
@@ -158,19 +172,24 @@ class SongAudio:
         """Each part's volume (0 to 1): changed, heard at once."""
         return self._stretcher.weights
 
-    def fill(self, frames: int, latency: float = 0.0) -> Any:
-        """The next frames of sound (frames x channels), heard latency seconds from now."""
+    def fill(self, frames: int, at: float | None = None, exact: bool = False) -> Any:
+        """The next frames of sound (frames x channels), heard at a time on time.monotonic's clock (None: now; exact:
+        the sound device's own, block after block)."""
         import numpy as np
-        position, speed = self._where()
+        position, speed = self._where(time.monotonic() if at is None else at)
+        missed = exact and at is not None and self._next is not None and at - self._next > SKIPPED
+        self._next = at + frames / self.rate if exact and at is not None else None
+        silent, self._silent = self._silent, position is None
         if position is None:
             return np.zeros((frames, self.channels), dtype=np.float32)
         with self._lock:
-            wanted = (position + latency * speed) * self.rate
+            wanted = position * self.rate
             off = (wanted - self._stretcher.position) / self.rate
-            if abs(off) > JUMP * max(speed, 1.0):
-                self._stretcher.seek(wanted)
+            if silent or abs(off) > JUMP * max(speed, 1.0) or (missed and abs(off) > CAUGHT):  # (from silence: from
+                self._stretcher.seek(wanted)  # just where it is)
                 off = 0.0
-            catch = min(max(off * CATCH, -MOST_CATCH), MOST_CATCH)
+            self._catching = abs(off) > (CAUGHT if self._catching else DRIFT)
+            catch = min(max(off * CATCH, -MOST_CATCH), MOST_CATCH) if self._catching else 0.0
             return self._stretcher.read(frames, speed * (1 + catch)) * self.volume
 
     def start(self, device: str | None = None) -> None:
@@ -179,11 +198,8 @@ class SongAudio:
         factory = self._factory or sounddevice.OutputStream
 
         def callback(out: Any, frames: int, time_info: Any, _status: Any) -> None:
-            try:
-                latency = max(float(time_info.outputBufferDacTime - time_info.currentTime), 0.0)
-            except (AttributeError, TypeError):
-                latency = 0.0
-            out[:] = self.fill(frames, latency)
+            at, exact = _heard(time_info)
+            out[:] = self.fill(frames, at, exact)
 
         chosen = {} if device is None else {"device": device}
         self._stream = factory(samplerate=self.rate, channels=self.channels, dtype="float32", callback=callback,
@@ -195,6 +211,19 @@ class SongAudio:
         if stream is not None:
             stream.stop()
             stream.close()
+
+
+def _heard(time_info: Any) -> tuple[float, bool]:
+    """When a block's first sample is heard, on time.monotonic's clock, and whether that's exact: the sound device's
+    own time for it (on the Mac, its clock: block after block), else now and the delay it says there is."""
+    now = time.monotonic()
+    try:
+        dac, current = float(time_info.outputBufferDacTime), float(time_info.currentTime)
+    except (AttributeError, TypeError):
+        return now, False
+    if 0.0 <= dac - now < 1.0:  # (the same clock)
+        return dac, True
+    return now + max(dac - current, 0.0), False
 
 
 def _frames(samples: Any) -> Any:
