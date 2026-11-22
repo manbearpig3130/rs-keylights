@@ -222,13 +222,13 @@ class Separator:
         if not self._config:
             import yaml
 
-            class Loader(yaml.SafeLoader):  # (its settings have Python tuples in them: those, as lists, and nothing
-                pass  # else of Python's)
+            class Loader(yaml.SafeLoader):  # (its settings have Python tuples in them, which the model's code
+                pass  # checks are tuples: those, and nothing else of Python's)
 
-            def as_list(loader: Any, node: Any) -> list[Any]:
-                return loader.construct_sequence(node)
+            def as_tuple(loader: Any, node: Any) -> tuple[Any, ...]:
+                return tuple(loader.construct_sequence(node))
 
-            Loader.add_constructor("tag:yaml.org,2002:python/tuple", as_list)
+            Loader.add_constructor("tag:yaml.org,2002:python/tuple", as_tuple)
             self._config = yaml.load((self.data / "model" / SETTINGS).read_text(), Loader=Loader)
         return self._config
 
