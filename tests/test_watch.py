@@ -506,7 +506,7 @@ def test_its_scale_button_shows_the_scale_and_following_the_buttons_left_and_rig
     launchkey.queued = [Pad(0, 0)]  # only its Scale button turns it off: its light and screen don't follow a message
     watch.step()
     assert watch.scale_view and gui.changes == [] and gui.stops == 0
-    assert note(watch) == (None, ("Pads: the song's scale", "Scale: back to parts"))
+    assert note(watch) == (None, ("Pads: the scale", "Scale: back"))
     gui.info["song"] = {**gui.song, "id": "next"}  # the next song: its scale climbs the keys too
     clock.now = 1.0
     watch.step()
@@ -524,7 +524,7 @@ def test_its_scale_button_shows_the_scale_and_following_the_buttons_left_and_rig
     launchkey.queued = [Button(104)]
     clock.now = 2.5
     watch.step()
-    assert gui.game_keys == ["escape", "up", "down", "enter"] and note(watch) == (None, NOT_FOLLOWING_KEYS)
+    assert gui.game_keys == ["escape", "up", "down", "enter"] and note(watch) == (NOT_FOLLOWING_KEYS, None)
     assert ("button", 104, 1, 20) in launchkey.calls
 
 
@@ -864,7 +864,7 @@ def test_track_on_opens_the_mixer_its_knobs_the_volumes_and_its_pads_mute_each()
     launchkey.queued = [Button(104)]  # (Rocksmith's Escape: follow it first) said over it too
     clock.now = 31.0
     watch.step()
-    assert watch.mix_knobs and note(watch) == (None, NOT_FOLLOWING_KEYS)
+    assert watch.mix_knobs and note(watch) == (NOT_FOLLOWING_KEYS, None)
     launchkey.queued = [Button(105), Button(51), Turn(0, 1)]  # Func: the mixer closed; the up arrow again, the
     # knobs on the palm-mute tones (from none of its own, the first)
     clock.now = 31.5
@@ -1264,7 +1264,7 @@ def test_following_with_the_game_paused_knobs_3_and_4_step_through_its_song_as_i
     launchkey.queued = [Button(52), Turn(SEEK_KNOB, 1)]  # playing: not while it plays
     clock.now = 0.5
     watch.step()
-    assert gui.game_keys == [] and note(watch) == (None, ("Rocksmith: pause first", "(Play), then step"))
+    assert gui.game_keys == [] and note(watch) == ("Pause the game first", None)
     gui.info["state"] = "paused"  # (paused, however)
     clock.now = 1.0
     watch.step()
@@ -1333,7 +1333,7 @@ def test_the_tones_on_the_screen_the_pads_below_follow_the_songs_tone_changes_or
     launchkey.queued = [Pad(1, 1)]  # (none to follow: said, nothing changed)
     clock.now = 1.5
     watch.step()
-    assert len(gui.changes) == changes and note(watch) == (None, ("Rhythm", "has no tone changes"))
+    assert len(gui.changes) == changes and note(watch) == ("Rhythm: no tone changes", None)
     launchkey.queued = [Pad(1, 0)]  # (following again)
     clock.now = 2.0
     watch.step()
@@ -1731,12 +1731,12 @@ def test_the_guitars_pads_go_through_its_favourites_and_hold_its_tone():
     launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # the bottom pad: its tone held (not switched with the song's)
     clock.now = 2.0
     watch.step()
-    assert gui.pedal["hold"] and note(watch) == ("Pedal: holding this tone", None)
+    assert gui.pedal["hold"] and note(watch) == ("Pedal: tone held", None)
     assert pads(launchkey)[(1, GUITAR_COLUMN)] == (19, 15, 0)  # (dim)
     launchkey.queued = [Pad(1, GUITAR_COLUMN)]  # again: following them
     clock.now = 2.5
     watch.step()
-    assert not gui.pedal["hold"] and note(watch) == ("Pedal: following the song's tones", None)
+    assert not gui.pedal["hold"] and note(watch) == ("Pedal: song tones", None)
     assert pads(launchkey)[(1, GUITAR_COLUMN)] == (127, 100, 0)
     assert [body for body, _later in gui.pedal_calls][-2:] == [{"hold": True}, {"hold": False}]
     gui.pedal = {**gui.pedal, "error": "The pedal didn't answer: unplug it and plug it in again"}
@@ -1810,7 +1810,7 @@ def test_following_the_games_music_is_on_the_mixers_stems_page_not_knob_6():
     launchkey.queued = [Turn(GUITAR_COLUMN, -3)]  # knob 6: where it went, said
     clock.now = 1.0
     watch.step()
-    assert gui.music == 76 and gui.pedal_calls == [] and note(watch) == (None, ("The game's Music:", "▼, then knob 7"))
+    assert gui.music == 76 and gui.pedal_calls == [] and note(watch) == ("Music: ▼, then knob 7", None)
     launchkey.queued = [Button(52), Turn(KEYS_COLUMN, -3)]  # ▼, knob 7 (without Song Stems: its Music still)
     clock.now = 1.5
     watch.step()
@@ -1923,7 +1923,7 @@ def test_a_songs_drums_not_made_yet_are_a_dim_pad_that_makes_them():
     launchkey.queued = [Pad(0, 3)]
     clock.now = 0.5
     watch.step()
-    assert gui.changes[-1] == ("drums", {"make": True}) and note(watch) == (None, ("Drums: making them", "(a minute or so)"))
+    assert gui.changes[-1] == ("drums", {"make": True}) and note(watch) == ("Making drums", None)
     drums["making"] = True  # (being made: pulsing; a tap says so)
     clock.now = 1.0
     watch.step()
@@ -1931,7 +1931,7 @@ def test_a_songs_drums_not_made_yet_are_a_dim_pad_that_makes_them():
     launchkey.queued = [Pad(0, 3), Button(105), Turn(3, 5)]  # (and in the mixer: no volume yet)
     clock.now = 1.5
     watch.step()
-    assert len(gui.changes) == 1 and note(watch) == (None, ("Drums: not made yet", "Their pad on top makes them"))
+    assert len(gui.changes) == 1 and note(watch) == ("Drums: pad makes them", None)
     drums.update(made=True, making=False, play=True)  # (made: as it would be after)
     launchkey.queued = [Button(105)]
     clock.now = 2.0
@@ -2019,11 +2019,18 @@ def test_a_drum_part_being_made_shows_how_far_on_the_songs_screen():
     gui.song["arrangements"].append(drums)
     gui.info["song"] = gui.song
     watch.step()
-    assert "Drums 42%" in watch._screen(clock.now)[0][0]  # (in the key's notes' place: short, to fit)
+    assert watch._screen(clock.now)[0][1] == ("progress", "Making drums", 21)  # (at the bottom, its bar)
     drums.update(making=False, made=True, progress=None)  # (made: the key's notes again)
     clock.now = 0.5
     watch.step()
-    assert not any("Drums 4" in str(x) for x in watch._screen(clock.now)[0][0])
+    assert watch._screen(clock.now)[0][1] is None
+    drums.update(making=True, progress=0.5)
+    watch._browsed_text, watch._browsed_place, watch._browse_until = ("Song", "Band"), (3, 300), clock.now + 5
+    assert watch._screen(clock.now)[0][0][0] == "browsed" and watch._screen(clock.now)[0][1] is None  # (browsing the
+    # library: its own bottom row, not how far it is)
+    watch._browse_until = 0.0
+    watch._picture_of, watch._picture_until = "speed", clock.now + 3  # (the speed being turned: its row too)
+    assert watch._screen(clock.now)[0][1] is None
 
 
 def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
@@ -2095,7 +2102,7 @@ def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
     clock.now = 4.5
     watch.step()
     assert len(gui.options) == options and gui.changes == []
-    assert note(watch) == (None, ("Pads on top: mute a part", "Knobs: its volume, 8: all")) and watch.mix_knobs
+    assert note(watch) == (None, ("Top pads: mute", "Knobs: volume  8: all")) and watch.mix_knobs
     launchkey.queued = [Button(51)]  # the up arrow: the arrangements' volumes again
     clock.now = 5.0
     watch.step()
@@ -2126,12 +2133,12 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     launchkey.queued = [Button(105), Button(52)]
     clock.now = 0.5
     watch.step()
-    assert note(watch) == (None, ("Song not split yet:", "a pad on top splits it"))
+    assert note(watch) == ("Not split: tap a pad", None)
     assert pads(launchkey)[(0, 1)] == (0, 5, 15)  # (its parts' pads: dim)
     launchkey.queued = [Turn(0, 5)]  # a part's knob: nothing to turn yet
     clock.now = 1.0
     watch.step()
-    assert gui.options == [] and note(watch) == (None, ("Song not split yet:", "a pad on top splits it"))
+    assert gui.options == [] and note(watch) == ("Not split: tap a pad", None)
     launchkey.queued = [Pad(0, 3)]  # a part's pad: it's split (a minute or two: pulsing)
     clock.now = 1.5
     watch.step()
@@ -2154,7 +2161,7 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     launchkey.queued = [Pad(0, 0)]
     clock.now = 3.1
     watch.step()
-    assert len(gui.splits) == 1 and note(watch) == (None, ("To split songs, run", "tools/drums-setup.sh"))
+    assert len(gui.splits) == 1 and note(watch) == ("Needs drums-setup.sh", None)
 
     watch, gui, launchkey, clock = watching()  # following: the game plays the song
     gui.info["song"] = gui.song
@@ -2163,7 +2170,7 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     clock.now = 0.5
     watch.step()
     assert watch.mix_knobs and watch.mix_page == "stems"  # (its page still: the game's Music on it)
-    assert note(watch) == (None, ("The game's song parts", "need rearmed-mods"))  # (no RSMods.ini)
+    assert note(watch) == ("Needs rearmed-mods", None)  # (no RSMods.ini)
     assert pads(launchkey)[(0, 0)] == (0, False) and pads(launchkey)[(0, 2)] == (0, False)  # (nothing to split
     launchkey.queued = [Pad(0, 0)]                                                          # here, none to mute)
     clock.now = 0.7
@@ -2175,7 +2182,7 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     launchkey.queued = [Button(52)]
     clock.now = 1.5
     watch.step()
-    assert watch.mix_page == "stems" and note(watch) == (None, ("Song Stems is off:", "turn it on in the mods"))
+    assert watch.mix_page == "stems" and note(watch) == ("Song Stems is off", None)
 
 
 def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_and_its_music():
@@ -2241,7 +2248,7 @@ def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_a
     launchkey.queued = [Turn(0, 5)]  # the drums' knob: not in the game's song
     clock.now = 3.0
     watch.step()
-    assert len(gui.game_stem_calls) == calls and note(watch) == (None, ("In the game's song:", "just the bass and guitar"))
+    assert len(gui.game_stem_calls) == calls and note(watch) == ("Only bass and guitar", None)
 
 
 def warming_up(watch, gui, **changes):

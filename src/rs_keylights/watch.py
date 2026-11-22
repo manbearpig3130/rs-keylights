@@ -152,7 +152,7 @@ BROWSE_SHOWN = 5.0  # seconds the screen shows the song the pitch strip is on, a
 # Following, buttons that are Rocksmith's keys (its menus): Track back and on its up and down arrows, the button
 # right of the pads (top) its Escape, Record its Enter
 GAME_KEYS = {TRACK_BUTTONS[0]: "up", TRACK_BUTTONS[1]: "down", SIDE_BUTTONS[0]: "escape", RECORD: "enter"}
-NOT_FOLLOWING_KEYS = ("Rocksmith's menus:", "follow it first")
+NOT_FOLLOWING_KEYS = "Follow the game first"  # (Rocksmith's menus' keys, not following)
 FLICK_GAIN, FLICK_FADE = 1.5, 0.8  # a flick's songs a second for its steps a second, and how it slows (seconds)
 BUILT_IN = {"lead": 79, "rhythm": 79, "bass": 85}
 CHORD_EARLY = 0.15  # seconds: a chord's name shows this early, a little before it's played
@@ -553,11 +553,10 @@ class Watch:
         if self._picture_until != math.inf:
             self._show_for_a_while("parts", now)
         if follows is None:
-            self._say(now, lines=(str(arrangement["name"]), "has no tone changes"))
+            self._say(now, line=f"{arrangement['name']}: no tone changes")
         elif self._try(lambda: self.gui.change_part(arrangement["id"], {"follow_tones": None if not follows else False})):
             self._pending[(arrangement["id"], "follow")] = not follows
-            self._say(now, lines=(str(arrangement["name"]), "follows the song's tones" if not follows else
-                                  "keeps its tone"))
+            self._say(now, line=f"{arrangement['name']}: {'song tones' if not follows else 'tone held'}")
 
     def _arrangements_in(self, info: dict[str, Any]) -> list[dict[str, Any]]:
         """The arrangements with a column (knob and pads): 1 to 5, the 6th column the guitar's; in the mixer, 1 to
@@ -922,7 +921,7 @@ class Watch:
             if w.get("phase") == "show":
                 self.gui.set_warmup({"your_turn": True})
             else:
-                self._say(now, lines=("Record: your turn,", "while a drill's shown"))
+                self._say(now, line="No drill being shown")  # (Record: your turn, while one is)
         elif isinstance(event, Button) and event.number == TRACK_BUTTONS[0]:
             early = w.get("phase") in ("ready", "show", "count")  # (just started: the one before)
             self.gui.set_warmup({"go": max(int(w.get("drill") or 0) - (1 if early else 0), 0)})
@@ -930,7 +929,7 @@ class Watch:
             if not w.get("until_stopped") and int(w.get("drill") or 0) + 1 < int(w.get("drills") or 0):
                 self.gui.set_warmup({"go": int(w.get("drill") or 0) + 1})
             else:
-                self._say(now, line="The last drill: stop it with its pad")
+                self._say(now, line="Last drill: pad stops it")
         elif isinstance(event, Turn):
             for _ in range(min(abs(event.steps), WARMUP_STEPS)):
                 self.gui.set_warmup({"step": 1 if event.steps > 0 else -1})
@@ -1116,7 +1115,7 @@ class Watch:
             self._mix(event, info, now)
             return
         if self.mix_knobs and self._stems_page(info) and isinstance(event, Pad) and event.column != CONTROLS:
-            self._say(now, lines=("Pads on top: mute a part", "Knobs: its volume, 8: all"))  # (none below)
+            self._say(now, lines=("Top pads: mute", "Knobs: volume  8: all"))  # (none below)
             return
         if isinstance(event, ScaleMode):  # its own display shows the scale; the pads and the keys show it too
             if event.on != self.scale_view:
@@ -1133,7 +1132,7 @@ class Watch:
                 self._browse_pitch(event.value, event.at or now)
             return
         if isinstance(event, Pad) and self.scale_view and song is not None and song.get("key"):
-            self._say(now, lines=("Pads: the song's scale", "Scale: back to parts"))
+            self._say(now, lines=("Pads: the scale", "Scale: back"))
             return
         if isinstance(event, Pad) and event.column == CONTROLS:
             if event.row == 0:
@@ -1240,10 +1239,10 @@ class Watch:
         """An arrangement's pad on top (the mixer's too): muted, or played again. The drums not made yet: made."""
         if a["kind"] == "drums" and not a.get("made", True):
             if a.get("making"):
-                self._say(now, lines=("Drums: making them", "(a minute or so)"))
+                self._say(now, line="Making drums")
                 return
             self.gui.change_part("drums", {"make": True})
-            self._say(now, lines=("Drums: making them", "(a minute or so)"))
+            self._say(now, line="Making drums")  # (how far: at the bottom, after)
             return
         play = not a["play"]
         self.gui.change_part(a["id"], {"play": play})
@@ -1283,7 +1282,7 @@ class Watch:
             held: list[bool] = []
             hold = not (info.get("pedal") or {}).get("hold")
             if self._try(lambda: held.append(self.gui.set_pedal({"hold": hold})["hold"])):
-                self._said_by_pad(now, "Pedal: holding this tone" if held[0] else "Pedal: following the song's tones")
+                self._said_by_pad(now, "Pedal: tone held" if held[0] else "Pedal: song tones")
 
     def _pedal_shown(self, now: float) -> bool:
         """The pedal's picture on the screen, with a song tone playing (following): Record keeps its preset for it."""
@@ -1318,7 +1317,7 @@ class Watch:
         elif number in GAME_KEYS and following:  # Rocksmith's menus: up, down, Escape, Enter
             self.gui.game_key(GAME_KEYS[number])
         elif number == SIDE_BUTTONS[0]:  # (Rocksmith's Escape, following)
-            self._say(now, lines=NOT_FOLLOWING_KEYS)
+            self._say(now, line=NOT_FOLLOWING_KEYS)
         elif number == RECORD and self._lyric_line is not None and now < self._lyrics_until:  # the line gone to
             self._lyrics_go(now)
         elif number == RECORD:  # the song the pitch strip is on switched to; on the song already, it stops
@@ -1345,7 +1344,7 @@ class Watch:
             self._lyric_line = None
             self._back_to_the_song()
         elif number == TRACK_BUTTONS[1]:  # (Rocksmith's down arrow, following)
-            self._say(now, lines=NOT_FOLLOWING_KEYS)
+            self._say(now, line=NOT_FOLLOWING_KEYS)
         elif number == SIDE_BUTTONS[1]:  # Func: the mixer
             self._open_mixer(now, kept=True)
         elif number == ENCODER_BUTTONS[0] and self.mode == "parts":  # again: the next of the arrangements' tones
@@ -1507,7 +1506,7 @@ class Watch:
         """Following: Rocksmith's song stepped through as its pause screen's keys do (keys: back, on), a key a step
         (GAME_STEPS at most a turn, none while it has GAME_BEHIND still to type); not paused, said so."""
         if info.get("state") != "paused":
-            self._say(now, lines=("Rocksmith: pause first", "(Play), then step"))
+            self._say(now, line="Pause the game first")
             return
         count = 0
         while count < min(abs(steps), GAME_STEPS) and now >= self._game_busy_until:
@@ -1566,7 +1565,7 @@ class Watch:
         game = now_set.get("game") if on else None  # (following: the game's)
         if game is not None:
             self._say(now, lines=(said, _riff_trouble(game) or ("Riff Repeater: Start" if which == "b"
-                                                                 else "Pick it in Riff Repeater")))
+                                                                 else "Pick in Riff Repeater")))
         else:
             self._say(now, line=said)
 
@@ -1729,8 +1728,9 @@ class Watch:
             said = lines if lines is not None else (line or "",)
             return (picture, said), lambda: with_note(drawn(), said, muted, bottom)
         working = self._working(self._info or {})
-        if working is None or picture[0] == "warmup" or (picture[0] == "mixer" and picture[1] not in ("stems", "game")):
-            return (picture, None), draw  # (the MIDI mixer: its names there)
+        if working is None or not (picture[0] == "song" or picture[0] == "mixer" and picture[1] in ("stems", "game")):
+            return (picture, None), draw  # (the song's screen and the stems pages alone: elsewhere the bottom row has
+            # what's being looked at: the song browsed to, the speed or section being turned, the mixer's names...)
         label, done = working
         shown = (PROGRESS, label, None if done is None else round(done * 50))  # (redrawn every 2%)
         return (picture, shown), lambda: with_progress(drawn(), label, done, muted, bottom)
@@ -1873,9 +1873,6 @@ class Watch:
             shows, lines = "loop", (*lines[:3], self._loop_said(loop))
         elif self._picture_of == "chords" and song is not None:
             shows, lines = "chords", (*lines[:3], self._chords_said(song))
-        elif song is not None and (making := self._drums_making(song)) is not None:  # (its drum part being made: how
-            # far, in the key's notes' place)
-            lines = (*lines[:3], f"Drums {making}%")
         time = f"{_time(position)} / {_time(length)}" if done is not None and position is not None and length else None
         at = self._song_at(info) if song is not None else None
         chord, tag = self._chord(song, at) if song is not None else (None, None)
@@ -2086,12 +2083,11 @@ class Watch:
         if page == "stems" and self._game_song_stems(info):  # (the game's song's parts, if Song Stems is on; its
             if self._game_stems(info) is None:               # Music, either way)
                 stems = info.get("game_stems")
-                self._say(now, lines=("Song Stems is off:", "turn it on in the mods") if stems else
-                          ("The game's song parts", "need rearmed-mods"))
+                self._say(now, line="Song Stems is off" if stems else "Needs rearmed-mods")
             return
         audio = info.get("audio") or {}
         if page == "stems" and not audio.get("made") and not audio.get("making"):  # (splitting: its progress shows)
-            self._say(now, lines=("Song not split yet:", "a pad on top splits it"))
+            self._say(now, line="Not split: tap a pad")
 
     def _mix_stems(self, event: Pad | Turn | Button | ScaleMode | Strip, info: dict[str, Any], now: float) -> None:
         """The mixer's stems page: knobs 1 to 6 the song's parts' volumes (in its own audio), 7 its Music (the
@@ -2120,7 +2116,7 @@ class Watch:
         if self._game_song_stems(info) and isinstance(event, Pad):  # (the game's song: its bass and guitar)
             stem = STEMS[event.column][0] if event.column < len(STEMS) else None
             if stem not in GAME_STEMS:
-                self._say(now, lines=("In the game's song:", "just the bass and guitar"))
+                self._say(now, line="Only bass and guitar")
                 return
             muted = self._game_muted(stem, info)
 
@@ -2166,7 +2162,7 @@ class Watch:
         if song is None:
             self._say(now, line="No song to split")
         elif not audio.get("can"):
-            self._say(now, lines=("To split songs, run", "tools/drums-setup.sh"))
+            self._say(now, line="Needs drums-setup.sh")
         elif self._try(lambda: self.gui.set_stems({"song": song["id"], "make": True})):
             self._info = {**info, "audio": {**audio, "making": True, "progress": 0.0}}  # (its progress shows at once)
 
@@ -2188,7 +2184,7 @@ class Watch:
             return
         if not audio.get("made"):
             if not audio.get("making"):  # (splitting: its progress shows)
-                self._say(now, lines=("Song not split yet:", "a pad on top splits it"))
+                self._say(now, line="Not split: tap a pad")
             return
         if encoder == CONTROLS:  # (its parts together, as the parts page's knob 8)
             volumes = {stem: min(max(self._stem_volume(stem, info) + steps * STEM_STEP, 0), 100)
@@ -2225,7 +2221,7 @@ class Watch:
             return
         stem = STEMS[encoder][0] if encoder < len(STEMS) else None
         if stem not in GAME_STEMS:
-            self._say(now, lines=("In the game's song:", "just the bass and guitar"))
+            self._say(now, line="Only bass and guitar")
             return
         level = min(max(self._game_level(stem, info) + steps * STEM_STEP, 0), 100)
         if self._try(lambda: self._game_stems_set(self.gui.set_game_stems({"part": stem, "level": level}))):
@@ -2261,12 +2257,12 @@ class Watch:
         arrangements = self._arrangements_in(info)
         if encoder == GUITAR_COLUMN and encoder >= len(arrangements):  # (no 6th arrangement)
             if info.get("mode") == "follow":  # (the game's Music: on the stems page)
-                self._say(now, lines=("The game's Music:", "▼, then knob 7"))
+                self._say(now, line="Music: ▼, then knob 7")
             return
         drummed = next((slot for slot, a in enumerate(arrangements) if a["kind"] == "drums"), None)
         if drummed is not None and not arrangements[drummed].get("made", True):  # (no volume till they're made)
             if encoder == drummed:
-                self._say(now, lines=("Drums: not made yet", "Their pad on top makes them"))
+                self._say(now, line="Drums: pad makes them")
                 return
             drummed = None
         if drummed is not None and encoder in (drummed, CONTROLS):  # (the drum part's own volume)
