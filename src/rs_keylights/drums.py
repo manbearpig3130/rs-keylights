@@ -368,11 +368,13 @@ def _ready(pcm: Path) -> float | None:
 
 def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Path | None = None,
          stems_home: Path | None = None, say: Callable[[str], None] = lambda _text: None,
-         cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None) -> list[Hit]:
+         cache: Path | None = None, progress: Callable[[float], None] = lambda _done: None,
+         parts_cache: Path | None = None) -> list[Hit]:
     """A song's drum part made (a minute or so) and kept: its audio from its archive, decoded and its drums separated
-    (drums-setup.sh's rs-stems-drums, with Song Stems' model), transcribed (ADTOF, in drums-setup.sh's Python),
-    refined, aligned to the chart and snapped to its beats. How far along it is goes to progress (0 to 1) as it
-    goes."""
+    (drums-setup.sh's rs-stems-drums, with Song Stems' model; the song split into its parts already, stems', in
+    parts_cache: its drums from there, not separated again), transcribed (ADTOF, in drums-setup.sh's Python), refined,
+    aligned to the chart and snapped to its beats. How far along it is goes to progress (0 to 1) as it goes."""
+    from . import stems  # (it uses this module)
     import numpy as np
     tools = tools or tools_dir()
     stems_home = stems_home or Path.home() / "Library" / "Application Support" / "RS Re-ARMed" / "stems"
@@ -412,22 +414,32 @@ def make(ref: ArrangementRef, beats: Sequence[float], game_dir: Path, tools: Pat
         say("decoding its audio")
         run([str(helper), "decode", str(work / "song.wem"), str(work / "song.wav")], "Decoding the song")
         progress(DECODED)
-        say("separating its drums")
-        run([str(helper), "separate", str(work / "song.wem"), "1", "drums", str(work / "rest.pcm")],
-            "Separating the drums", lambda _took: between(DECODED, SEPARATED, _ready(work / "rest.pcm")))
-        progress(SEPARATED)
+        split = stems.made(ref, parts_cache)
+        if not split:
+            say("separating its drums")
+            run([str(helper), "separate", str(work / "song.wem"), "1", "drums", str(work / "rest.pcm")],
+                "Separating the drums", lambda _took: between(DECODED, SEPARATED, _ready(work / "rest.pcm")))
         with wave.open(str(work / "song.wav")) as w:
             rate, channels = w.getframerate(), w.getnchannels()
             mix = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, channels)
-        raw = (work / "rest.pcm").read_bytes()
-        total, state = struct.unpack_from("<I", raw, 24)[0], struct.unpack_from("<I", raw, 28)[0]
-        if state != 1:
-            raise DrumsError("Separating the drums didn't finish")
-        rest = np.frombuffer(raw, dtype=np.int16, offset=64, count=total * channels).reshape(-1, channels)
-        drums = mix[:len(rest)].astype(np.int32)  # (in place from here: less memory while it's made)
-        drums -= rest
-        drums = np.clip(drums, -32768, 32767, out=drums).astype(np.int16)
-        del raw, rest, mix
+        if split:
+            say("its drums, from its parts")
+            parts = stems.load(ref, mix, parts_cache, ("drums",))
+            if parts is None:
+                raise DrumsError("The song's parts went as its drum part was made: make it again")
+            drums = parts["drums"]
+            del parts, mix
+        else:
+            raw = (work / "rest.pcm").read_bytes()
+            total, state = struct.unpack_from("<I", raw, 24)[0], struct.unpack_from("<I", raw, 28)[0]
+            if state != 1:
+                raise DrumsError("Separating the drums didn't finish")
+            rest = np.frombuffer(raw, dtype=np.int16, offset=64, count=total * channels).reshape(-1, channels)
+            drums = mix[:len(rest)].astype(np.int32)  # (in place from here: less memory while it's made)
+            drums -= rest
+            drums = np.clip(drums, -32768, 32767, out=drums).astype(np.int16)
+            del raw, rest, mix
+        progress(SEPARATED)
         with wave.open(str(work / "drums.wav"), "wb") as w:
             w.setnchannels(channels)
             w.setsampwidth(2)

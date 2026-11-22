@@ -10,7 +10,7 @@ import time
 import wave
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from . import drums
 from .library import ArrangementRef
@@ -160,10 +160,11 @@ def make(ref: ArrangementRef, game_dir: Path, tools: Path | None = None, stems_h
     _prune(cache or cache_dir(), keep=folder)
 
 
-def load(ref: ArrangementRef, mix: Any, cache: Path | None = None) -> dict[str, Any] | None:
-    """A song's parts taken out of it (SEPARATED: samples x channels, int16, as long as mix, the song's own, decoded);
-    None if they aren't made. Other, what's left, isn't kept apart: it's the song less them (mix_weights). (Used:
-    kept longer, the least played going first.)"""
+def load(ref: ArrangementRef, mix: Any, cache: Path | None = None,
+         parts: Sequence[str] = SEPARATED) -> dict[str, Any] | None:
+    """A song's parts taken out of it (SEPARATED, or those of them asked for: samples x channels, int16, as long as
+    mix, the song's own, decoded); None if they aren't made. Other, what's left, isn't kept apart: it's the song less
+    them (mix_weights). (Used: kept longer, the least played going first.)"""
     import numpy as np
     if not made(ref, cache):
         return None
@@ -184,9 +185,9 @@ def load(ref: ArrangementRef, mix: Any, cache: Path | None = None) -> dict[str, 
         return fitted
 
     with tempfile.TemporaryDirectory(prefix="rs-keylights-stems-") as work, \
-            ThreadPoolExecutor(len(SEPARATED), thread_name_prefix="rs-keylights stems") as pool:
+            ThreadPoolExecutor(len(parts), thread_name_prefix="rs-keylights stems") as pool:
         # (all at once: afconvert's one core each, about a fifth of the time)
-        reading = {stem: pool.submit(read, stem, Path(work)) for stem in SEPARATED}
+        reading = {stem: pool.submit(read, stem, Path(work)) for stem in parts}
         out = {stem: part.result() for stem, part in reading.items()}
     os.utime(folder)
     return out

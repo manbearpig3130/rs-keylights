@@ -488,7 +488,8 @@ following. It plays in time with the game, Riff Repeater and speed changes inclu
 
 **To make one**, use **Make drum part** in the song's Drums block (a minute or so, in the background), or
 `rs-keylights drums SONG` (`--again` to remake it; `--made` remakes every part made before, after an update to how
-they're made). Parts are kept in `~/Library/Caches/rs-keylights/drums/`.
+they're made). Parts are kept in `~/Library/Caches/rs-keylights/drums/`. A song already split into its parts (see
+[The song's own audio](#the-songs-own-audio)) takes its drums from there instead of separating them again.
 
 It needs `tools/drums-setup.sh` run once. The script:
 

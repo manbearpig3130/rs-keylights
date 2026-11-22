@@ -238,3 +238,74 @@ def test_a_drums_sound_chosen_on_the_device_from_elsewhere_is_chosen_again_for_t
     assert [m for m in out.sent if m[:2] == [0xB9, 44]][-2:] == [[0xB9, 44, 7], [0xB9, 44, 15]]  # (the tom's again)
     player_for([], keys, extra=drum_tracks([Hit(1.0, TOMS[2], 90)], voices, synth))  # (a new player: chosen again)
     assert (10, 44) not in synth.controls_sent
+
+
+@pytest.mark.parametrize("split", [True, False])
+def test_a_songs_drums_come_from_its_parts_once_its_split_not_separated_again(tmp_path, monkeypatch, split):
+    import json
+    import subprocess
+    import sys
+    import wave
+
+    import numpy as np
+
+    from rs_keylights import stems
+    rate = 44100
+    t = np.arange(rate // 2) / rate
+    beat = 0.2 * np.sin(2 * np.pi * 300 * t)  # (the drums: one tone; the rest another)
+    rest = (0.2 * np.sin(2 * np.pi * 700 * t) * 32767).astype(np.int16)
+    drum_tone = (np.stack([beat, beat], axis=1) * 32767).astype(np.int16)
+    song = drum_tone + np.stack([rest, rest], axis=1)
+
+    def wav(path, samples):
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(2), w.setsampwidth(2), w.setframerate(rate), w.writeframes(samples.tobytes())
+
+    tools, home = tmp_path / "tools", tmp_path / "home"
+    (tools / "venv" / "bin").mkdir(parents=True)
+    (home / "htdemucs_6s.mlmodelc").mkdir(parents=True)
+    (tools / "codebooks.bin").write_bytes(b"")
+    wav(tmp_path / "song.wav", song)
+    np.save(tmp_path / "rest.npy", np.stack([rest, rest], axis=1))
+    helper = tools / "rs-stems-drums"  # (decodes; separating, says so)
+    helper.write_text(f"""#!{sys.executable}
+import shutil, struct, sys
+import numpy as np
+args = sys.argv[1:]
+if args[0] == "decode":
+    shutil.copy({str(tmp_path / "song.wav")!r}, args[2])
+else:
+    open({str(tmp_path / "separated")!r}, "w").write("yes")
+    rest = np.load({str(tmp_path / "rest.npy")!r})
+    head = bytearray(64)
+    struct.pack_into("<III", head, 24, len(rest), 1, len(rest))
+    open(args[4], "wb").write(bytes(head) + rest.tobytes())
+""")
+    transcriber = tools / "venv" / "bin" / "python"  # (keeps what it was given; no hits)
+    transcriber.write_text(f"""#!{sys.executable}
+import shutil, sys
+import numpy as np
+shutil.copy(sys.argv[-2], {str(tmp_path / "seen.wav")!r})
+np.save(sys.argv[-1], np.zeros((50, 5), dtype=np.float32))
+""")
+    for tool in (helper, transcriber):
+        tool.chmod(0o755)
+    monkeypatch.setattr(drums, "song_audio", lambda ref, game: b"wem")
+    ref = ArrangementRef("ID", str(tmp_path / "song_m.psarc"), "songs/bin/macos/song_lead.sng", "SongKey", "Lead")
+    parts_cache = tmp_path / "parts"
+    if split:  # (its parts: the drums as AAC, as Split into parts keeps them)
+        folder = stems._folder(ref, parts_cache)
+        folder.mkdir(parents=True)
+        wav(tmp_path / "drums.wav", drum_tone)
+        subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", str(tmp_path / "drums.wav"), str(folder / "drums.m4a")],
+                       check=True)
+        for stem in stems.SEPARATED[1:]:
+            (folder / f"{stem}.m4a").write_bytes(b"")
+        (folder / "done.json").write_text(json.dumps({"version": stems.STEMS_VERSION}))
+    assert drums.make(ref, [], tmp_path, tools=tools, stems_home=home, cache=tmp_path / "made",
+                      parts_cache=parts_cache) == []
+    assert (tmp_path / "separated").exists() != split
+    with wave.open(str(tmp_path / "seen.wav")) as w:  # (the drums the transcriber had: the drum tone, either way)
+        seen = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).reshape(-1, 2).astype(np.float64)
+    error = np.sqrt(np.mean((seen - drum_tone) ** 2)) / np.sqrt(np.mean(drum_tone.astype(np.float64) ** 2))
+    assert error < 0.05
