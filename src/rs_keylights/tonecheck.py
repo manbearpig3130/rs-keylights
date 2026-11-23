@@ -355,8 +355,10 @@ def history(cache: Path | None = None) -> list[dict[str, Any]]:
     return got if isinstance(got, list) else []
 
 
-def keep(check: dict[str, Any], take: Any, rate: int = RATE, cache: Path | None = None) -> dict[str, Any]:
-    """A check kept, with its recording (16-bit WAV beside it); the oldest gone over CHECKS_MOST."""
+def keep(check: dict[str, Any], take: Any, rate: int = RATE, cache: Path | None = None,
+         anchors: Sequence[tuple[int, float | None]] = ()) -> dict[str, Any]:
+    """A check kept, with its recording (16-bit WAV beside it, and where the song was at the end of each of its
+    blocks: anchors, as JSON, to check it again); the oldest gone over CHECKS_MOST."""
     import numpy as np
     folder = cache or cache_dir()
     folder.mkdir(parents=True, exist_ok=True)
@@ -366,9 +368,13 @@ def keep(check: dict[str, Any], take: Any, rate: int = RATE, cache: Path | None 
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(np.clip(np.round(np.asarray(take) * 32767), -32768, 32767).astype(np.int16).tobytes())
+    (folder / f"{name}.json").write_text(json.dumps([[e, None if c is None else round(c, 4)] for e, c in anchors]))
     checks = [*history(cache), {**check, "recording": f"{name}.wav"}]
     for gone in checks[:-CHECKS_MOST]:
-        (folder / str(gone.get("recording", ""))).unlink(missing_ok=True)
+        if gone.get("recording"):
+            recording = folder / Path(str(gone["recording"])).name
+            recording.unlink(missing_ok=True)
+            recording.with_suffix(".json").unlink(missing_ok=True)
     checks = checks[-CHECKS_MOST:]
     temp = folder / f".checks.json.{os.getpid()}"
     temp.write_text(json.dumps(checks, indent=1))

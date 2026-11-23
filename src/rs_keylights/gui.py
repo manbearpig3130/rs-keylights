@@ -3961,6 +3961,14 @@ class Gui:
             return playing["id"], self._load(playing["id"]), None
         raise GuiError("Play a song (or follow the game) to check your tone against it")
 
+    def _preset_on(self) -> dict[str, Any]:
+        """The pedal's preset as far as it's known: the one it was switched to, else (following) the song's tone's."""
+        slot = self.pedal.slot
+        if slot is None:
+            tone = self._tone_playing() or {}
+            slot = tone.get("pedal") if isinstance(tone.get("pedal"), int) else None
+        return {"slot": slot, "name": self.pedal.name(slot) if slot is not None else ""}
+
     def tone_check_info(self) -> dict[str, Any]:
         """The tone check: recording (the song, your part, how long so far), analysing, or not; the last check's
         result, and the ones before (the latest last)."""
@@ -3996,8 +4004,7 @@ class Gui:
             tap.record(self._chart_at)
             named = next((r for r, _a in loaded if r.artist), ref)
             self._tone_check = {"state": "recording", "sid": sid, "title": named.title, "part": part,
-                                "separator": which, "tap": tap, "started": time.time(),
-                                "preset": {"slot": self.pedal.slot, "name": self.pedal.name(self.pedal.slot)}}
+                                "separator": which, "tap": tap, "started": time.time(), "preset": self._preset_on()}
         elif action in ("stop", "cancel"):
             check = self._tone_check
             if check.get("state") != "recording":
@@ -4042,9 +4049,12 @@ class Gui:
                 reference = np.frombuffer(raw, dtype=np.int16).reshape(-1, channels).mean(axis=1) / 32768.0
             result = tonecheck.analyse(take, anchors, reference.astype(np.float32), rate, start / rate, mine.notes,
                                        offset)
+            preset = check.get("preset") or {}
+            if preset.get("slot") is None:  # (not known as it started: the one the song's tone has, if it's known now)
+                preset = self._preset_on()
             kept = tonecheck.keep({"at": time.strftime("%Y-%m-%d %H:%M"), "sid": sid, "song": check["title"],
-                                   "part": check["part"], "stem": stem, "preset": check.get("preset"),
-                                   **tonecheck.as_dict(result)}, take)
+                                   "part": check["part"], "stem": stem, "preset": preset, "offset": offset,
+                                   **tonecheck.as_dict(result)}, take, anchors=anchors)
             self._tone_check = {"state": "idle", "last": kept}
         except Exception as exc:  # (said on the page)
             self._tone_check = {"state": "idle", "error": str(exc) or type(exc).__name__}

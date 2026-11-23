@@ -139,3 +139,4 @@ def test_checks_are_kept_with_their_recordings_the_oldest_going(tmp_path, monkey
         tonecheck.keep({"song": song}, np.zeros(100, np.float32), cache=tmp_path)
     assert [c["song"] for c in tonecheck.history(tmp_path)] == ["two", "three"]
     assert sorted(p.name for p in tmp_path.glob("*.wav")) == ["b.wav", "c.wav"]
+    assert sorted(p.name for p in tmp_path.glob("[abc].json")) == ["b.json", "c.json"]
