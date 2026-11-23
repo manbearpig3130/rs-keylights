@@ -110,4 +110,5 @@ def test_the_song_and_its_parts_mixed_at_their_weights_give_each_part_at_its_lev
     weights = stems.mix_weights(levels)
     mixed = song * weights["song"] + sum(each[s] * weights[s] for s in stems.SEPARATED)
     assert np.allclose(mixed, sum(each[s] * levels[s] for s in stems.STEMS))
-    assert stems.mix_weights({}) == {"song": 1.0, **{s: 0.0 for s in stems.SEPARATED}}  # (all as it is: the song)
+    assert stems.mix_weights({}) == {"song": 1.0, **{s: 0.0 for s in (*stems.SEPARATED, *stems.SIDES)}}  # (all as
+    # it is: the song)

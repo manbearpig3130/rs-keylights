@@ -28,6 +28,11 @@ from .library import ArrangementRef
 
 STEMS = ("drums", "bass", "guitar", "vocals", "piano", "other")
 SEPARATED = STEMS[:-1]  # (each taken out by the separator; other: what's left)
+SIDES = ("lead", "rhythm")  # a song's guitar parted into its lead and rhythm (sides.py: a beta feature), where
+# they're apart in its stereo: then its parts are WITH_SIDES (its keys in other: six knobs; lead and rhythm together
+# the guitar, so the song less its parts is other still, keys and all)
+WITH_SIDES = ("drums", "bass", "lead", "rhythm", "vocals", "other")
+ALL = (*STEMS, *SIDES)  # (every part a volume's kept for)
 KIT = ("kick", "snare", "toms", "hh", "ride", "crash")  # a drum part's pieces (DrumSep's, on a split server: for the
 # drum part, drums.make)
 STEMS_VERSION = 1
@@ -257,10 +262,11 @@ def decode(ref: ArrangementRef, work: Path, cache: Path | None = None, separator
 
 def mix_weights(levels: dict[str, float]) -> dict[str, float]:
     """The song and its parts taken out of it (load), as weights to mix them at for each part's level (0 to 1, by
-    STEMS: other's too): other is the song less the rest, so the song is at other's level, and each part at its own
-    less that. (The song's audio and its parts, without a seventh copy of it in memory for other.)"""
+    ALL: other's too): other is the song less the rest, so the song is at other's level, and each part at its own
+    less that. (The song's audio and its parts, without a seventh copy of it in memory for other.) Every part's
+    (those not taken out of a song: not mixed)."""
     other = levels.get("other", 1.0)
-    return {"song": other, **{stem: levels.get(stem, 1.0) - other for stem in SEPARATED}}
+    return {"song": other, **{stem: levels.get(stem, 1.0) - other for stem in ALL if stem != "other"}}
 
 
 def _run(args: list[str], env: dict[str, str], what: str, along: Callable[[float], None] | None = None) -> None:

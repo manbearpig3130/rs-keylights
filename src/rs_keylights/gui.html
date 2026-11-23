@@ -908,6 +908,21 @@
       <div class="row">
         <button id="reindex">Look for new songs</button>
       </div>
+      <details class="card-section" id="betaCard">
+        <summary>Beta features<button type="button" class="info" aria-label="About beta features"></button><span
+          class="info-text">Still being tried out: each is off until you turn it on, and what it's made (melodies,
+          lead and rhythm guitars) is kept while it's off.</span></summary>
+        <div><label><input type="checkbox" id="betaMelody"> Vocal melody</label><button type="button" class="info"
+          aria-label="About the vocal melody"></button><span class="info-text">A song's vocals as a part of their own
+          (Vocals), to play or light on the keys: their pitch tracked on the split server along the lyrics (made with
+          a BS-RoFormer split, or with the Vocal melody button). Growled vocals have no pitch to follow.</span></div>
+        <div><label><input type="checkbox" id="betaSides"> Lead and rhythm guitars apart</label><button type="button"
+          class="info" aria-label="About lead and rhythm guitars apart"></button><span class="info-text">Where a split
+          song's two guitarists sit on either side of the stereo (measured from its lead and rhythm charts, a few
+          seconds the first time), its Guitar becomes Lead and Rhythm, each with its own volume and mute, here, on the
+          Launchkey and in the game. Its keys go into Other then, to keep six parts. Songs whose guitars aren't apart
+          stay as they are.</span></div>
+      </details>
     </div>
   </section>
 </main>
@@ -3609,6 +3624,7 @@ const NO_TONES = {tone: null, mute_tone: null, pinch_tone: null};
 // vocals), played and lit or not as the others are. POST /api/melody
 function renderMelodyButton(s) {
   const m = s.melody || {}, button = $("makeMelody");
+  button.hidden = !m.beta;  // (a beta feature: off, no button)
   button.disabled = !!m.making || !m.can;
   button.textContent = m.making ? `Vocal melody ${Math.round((m.progress || 0) * 100)}%` :
     m.made ? "Melody again" : "Vocal melody";
@@ -3767,9 +3783,12 @@ async function exportSong(what) {
 // showOptions shows them), and its parts (stems): split from it (Split into parts: a minute or two, in the
 // background), then each at a volume of its own, a slider and a mute each (every song's: mute the band, keep the
 // vocals...). POST /api/stems
-const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys", other: "Other"};
+const STEM_NAMES = {drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", piano: "Keys", other: "Other",
+                    lead: "Lead", rhythm: "Rhythm"};
 const STEM_TITLES = {other: "Everything else: ambience, effects, keys the separator didn't call keys, and what it left " +
-                     "of the rest (the song less the parts)"};
+                     "of the rest (the song less the parts)",
+                     lead: "The lead guitar: the guitar on its side of the stereo (a beta feature)",
+                     rhythm: "The rhythm guitar: the guitar on its side of the stereo (a beta feature)"};
 let stemsPoll = null, audioShown = "";
 function renderAudioCard(s) {
   const card = $("audioCard");
@@ -3792,6 +3811,12 @@ function renderAudioCard(s) {
     chosen === "roformer" ? "To split songs with BS-RoFormer SW, run tools/roformer-setup.sh in rs-keylights' folder." :
     "To split songs into parts, run tools/drums-setup.sh again (it now takes out the vocals and keys too).";
   if (d.error) $("audioPartsNote").textContent = `Couldn't split it: ${d.error}`;
+  const sides = d.made && d.sides && d.sides.state;  // (its lead and rhythm guitars apart: a beta feature)
+  const sidesSaid = sides === "measuring" ? "Finding where its lead and rhythm guitars sit…" :
+    sides === "together" ? "Its lead and rhythm guitars aren't on separate sides: one Guitar." :
+    sides === "no charts" ? "It hasn't both a lead and a rhythm chart: one Guitar." :
+    sides === "failed" ? "Couldn't measure its lead and rhythm guitars: one Guitar." : "";
+  if (sidesSaid) $("audioPartsNote").textContent = [$("audioPartsNote").textContent, sidesSaid].filter(Boolean).join(" ");
   $("audioPartsNote").parentElement.hidden = !$("audioPartsNote").textContent;  // (nothing to say: no room taken)
   const server = d.server, there = server && server.ok;  // (a split server: BS-RoFormer SW there, if it answers)
   const separator = $("audioSeparator");
@@ -3842,6 +3867,7 @@ function renderAudioCard(s) {
     const label = document.createElement("label");
     label.textContent = STEM_NAMES[stem] || stem;
     if (STEM_TITLES[stem]) label.title = STEM_TITLES[stem];
+    if (stem === "other" && d.names.includes("lead")) label.title += "; its keys too, beside its lead and rhythm guitars";
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
@@ -4780,6 +4806,8 @@ async function loadSettings() {
   showToneKinds(s.tone_map);
   showOutputs(s);
   $("gameDir").textContent = s.game_dir;
+  $("betaMelody").checked = !!(s.beta && s.beta.melody);
+  $("betaSides").checked = !!(s.beta && s.beta.sides);
   const phone = $("phone");
   if (s.phone.length) {
     phone.innerHTML = s.phone.map((u) => `<span class="phone-link">${esc(u)}</span>`).join("<br>") +
@@ -5046,6 +5074,9 @@ for (const section of document.querySelectorAll("#side details.card-section[id]"
 $("followOffset").addEventListener("change", () => changeFollow({offset_ms: Number($("followOffset").value) || 0}));
 $("followShowKey").addEventListener("change", () => changeFollow({show_key: $("followShowKey").checked}));
 $("launchkey").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
+for (const [id, name] of [["betaMelody", "melody"], ["betaSides", "sides"]]) {  // (beta features: on or off; the
+  $(id).addEventListener("change", () => act(() => api("/api/settings", {beta: {[name]: $(id).checked}})));  // song
+}  // shown again with it, as its state's play_version changes)
 $("ring").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 $("techniques").addEventListener("change", () => act(() => api("/api/settings", settingsRequest())));
 for (const input of pinchFields()) {

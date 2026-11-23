@@ -2359,6 +2359,29 @@ def test_following_a_split_song_whose_parts_play_in_the_game_the_stems_page_has_
     assert shown == mixer_picture(names, volumes, 6, muted=False, quiet=quiet, tops=[100] * 7, divider=6).data()
 
 
+def test_a_song_whose_guitar_is_its_lead_and_rhythm_apart_has_a_column_each_on_the_stems_page():
+    watch, gui, launchkey, clock = watching("play")
+    gui.info["song"] = gui.song
+    gui.audio.update(made=True, names=["drums", "bass", "lead", "rhythm", "vocals", "other"])  # (a beta feature)
+    watch.step()
+    launchkey.queued = [Button(105), Button(52)]  # Func, ▼: the stems page
+    clock.now = 0.5
+    watch.step()
+    launchkey.queued = [Turn(2, -5), Pad(0, 3)]  # knob 3: the lead down; pad 4: the rhythm muted
+    clock.now = 1.0
+    watch.step()
+    assert gui.audio["volumes"]["lead"] == 100 - 5 * watch_module.STEM_STEP and gui.audio["mutes"]["rhythm"]
+    assert not gui.audio["mutes"].get("guitar") and gui.audio["volumes"].get("guitar", 100) == 100  # (as it was)
+    shown = pads(launchkey)
+    assert shown[(0, 2)] == watch_module.COLOURS["lead"][1]  # (the lead's colour, the rhythm's dimmed)
+    assert shown[(0, 3)] == tuple(round(c * watch_module.MUTED_LEVEL) for c in watch_module.COLOURS["rhythm"][1])
+    names = ["Dr", "Bs", "Ld", "Rh", "Vx", "Oth", "Music"]
+    volumes = [100, 100, 100 - 5 * watch_module.STEM_STEP, 100, 100, 100, gui.audio["volume"]]
+    assert screens(launchkey)[-1] == mixer_picture(names, volumes, 3, muted=False,  # (the rhythm's pad last: its)
+                                                   quiet=[False, False, False, True, False, False, not gui.audio["on"]],
+                                                   tops=[100] * 7, divider=6).data()
+
+
 def test_play_and_stop_leave_the_mixer_up_and_stop_drops_a_move_not_made_yet():
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song

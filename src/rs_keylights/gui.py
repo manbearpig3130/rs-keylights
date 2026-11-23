@@ -39,7 +39,7 @@ from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, Planne
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import chartsync, gameparts, gamestems, melody, splitserver, stems, warmup
+from . import chartsync, gameparts, gamestems, melody, sides, splitserver, stems, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -76,9 +76,9 @@ SLOTS = 8  # a song's arrangements with volumes of their own, by their place in 
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
 GAME_PARTS_AGAIN = 2.0  # seconds before the song's parts are handed to the game's mod again, if it's lost them
 GAME_PART_LABELS = {"drums": "DRUMS", "bass": "BASS", "guitar": "GUITAR", "vocals": "VOCALS", "piano": "KEYS",
-                    "other": "OTHER"}  # (the game's MIXER's stem page's columns, the song's parts)
+                    "other": "OTHER", "lead": "LEAD", "rhythm": "RHYTHM"}  # (the game's MIXER's stem page's columns, the song's parts)
 GAME_PART_KINDS = {"drums": "drums", "bass": "bass", "guitar": "guitar", "vocals": "vocals", "piano": "keys",
-                   "other": "other"}  # (their colours there)
+                   "other": "other", "lead": "lead", "rhythm": "rhythm"}  # (their colours there)
 GAME_MIXER_SCREEN = "RSKeylights_Mixer"  # the riffloop mod's MIXER in the game (from Learn a Song's pause menu: the
 # Launchkey's mixer page, its own movie)
 GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Stems", "RSKeylights_Tones")  # (its STEM MIXER: the MIXER
@@ -88,6 +88,8 @@ GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
 GAME_KEYS_AT_ONCE = 300  # the song list's keys asked for so many at a time
 PEDAL_FAVOURITES, PEDAL_FAVOURITES_MOST = (51, 187), 8  # the pedal presets the Launchkey's pad goes through
+BETAS = ("melody", "sides")  # beta features, each off till it's turned on (the rs-keylights card): a song's vocal
+# melody as a part of its own (melody.py), and its guitar's lead and rhythm apart (sides.py)
 WARM_AROUND = (0, 1, -1, 2, -2, 3, -3)  # the songs whose art gets ready around the one browsed or pointed at
 ARRANGEMENT_ID = re.compile(r"[0-9A-Za-z-]{1,64}")
 KEY_LETTERS = "abcdefghjkmnpqrstuvwxyz23456789"  # easy to type on a phone: no 0/o or 1/l/i
@@ -442,15 +444,15 @@ def _changed_options(options: dict[str, Any], change: dict[str, Any]) -> dict[st
         out["audio_volume"] = int(_number(change["audio_volume"], "the song's volume", 0, 100))
     if "stem_volumes" in change:  # (each of the song's parts', 0 to 100: those given)
         given = change["stem_volumes"]
-        if not isinstance(given, dict) or any(k not in stems.STEMS for k in given):
-            raise GuiError(f"Expected the parts' volumes ({', '.join(stems.STEMS)})")
-        out["stem_volumes"] = {**{s: 100 for s in stems.STEMS}, **out.get("stem_volumes", {}),
+        if not isinstance(given, dict) or any(k not in stems.ALL for k in given):
+            raise GuiError(f"Expected the parts' volumes ({', '.join(stems.ALL)})")
+        out["stem_volumes"] = {**{s: 100 for s in stems.ALL}, **out.get("stem_volumes", {}),
                                **{k: int(_number(v, f"the {k}' volume", 0, 100)) for k, v in given.items()}}
     if "stem_mutes" in change:  # (and each one muted or not: its volume kept)
         given = change["stem_mutes"]
-        if not isinstance(given, dict) or any(k not in stems.STEMS for k in given):
-            raise GuiError(f"Expected the parts muted ({', '.join(stems.STEMS)})")
-        out["stem_mutes"] = {**{s: False for s in stems.STEMS}, **out.get("stem_mutes", {}),
+        if not isinstance(given, dict) or any(k not in stems.ALL for k in given):
+            raise GuiError(f"Expected the parts muted ({', '.join(stems.ALL)})")
+        out["stem_mutes"] = {**{s: False for s in stems.ALL}, **out.get("stem_mutes", {}),
                              **{k: bool(v) for k, v in given.items()}}
     if "separator" in change:  # (which splits a song into its parts, and whose parts play: the other's if not made)
         if change["separator"] not in stems.SEPARATORS:
@@ -572,6 +574,8 @@ class Gui:
         # played or followed), and the songs being measured
         self._chart_offsets: dict[str, float] = {}
         self._measuring: set[str] = set()
+        self._sides_measuring: dict[str, str] = {}  # (songs whose guitar's being measured for its lead and rhythm:
+        # "measuring", or "failed": not again till rs-keylights starts again)
         self._melody_making: dict[str, dict[str, Any]] = {}  # (a song's vocal melody being made: its step, how far,
         # or why it failed)
         self._listener: Listener | None = None  # the guitar heard (listen), its notes lighting the keys
@@ -652,6 +656,7 @@ class Gui:
                                          "warmup_what": "routine",  # (the warm-up's drills, or one on its own)
                                          "warmup_tuning": warmup.TUNINGS[0][0],
                                          "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
+                                         "beta": {name: False for name in BETAS},  # (beta features: each on or off)
                                          "split_server": None}  # (another computer splitting songs with
         # BS-RoFormer SW, tools/rs-keylights-split-server.py: {"url", "key"})
         self._server_seen: tuple[float, dict[str, Any]] | None = None  # (it, as last asked: when, and what it said)
@@ -663,8 +668,8 @@ class Gui:
         # Playing songs: the options, the song picked, and each song's parts, lit keys, tones and start
         self.play_options: dict[str, Any] = {"speed": 1.0, "real_pitch": True, "silent": False, "song": None,
                                              "audio": False, "audio_volume": AUDIO_VOLUME, "audio_device": None,
-                                             "stem_volumes": {stem: 100 for stem in stems.STEMS},
-                                             "stem_mutes": {stem: False for stem in stems.STEMS},
+                                             "stem_volumes": {stem: 100 for stem in stems.ALL},
+                                             "stem_mutes": {stem: False for stem in stems.ALL},
                                              "separator": stems.ROFORMER}  # (real pitch: the notes as they sound on
         # the guitar, at first)
         self.song_settings: dict[str, dict[str, Any]] = {}
@@ -713,6 +718,10 @@ class Gui:
             self.settings.update({k: saved[k] for k in self.settings if k in saved})
             if not _split_server_ok(self.settings["split_server"]):
                 self.settings["split_server"] = None
+            try:
+                self.settings["beta"] = _betas({}, self.settings["beta"])
+            except GuiError:
+                self.settings["beta"] = {name: False for name in BETAS}
             try:
                 self.settings["volumes"] = _volumes(self.settings["volumes"])
                 self.settings["keys_volume"] = int(_number(self.settings["keys_volume"], "volume", 0, 127))
@@ -1589,7 +1598,7 @@ class Gui:
                 audio.volume = options["audio_volume"] / 100
             if audio is not None and changed & {"stem_volumes", "stem_mutes"} and len(audio.weights) > 1:  # (heard
                 # at once; a song not split, the song alone: as it is)
-                audio.weights.update(stems.mix_weights(_stem_weights(options, stems.STEMS)))
+                audio.weights.update(stems.mix_weights(_stem_weights(options, stems.ALL)))
             if changed & {"stem_volumes", "stem_mutes"} and self._game_parts is not None:  # (the game's song's, at once)
                 self._game_parts_gains()
             if isinstance(session, Playback) and session.running and self._playing:
@@ -1833,13 +1842,15 @@ class Gui:
         making = self._melody_making.get(sid, {})
         return {"made": notes is not None, "notes": len(notes or []), "making": making.get("step"),
                 "progress": making.get("progress") if making.get("step") else None, "error": making.get("error"),
-                "can": self.settings["split_server"] is not None}
+                "can": self.settings["split_server"] is not None, "beta": self._beta("melody")}
 
     def set_melody(self, body: dict[str, Any]) -> dict[str, Any]:
         """A song's vocal melody made ("make": again, if it is), in the background (a minute or so: on the split
         server); once it's made it's one of the song's parts (its vocals), played or not as the others are."""
         sid = str(body.get("song", ""))
         loaded = self._load(sid)
+        if body.get("make") and not self._beta("melody"):
+            raise GuiError("The vocal melody is a beta feature: turn it on in the rs-keylights card")
         if body.get("make"):
             with self._lock:
                 if self._melody_making.get(sid, {}).get("step"):
@@ -1984,7 +1995,7 @@ class Gui:
                 loaded = self._load(sid)
                 named = next((r for r, _a in loaded if r.artist), loaded[0][0])
                 samples, parts, rate = self._song_samples(sid, named)
-                weights = stems.mix_weights(_stem_weights(self.play_options, stems.STEMS)) if parts else None
+                weights = stems.mix_weights(_stem_weights(self.play_options, stems.ALL)) if parts else None
                 audio = SongAudio({"song": samples, **parts} if parts else samples, rate, where,
                                   self.play_options["audio_volume"] / 100,
                                   stream_factory=self._audio_stream, weights=weights, search=samples)
@@ -2004,14 +2015,64 @@ class Gui:
         """A song's audio, decoded, and its parts if they're made (the separator chosen's; not made, the other's):
         the last song's kept, played again, it's there."""
         which = self._parts_by(ref)
+        names = self._part_names(ref, which)
         kept = self._audio_kept
-        if kept is not None and kept[0] == sid and kept[4] == which:
+        if kept is not None and kept[0] == sid and kept[4] == ((which, names) if which else None):
             return kept[1], kept[2], kept[3]
         self._audio_kept = None  # (its memory back first)
         samples, rate = song_samples(ref, self.index.game_dir)
-        parts = stems.load(ref, samples, separator=which) if which else None
-        self._audio_kept = (sid, samples, parts, rate, which if parts is not None else None)
+        parts = stems.load(ref, samples, separator=which, parts=[n for n in names if n != "other"]) if which else None
+        self._audio_kept = (sid, samples, parts, rate, (which, names) if parts is not None else None)
         return samples, parts, rate
+
+    def _part_names(self, ref: ArrangementRef, which: str | None) -> tuple[str, ...]:
+        """A split song's parts (stems.STEMS; its guitar's lead and rhythm apart, a beta feature, if they're on
+        either side of its stereo: stems.WITH_SIDES)."""
+        return stems.WITH_SIDES if which and self._beta("sides") and sides.made(ref, which) else stems.STEMS
+
+    def _sides_info(self, sid: str, ref: ArrangementRef, which: str | None) -> dict[str, Any] | None:
+        """Whether a split song's guitar is its lead and rhythm apart (a beta feature: none, if it's off), for the
+        page: measured ("apart" or not, how far to each side), being measured (in the background, the first time:
+        a few seconds), or not to be (no lead and rhythm charts)."""
+        if not which or not self._beta("sides"):
+            return None
+        found = sides.kept(ref, which)
+        if found is not None:
+            return {"state": "apart" if found.apart else "together", "lead": found.lead, "rhythm": found.rhythm}
+        guitars = self._guitar_charts(sid)
+        if guitars is None:
+            return {"state": "no charts"}
+        with self._lock:
+            if sid in self._sides_measuring:
+                return {"state": self._sides_measuring[sid]}
+            self._sides_measuring[sid] = "measuring"
+
+        def run() -> None:
+            try:
+                sides.make(ref, which, guitars[0], guitars[1], self._chart_offsets.get(sid, 0.0))
+                failed = False
+            except Exception:  # (its parts gone meanwhile, say: one guitar, as it is)
+                failed = True
+            with self._lock:
+                if failed:
+                    self._sides_measuring[sid] = "failed"
+                else:
+                    self._sides_measuring.pop(sid, None)
+                self.play_version += 1
+                self._splits_done += 1  # (following it: its parts to the game's song again)
+                again = self._playing is not None and self._playing["id"] == sid and self._song_audio is not None
+            if again and self._beta("sides") and sides.made(ref, which):
+                self._audio_on(sid)  # (its lead and rhythm, from now)
+
+        threading.Thread(target=run, name="rs-keylights sides", daemon=True).start()
+        return {"state": "measuring"}
+
+    def _guitar_charts(self, sid: str) -> tuple[Arrangement, Arrangement] | None:
+        """A song's lead and rhythm charts (the first of each), or None if it hasn't both."""
+        loaded = self._load(sid)
+        lead = next((a for r, a in loaded if r.part == "lead"), None)
+        rhythm = next((a for r, a in loaded if r.part == "rhythm"), None)
+        return (lead, rhythm) if lead is not None and rhythm is not None else None
 
     def _parts_by(self, ref: ArrangementRef) -> str | None:
         """Whose parts of a song play: the separator chosen's, else the other's (none made: None)."""
@@ -2032,11 +2093,14 @@ class Gui:
         can = {s: stems.can_make(separator=s) or (s == stems.ROFORMER and self.settings["split_server"] is not None)
                for s in stems.SEPARATORS}  # (BS-RoFormer SW: here, or on a split server)
         offset = self.chart_offset(sid)  # (measured, the first time: the page told once it is)
-        return {"made": bool(split), "made_by": split, "by": self._parts_by(ref), "separator": chosen,
+        which = self._parts_by(ref)
+        return {"made": bool(split), "made_by": split, "by": which, "separator": chosen,
+                "sides": self._sides_info(sid, ref, which),
                 "chart_offset": round(offset * 1000) if offset else None,
                 "making": bool(making.get("making")), "making_by": making.get("separator"),
                 "progress": making.get("progress"), "waiting": bool(making.get("making") and making.get("waiting")),
-                "error": making.get("error"), "can": can[chosen], "can_by": can, "names": list(stems.STEMS),
+                "error": making.get("error"), "can": can[chosen], "can_by": can,
+                "names": list(self._part_names(ref, which)),
                 "separators": [{"id": s, "name": stems.SEPARATOR_NAMES[s]} for s in stems.SEPARATORS],
                 "server": self.split_server_info()}
 
@@ -2140,6 +2204,7 @@ class Gui:
         return {"on": bool(options["audio"]), "volume": int(options["audio_volume"]),
                 "chart_offset": round(offset * 1000) if offset else None,
                 "volumes": dict(options["stem_volumes"]), "mutes": dict(options["stem_mutes"]),
+                "names": split.get("names") or list(stems.STEMS),
                 "made": bool(split.get("made")), "making": bool(split.get("making")),
                 "waiting": bool(split.get("waiting")), "progress": split.get("progress"), "can": bool(split.get("can")), "there": drums.can_decode()}
 
@@ -2185,7 +2250,7 @@ class Gui:
             try:
                 server = self.settings["split_server"] if separator == stems.ROFORMER else None
                 pieces = stems.make(ref, self.index.game_dir, progress=far, separator=separator, server=server,
-                                    kit_out=kit, melody=True)
+                                    kit_out=kit, melody=self._beta("melody"))
                 self._splitting[sid] = {"making": False, "progress": None, "error": None}
                 if kit is not None and "melody" in (pieces or []):  # (its vocals' melody too: made into its own)
                     self._melody_from_split(sid, ref, kit / "melody.json")
@@ -2999,11 +3064,13 @@ class Gui:
         song's bass and guitar (rearmed-mods' Song Stems: the part played taken out, at its level), as the Launchkey's
         stems page has them (knobs 2 and 3). The one not played waits its turn (":wait"); without Song Stems on, both
         off (":off")."""
-        if self._game_parts is not None:
+        game_parts = self._game_parts
+        if game_parts is not None:
             options = self.play_options
             return tuple((f"p{stem}", float(options["stem_volumes"].get(stem, 100)),
                           bool(options["stem_mutes"].get(stem)), GAME_PART_LABELS[stem], -1,
-                          f"stem:{GAME_PART_KINDS[stem]}", 8 + column) for column, stem in enumerate(stems.STEMS))
+                          f"stem:{GAME_PART_KINDS[stem]}", 8 + column)
+                         for column, stem in enumerate(game_parts.get("shown") or stems.STEMS))
         stems_info = self.game_stems_info()
         return self._song_stem_rows(parts, stems_info)
 
@@ -3077,14 +3144,15 @@ class Gui:
                 self.toggle_sound()
             elif key == "smaster" and value == "mute" and self._game_parts is not None:  # (the song's parts, all
                 mutes = self.play_options["stem_mutes"]                                     # muted or back)
-                muting = not all(mutes.get(stem) for stem in stems.STEMS)
-                self.set_play_options({"stem_mutes": {stem: muting for stem in stems.STEMS}})
+                shown = (self._game_parts or {}).get("shown") or stems.STEMS
+                muting = not all(mutes.get(stem) for stem in shown)
+                self.set_play_options({"stem_mutes": {stem: muting for stem in shown}})
             elif key == "smaster" and value == "mute":  # (the stem mixer's: its parts, as the Mute pad there)
                 try:
                     self.toggle_game_stems()
                 except GuiError:
                     pass
-            elif key[:1] == "p" and key[1:] in stems.STEMS:  # (a part of the song's in the game's song: as the
+            elif key[:1] == "p" and key[1:] in stems.ALL:  # (a part of the song's in the game's song: as the
                 stem = key[1:]                                 # Launchkey's stems page)
                 if value == "mute":
                     self.set_play_options({"stem_mutes": {stem: not self.play_options["stem_mutes"].get(stem)}})
@@ -3181,7 +3249,7 @@ class Gui:
         and bass put at 100 meanwhile (it changes the song too). A song not split (or none): none. The mod lost them
         (loaded again, the game started again): handed to it again."""
         sid = followed["id"] if followed else None
-        wanted = (sid, self.play_options["separator"], self._splits_done) if sid else None
+        wanted = (sid, self.play_options["separator"], self._splits_done, self._beta("sides")) if sid else None
         if wanted != self._game_parts_wanted:
             self._game_parts_wanted = wanted
             if wanted is None:
@@ -3211,7 +3279,8 @@ class Gui:
                     self._game_parts_error = None
                     self._game_parts_off()
                     return
-                path = gameparts.path_for(ref, which)
+                names = self._part_names(ref, which)
+                path = gameparts.path_for(ref, which, sides=names == stems.WITH_SIDES)
                 file_id, data = drums.song_audio_file(ref, self.index.game_dir)
                 if file_id is None:
                     raise GuiError("The song's audio has no file ID the game streams it by")
@@ -3219,21 +3288,23 @@ class Gui:
                 del data
                 head = gameparts.header(path)
                 if head is not None and head["file_id"] == file_id and head["rate"] == rate:
-                    names = head["names"]  # (made before: there at once)
+                    mixed = head["names"]  # (made before: there at once)
                 else:
                     with tempfile.TemporaryDirectory(prefix="rs-keylights-game-parts-") as work:
-                        wavs = stems.decode(ref, Path(work), separator=which)
+                        wavs = stems.decode(ref, Path(work), separator=which,
+                                            parts=[n for n in names if n != "other"])
                         if wavs is None:
                             self._game_parts_off()
                             return
-                        names = gameparts.write(path, file_id, rate, wavs)
+                        mixed = gameparts.write(path, file_id, rate, wavs)
             except Exception as exc:  # (said on the page; the game's song as it is)
                 self._game_parts_error = f"The song's parts in the game: {exc}"
                 self._game_parts_off()
                 return
             if wanted != self._game_parts_wanted:
                 return
-            parts = {"sid": sid, "path": str(path), "file_id": file_id, "names": names, "by": which}
+            parts = {"sid": sid, "path": str(path), "file_id": file_id, "names": mixed, "by": which,
+                     "shown": list(names)}  # (names: those in its file, mixed; shown: the stem mixer's)
             self._game_parts, self._game_parts_error = parts, None
             self._song_stems_aside()
             self._game_parts_hand(parts)
@@ -3250,7 +3321,7 @@ class Gui:
         playing's, the same as the song's audio here)."""
         parts = self._game_parts
         if parts is not None:
-            self._riff_loop.kgains(gameparts.weights(_stem_weights(self.play_options, stems.STEMS), parts["names"]))
+            self._riff_loop.kgains(gameparts.weights(_stem_weights(self.play_options, stems.ALL), parts["names"]))
 
     def _game_parts_off(self) -> None:
         """None of the song's parts in the game's song (and Song Stems' levels back)."""
@@ -3953,10 +4024,34 @@ class Gui:
         """The arrangements of a song with notes (its vocal melody, once it's made), lead first."""
         return sorted((r for r in self.index.of_song(ref) if self._playable(r)), key=part_order)
 
-    @staticmethod
-    def _playable(ref: ArrangementRef) -> bool:
-        """An arrangement with notes to play: a vocals part too, once its melody's made (melody)."""
-        return ref.part not in NO_NOTES or (ref.part == "vocals" and melody.kept(ref) is not None)
+    def _playable(self, ref: ArrangementRef) -> bool:
+        """An arrangement with notes to play: a vocals part too, once its melody's made (melody), if the vocal melody
+        (a beta feature) is on."""
+        return ref.part not in NO_NOTES or (ref.part == "vocals" and self._beta("melody") and
+                                            melody.kept(ref) is not None)
+
+    def _beta(self, name: str) -> bool:
+        """Whether a beta feature's on (BETAS)."""
+        return bool((self.settings.get("beta") or {}).get(name))
+
+    def _betas_changed(self, were: dict[str, bool], now: dict[str, bool]) -> None:
+        """Beta features turned on or off: the songs' parts read again (the vocal melody among them, or not), the
+        song playing's audio with its guitar as one or its lead and rhythm, and what plays (or follows) goes on with
+        them."""
+        with self._lock:
+            self._loaded.clear()
+            self.play_version += 1
+            session = self._session
+        playing = self._playing["id"] if self._playing else None
+        try:
+            if isinstance(session, Following):
+                self._follow_on(session)
+            elif playing:
+                self._play_on(playing)
+                if were.get("sides") != now.get("sides") and self._song_audio is not None:
+                    self._audio_on(playing)
+        except Exception:  # (the song stopped meanwhile)
+            pass
 
     @staticmethod
     def arrangement_of(ref: ArrangementRef) -> Arrangement:
@@ -4291,6 +4386,7 @@ class Gui:
         if most is not None and listen_channel > most:
             raise GuiError(f"{listen_device} has {most} inputs")
         backup = str(body.get("pedal_backup", self.settings["pedal_backup"]) or "").strip()
+        beta = _betas(self.settings["beta"], body.get("beta") or {})
         favourites = _favourites(body.get("pedal_favourites", self.settings["pedal_favourites"]))
         asked, known = _recalled(self.settings["outputs"], body.get("outputs") or {},
                                  self.settings.get("outputs_known"))
@@ -4311,7 +4407,8 @@ class Gui:
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        outputs_known=known,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, listen_channel=listen_channel, pedal_backup=backup,
-                       pedal_favourites=favourites, pinch=pinch)
+                       pedal_favourites=favourites, pinch=pinch, beta=beta)
+        betas_were = self.settings["beta"]
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
         self.settings.update(changed)
@@ -4323,6 +4420,8 @@ class Gui:
             if isinstance(session, (Playback, Following)) and session.running:
                 session.retime_lights(*self._light_timing())
         self.listen_now()  # (the guitar heard, or not)
+        if beta != betas_were:
+            self._betas_changed(betas_were, beta)
         if (ring, tone_changes, tone_map, played, outputs, overlap, pinch) != sounded:  # (the notes ringing, tone
             # changes, techniques, other MIDI devices and pinch harmonics: at once)
             if isinstance(session, Following):
@@ -4607,6 +4706,13 @@ def _warmup_speeds(value: Any) -> dict[str, int]:
         return {}
     drills = {d.key: d for d in warmup.routine()}
     return {k: v for k, v in value.items() if k in drills and warmup.kept_speed(drills[k], v) == v}
+
+
+def _betas(were: dict[str, Any], given: Any) -> dict[str, bool]:
+    """The beta features on or off (BETAS): as they were, those given changed."""
+    if not isinstance(given, dict) or any(k not in BETAS for k in given):
+        raise GuiError(f"Expected beta features ({', '.join(BETAS)}) on or off")
+    return {name: bool(given.get(name, (were or {}).get(name, False))) for name in BETAS}
 
 
 def _favourites(value: Any) -> list[int]:

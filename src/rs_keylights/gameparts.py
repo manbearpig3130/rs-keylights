@@ -22,7 +22,8 @@ MAGIC = b"RSKPARTS"
 VERSION = 1
 HEADER = 64
 MOST = 6  # parts a file has at most (the mod's)
-NAMES = {"drums": b"drum", "bass": b"bass", "guitar": b"guit", "vocals": b"voca", "piano": b"keys"}
+NAMES = {"drums": b"drum", "bass": b"bass", "guitar": b"guit", "vocals": b"voca", "piano": b"keys", "lead": b"lead",
+         "rhythm": b"rhyt"}  # (lead and rhythm: its guitar parted, sides.py)
 SILENT = 256  # a part never louder than this (of 32767: -42 dB) is silent: left out (a separator leaves a part a
 # song hasn't at a whisper, its loudest about -53 dB: BS-RoFormer SW's piano in Blackwater Park)
 CHUNK = 1 << 18  # frames written at a time (the file made a piece at a time: no second copy of the song in memory)
@@ -32,9 +33,9 @@ def folder() -> Path:
     return stems.cache_dir().parent / "game-parts"
 
 
-def path_for(ref: ArrangementRef, separator: str) -> Path:
-    """Where a song's parts by a separator are kept for the game."""
-    return folder() / f"{Path(ref.archive).name}#{ref.song_key}@{separator}.pcm"
+def path_for(ref: ArrangementRef, separator: str, sides: bool = False) -> Path:
+    """Where a song's parts by a separator are kept for the game (sides: its guitar as its lead and rhythm)."""
+    return folder() / f"{Path(ref.archive).name}#{ref.song_key}@{separator}{'+sides' if sides else ''}.pcm"
 
 
 def wem_format(data: bytes) -> tuple[int, int]:
@@ -79,7 +80,7 @@ def write(path: Path, file_id: int, rate: int, wavs: dict[str, Path]) -> list[st
 
     import numpy as np
     with ExitStack() as stack:
-        opened = {name: stack.enter_context(wave.open(str(wavs[name]))) for name in stems.SEPARATED if name in wavs}
+        opened = {name: stack.enter_context(wave.open(str(wavs[name]))) for name in wavs if name in NAMES}
         if not opened:
             raise ValueError("No parts to write")
 

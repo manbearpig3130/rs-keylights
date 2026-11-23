@@ -230,6 +230,7 @@ def test_settings_are_kept(server, tmp_path):
                                                  "warmup_shown": True, "warmup_ladder": True, "warmup_what": "routine",
                                                  "warmup_tuning": "E standard",
                                                  "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
+                                                 "beta": {"melody": False, "sides": False},
                                                  "split_server": None}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
@@ -1720,14 +1721,14 @@ def test_a_songs_parts_are_split_and_each_plays_at_a_volume_of_its_own(server, m
                              "can_by": {"roformer": False, "demucs": False}, "names": list(stems.STEMS),
                              "separators": [{"id": "roformer", "name": "BS-RoFormer SW"},
                                             {"id": "demucs", "name": "Demucs"}], "server": None,
-                             "chart_offset": None}
+                             "chart_offset": None, "sides": None}
     made, loaded = [], []  # (the separators it's split by; whose parts are read)
     monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None, melody=False:
                         made.append(separator) or progress(1.0) or [])
     monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator in made)
     mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
-    monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None, separator="demucs": loaded.append(separator)
-                        or {s: samples // 6 for s in stems.STEMS} if separator in made else None)
+    monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None, separator="demucs", parts=stems.SEPARATED:
+                        loaded.append(separator) or {s: samples // 6 for s in parts} if separator in made else None)
     monkeypatch.setattr(gui_module, "song_samples", lambda ref, game: (mix, 44100))
 
     class Stream:
@@ -2115,7 +2116,7 @@ def test_following_a_split_song_its_parts_play_in_the_games_song_at_the_stem_mix
     game.kmix_moved = {"smaster": "mute"}  # (MASTER's pad: all of them muted)
     with gui._game_mixer_lock:
         gui._game_mixer_apply()
-    assert all(gui.play_options["stem_mutes"].values()) and game.gains[0] == 0.0
+    assert all(gui.play_options["stem_mutes"][s] for s in stems.STEMS) and game.gains[0] == 0.0
     game.parts_id = 0  # (the mod loaded again: lost them; handed to it again)
     gui._game_parts_sent = -math.inf
     sent = len(game.sent)
@@ -2264,7 +2265,10 @@ def test_a_songs_vocal_melody_once_made_is_its_vocals_part_off_till_its_turned_o
     sid = next(s["id"] for s in call(server, "/api/library")[1]["songs"] if s["song"] == "Sung")
     assert [p["part"] for p in gui.song(sid)["parts"]] == ["lead"]  # (no melody yet: its vocals, just lyrics)
     assert gui.song(sid)["melody"] == {"made": False, "notes": 0, "making": None, "progress": None, "error": None,
-                                       "can": False}
+                                       "can": False, "beta": False}
+    status, said = call(server, "/api/melody", {"song": sid, "make": True})  # (a beta feature, off: not made)
+    assert status == 400 and "beta" in said["error"]
+    call(server, "/api/settings", {"beta": {"melody": True}})
     info = call(server, "/api/melody", {"song": sid, "make": True})[1]  # (no split server: why not, said)
     assert wait_for(lambda: gui.melody_info(sid), lambda m: m["error"] is not None)["error"].startswith(
         "A vocal melody needs a split server")
@@ -2274,6 +2278,10 @@ def test_a_songs_vocal_melody_once_made_is_its_vocals_part_off_till_its_turned_o
     parts = gui.song(sid)["parts"]
     assert [(p["part"], p["kind"], p["play"], p["lights"]) for p in parts] == [("lead", "lead", True, 1),
                                                                              ("vocals", "vocals", False, 0)]
+    call(server, "/api/settings", {"beta": {"melody": False}})  # (off: its melody kept, not a part)
+    assert [p["part"] for p in gui.song(sid)["parts"]] == ["lead"] and melody.kept(vocals) is not None
+    call(server, "/api/settings", {"beta": {"melody": True}})
+    assert [p["part"] for p in gui.song(sid)["parts"]] == ["lead", "vocals"]
     assert gui_module.default_lights(["lead", "rhythm", "vocals"]) == [1, 1, 0]
     call(server, "/api/song/settings", {"song": sid, "parts": {"vocals": {"play": True, "lights": 1}}})
     call(server, "/api/play", {"song": sid, "start": 0.5})
@@ -2282,3 +2290,40 @@ def test_a_songs_vocal_melody_once_made_is_its_vocals_part_off_till_its_turned_o
     assert planned["vocals"].voices.main.tone.number == 196  # (VOICE LEAD, its own default)
     call(server, "/api/stop", {})
     assert info["made"] is False
+
+
+def test_with_lead_and_rhythm_apart_on_a_split_songs_guitar_is_its_lead_and_rhythm(server, monkeypatch):
+    import numpy as np
+
+    from rs_keylights import gui as gui_module, sides, stems
+    gui = server.gui
+    sid = first_song(server)
+    monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator == "roformer")
+    found: list = [None]  # (as measured: none yet)
+    measured, loaded = [], []
+    monkeypatch.setattr(sides, "kept", lambda ref, separator, cache=None: found[0])
+    monkeypatch.setattr(sides, "made", lambda ref, separator, cache=None: bool(found[0] and found[0].apart))
+
+    def make(ref, separator, lead, rhythm, offset=0.0, cache=None):
+        measured.append((separator, len(lead.notes) > 0, len(rhythm.notes) > 0))
+        found[0] = sides.Sides(6.8, -7.8, 600, 500, True)
+        return found[0]
+    monkeypatch.setattr(sides, "make", make)
+    mix = (np.ones((44100 * 20, 2)) * 1000).astype(np.int16)
+    monkeypatch.setattr(stems, "load", lambda ref, samples, cache=None, separator="demucs", parts=stems.SEPARATED:
+                        loaded.append(list(parts)) or {s: samples // 6 for s in parts})
+    monkeypatch.setattr(gui_module, "song_samples", lambda ref, game: (mix, 44100))
+    shown = gui.stems_info(sid)
+    assert shown["sides"] is None and shown["names"] == list(stems.STEMS) and not measured  # (the beta's off)
+    call(server, "/api/settings", {"beta": {"sides": True}})
+    assert gui.stems_info(sid)["sides"] in ({"state": "measuring"}, {"state": "apart", "lead": 6.8, "rhythm": -7.8})
+    assert wait_for(lambda: gui.stems_info(sid)["sides"], lambda s: s["state"] == "apart")
+    assert measured == [("roformer", True, True)] and gui.stems_info(sid)["names"] == list(stems.WITH_SIDES)
+    assert gui.audio_info(sid)["names"] == list(stems.WITH_SIDES)  # (the Launchkey's columns)
+    _samples, parts, _rate = gui._song_samples(sid, gui._load(sid)[0][0])
+    assert loaded[-1] == ["drums", "bass", "lead", "rhythm", "vocals"] and set(parts) == set(loaded[-1])
+    call(server, "/api/play/options", {"stem_mutes": {"rhythm": True}, "stem_volumes": {"lead": 40}})
+    weights = stems.mix_weights(gui_module._stem_weights(gui.play_options, stems.ALL))
+    assert weights["rhythm"] == -1.0 and weights["lead"] == -0.6 and weights["song"] == 1.0
+    call(server, "/api/settings", {"beta": {"sides": False}})  # (off: its guitar as one again, the parts kept)
+    assert gui.stems_info(sid)["names"] == list(stems.STEMS) and found[0].apart

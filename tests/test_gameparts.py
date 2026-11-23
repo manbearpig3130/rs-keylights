@@ -54,3 +54,16 @@ def test_the_mods_weights_are_the_stem_mixers_the_song_at_others_level():
     assert gameparts.weights(levels, ["drums", "bass", "guitar", "vocals"]) == [1.0, -1.0, 0.0, -0.5, 0.0]
     quiet = {**levels, "other": 0.0}  # (other muted: the song gone, each part at its own level)
     assert gameparts.weights(quiet, ["drums", "guitar"]) == [0.0, 0.0, 0.5]
+
+
+def test_a_songs_lead_and_rhythm_guitars_are_parts_of_their_own_in_the_game(tmp_path):
+    frames = 500
+    wavs = {}
+    for k, stem in enumerate(("drums", "bass", "lead", "rhythm", "vocals")):
+        wavs[stem] = tmp_path / f"{stem}.wav"
+        write_wav(wavs[stem], np.full((frames, 2), 1000 + k))
+    path = tmp_path / "out" / "song+sides.pcm"
+    names = gameparts.write(path, 42, 48000, wavs)
+    assert names == ["drums", "bass", "lead", "rhythm", "vocals"] and gameparts.header(path)["names"] == names
+    levels = {"lead": 0.0, "rhythm": 1.0, "other": 1.0}
+    assert gameparts.weights(levels, names) == [1.0, 0.0, 0.0, -1.0, 0.0, 0.0]

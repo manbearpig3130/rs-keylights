@@ -183,6 +183,9 @@ MUTED_PAD = 5  # an arrangement (or its keys) muted, in the mixer: red
 # pad on top its switch. Each part: its name on the page, on the screen, its pad's palette colour and its own
 STEMS = (("drums", "Dr", (100, 100, 100)), ("bass", "Bs", (0, 45, 127)), ("guitar", "Gtr", (127, 45, 0)),
          ("vocals", "Vx", (127, 0, 90)), ("piano", "Ky", (60, 0, 127)), ("other", "Oth", (0, 100, 90)))
+STEM_LOOKS = {**{stem: (label, rgb) for stem, label, rgb in STEMS}, "lead": ("Ld", COLOURS["lead"][1]),
+              "rhythm": ("Rh", COLOURS["rhythm"][1])}  # (a song's guitar as its lead and rhythm, a beta feature:
+# theirs the arrangements' colours; its keys in Other then, six parts still)
 STEM_PULSE = 3  # (their pads while the song's being split: white, pulsing)
 STEMS_TO_SPLIT = 0.12  # a song not split yet: their pads this dim (a tap splits it)
 STEM_STEP = 1  # a step of their knobs, of a volume (0 to 100)
@@ -1054,7 +1057,7 @@ class Watch:
                 picture[(0, CONTROLS)] = ("palette", SOUND_ON if sounding else SOUND_OFF, False)
             picture[(1, CONTROLS)] = ("palette", FOLLOWING, True)
             return
-        for column, (stem, _label, rgb) in enumerate(STEMS):
+        for column, (stem, _label, rgb) in enumerate(_song_stems(info)):
             if audio.get("making"):
                 picture[(0, column)] = ("palette", STEM_PULSE, True)
             elif not audio.get("made"):
@@ -1069,7 +1072,7 @@ class Watch:
             picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if info.get("music_muted") or \
                 self._music_of(info) is None else ("palette", SOUND_ON, False)
         if audio.get("made"):  # (the page's master mute: its parts, green any sounding, red all muted)
-            sounding = not all(mutes.get(stem) for stem, _label, _rgb in STEMS)
+            sounding = not all(mutes.get(stem) for stem, _label, _rgb in _song_stems(info))
             picture[(0, CONTROLS)] = ("palette", SOUND_ON if sounding else SOUND_OFF, False)
         following = info.get("mode") == "follow"
         picture[(1, CONTROLS)] = ("palette", FOLLOWING if following else NOT_FOLLOWING, following)
@@ -1784,10 +1787,10 @@ class Watch:
                     lambda: mixer_picture(names, volumes, turned, muted=muted, quiet=quiet, tops=tops, divider=divider))
         if self._picture_of == "mixer" and self._stems_page(info):  # the song's parts', then its Music (the song's
             audio = info.get("audio") or {}                         # audio's volume, apart)
-            mutes, split = audio.get("mutes") or {}, bool(audio.get("made"))
-            names = [label for _stem, label, _rgb in STEMS] + ["Music"]
-            volumes = [self._stem_volume(stem, info) for stem, _label, _rgb in STEMS] + [self._audio_volume(info)]
-            quiet = [not split or bool(mutes.get(stem)) for stem, _label, _rgb in STEMS] + [not audio.get("on")]
+            mutes, split, shown = audio.get("mutes") or {}, bool(audio.get("made")), _song_stems(info)
+            names = [label for _stem, label, _rgb in shown] + ["Music"]
+            volumes = [self._stem_volume(stem, info) for stem, _label, _rgb in shown] + [self._audio_volume(info)]
+            quiet = [not split or bool(mutes.get(stem)) for stem, _label, _rgb in shown] + [not audio.get("on")]
             if info.get("mode") == "follow":  # (the song's parts in the game's song: its Music, the game's)
                 volumes[-1], quiet[-1] = self._music_of(info) or 0, bool(info.get("music_muted"))
             turned = (len(STEMS) if self._mix_slider == KEYS_COLUMN else None if self._mix_slider == CONTROLS
@@ -2149,13 +2152,13 @@ class Watch:
                 self._split(info, now)
                 return
             mutes = audio.get("mutes") or {}
-            muting = not all(mutes.get(stem) for stem, _label, _rgb in STEMS)
-            changes = {stem: muting for stem, _label, _rgb in STEMS}
+            muting = not all(mutes.get(stem) for stem, _label, _rgb in _song_stems(info))
+            changes = {stem: muting for stem, _label, _rgb in _song_stems(info)}
             if self._try(lambda: self.gui.set_play_options({"stem_mutes": changes})):
                 self._info = {**info, "audio": {**audio, "mutes": {**mutes, **changes}}}
                 self._mix_slider = CONTROLS
         elif isinstance(event, Pad) and event.column < len(STEMS):
-            stem = STEMS[event.column][0]
+            stem = _song_stems(info)[event.column][0]
             if not audio.get("made"):
                 self._split(info, now)
                 return
@@ -2198,13 +2201,13 @@ class Watch:
             return
         if encoder == CONTROLS:  # (its parts together, as the parts page's knob 8)
             volumes = {stem: min(max(self._stem_volume(stem, info) + steps * STEM_STEP, 0), 100)
-                       for stem, _label, _rgb in STEMS}
+                       for stem, _label, _rgb in _song_stems(info)}
             for stem, volume in volumes.items():
                 self._pending[("stem", stem)] = volume
             self._try(lambda: self.gui.set_play_options({"stem_volumes": volumes}))
             self._mix_slider = CONTROLS
             return
-        stem = STEMS[encoder][0]
+        stem = _song_stems(info)[encoder][0]
         volume = min(max(self._stem_volume(stem, info) + steps * STEM_STEP, 0), 100)
         self._pending[("stem", stem)] = volume
         self._try(lambda: self.gui.set_play_options({"stem_volumes": {stem: volume}}))
@@ -2426,6 +2429,14 @@ def _tag(arrangement: dict[str, Any], arrangements: list[dict[str, Any]]) -> str
     same = [a["id"] for a in arrangements if a["kind"] == kind]
     letter = KIND_LETTERS.get(kind) or kind[:1].upper()
     return letter if len(same) < 2 else f"{letter}{same.index(arrangement['id']) + 1}"
+
+
+def _song_stems(info: dict[str, Any]) -> tuple[tuple[str, str, tuple[int, int, int]], ...]:
+    """The song's parts on the stems page, a column each: as its audio has them (its guitar as its lead and rhythm,
+    a beta feature: STEM_LOOKS), else STEMS."""
+    names = (info.get("audio") or {}).get("names") or ()
+    shown = tuple((name, *STEM_LOOKS[name]) for name in names if name in STEM_LOOKS)
+    return shown if len(shown) == len(STEMS) else STEMS
 
 
 def _section_at(sections: list[dict[str, Any]], at: float) -> dict[str, Any] | None:
