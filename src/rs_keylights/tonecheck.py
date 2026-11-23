@@ -51,6 +51,7 @@ CHROMA = (80.0, 2000.0)  # Hz: the notes' range, for each moment's 12 notes
 REGIONS = (("lows", 63, 160), ("low mids", 160, 400), ("mids", 400, 1000), ("upper mids", 1000, 2500),
            ("presence", 2500, 6000), ("treble", 6000, 10000))
 EMPTY = -50.0  # dB under a moment's level (100 Hz to 5 kHz) a band's empty
+FLOOR = -70.0  # dB under a moment's level a band's taken as at least (about the input's hiss, as a guitar plays)
 SAYS = 2.0  # dB a region's off at least to be said
 CREST_SAYS = 1.5  # dB more (or less) squashed to be said
 CHECKS_MOST = 20
@@ -207,6 +208,7 @@ def moments(x: Any, rate: int, centres: Any) -> Moments:
     for i, (lo, hi) in enumerate(edges):
         band_of[(freqs >= lo) & (freqs < hi)] = i
     in_bands = band_of >= 0
+    counts = np.bincount(band_of[in_bands], minlength=len(BANDS))  # (each band's bins)
     notes = (freqs >= CHROMA[0]) & (freqs < CHROMA[1])
     pitch_class = np.zeros(len(freqs), dtype=int)
     pitch_class[notes] = np.round(12 * np.log2(freqs[notes] / 440.0) + 69).astype(int) % 12
@@ -221,7 +223,15 @@ def moments(x: Any, rate: int, centres: Any) -> Moments:
         k = slice(start, start + len(at))
         out.bands[k] = np.stack([np.bincount(band_of[in_bands], weights=p[in_bands], minlength=len(BANDS))
                                  for p in power])
-        chroma = np.stack([np.bincount(pitch_class[notes], weights=np.sqrt(p[notes]), minlength=12) for p in power])
+        # The notes from each bin over its octave's level (the bands either side and its own): a tone's colour (an
+        # EQ: smooth over an octave) left out of which notes it plays, so a brighter or bassier tone matches the
+        # same moments of the record (else more lows tilt the notes to the low strings', and the moments matched,
+        # and so the difference measured, with them)
+        per_bin = out.bands[k] / np.maximum(counts, 1)
+        octave = np.ones(3) / 3  # (a band and its neighbours)
+        smooth = np.stack([np.convolve(np.pad(b, 1, mode="edge"), octave, mode="valid") for b in per_bin])
+        flat = power[:, notes] / np.maximum(smooth[:, band_of[notes]], 1e-20)
+        chroma = np.stack([np.bincount(pitch_class[notes], weights=np.sqrt(f), minlength=12) for f in flat])
         chroma -= chroma.mean(axis=1, keepdims=True)
         out.chroma[k] = chroma / np.maximum(np.linalg.norm(chroma, axis=1, keepdims=True), 1e-12)
         mean_square = np.mean(raw ** 2, axis=1) + 1e-12
@@ -306,12 +316,19 @@ def analyse(take: Any, anchors: Sequence[tuple[int, float | None]], reference: A
         return result
     middle = (np.array(BANDS) >= SHAPED[0]) & (np.array(BANDS) <= SHAPED[1])
 
-    def shape(bands: Any) -> Any:  # (the moments' average spectrum, each moment's level taken off)
+    def shape(bands: Any) -> Any:  # (each moment's spectrum in dB, its level taken off; FLOOR under it at least)
         each = bands / np.maximum(bands[:, middle].sum(axis=1, keepdims=True), 1e-12)
-        return 10 * np.log10(each.mean(axis=0) + 1e-12)
+        return 10 * np.log10(np.maximum(each, 10 ** (FLOOR / 10)))
     theirs, mine = shape(record.bands[at[kept]]), shape(yours.bands[kept])
-    difference = theirs - mine
-    difference[(theirs < EMPTY) & (mine < EMPTY)] = 0.0  # (nothing there in either: no difference to speak of)
+    # Each moment against the record's at the same notes, lined up by the middle's typical band (a median: an EQ on a
+    # few bands hardly moves it), then the typical difference: an EQ on yours moves every moment's alike, so it shows
+    # in full. (An average of the moments' powers, each by its level, hid it: the level of a moment the low strings
+    # ruled is the lows', which a boost there moves too: +6 dB in the lows showed as +0.2.)
+    each = theirs - mine
+    each -= np.median(each[:, middle], axis=1, keepdims=True)
+    difference = np.median(each, axis=0)
+    empty = (np.median(theirs, axis=0) < EMPTY) & (np.median(mine, axis=0) < EMPTY)
+    difference[empty] = 0.0  # (nothing there in either: no difference to speak of)
     difference -= np.median(difference[middle])  # (0 dB: the middle's typical band; a region changed, the rest at 0)
     result.eq = [round(float(d), 1) for d in difference]
     centres_hz = np.array(BANDS)

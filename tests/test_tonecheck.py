@@ -73,6 +73,52 @@ def test_wrong_notes_dont_count_and_too_few_right_ones_say_nothing():
     assert all(abs(v) < 1.0 for v in got.regions.values())  # (as the record: what matched is)
 
 
+def _eq(x: np.ndarray, rate: int, lo: float, hi: float, db: float) -> np.ndarray:
+    """An EQ (as one after the amp: linear) of db between lo and hi Hz."""
+    spectrum, freqs = np.fft.rfft(x), np.fft.rfftfreq(len(x), 1 / rate)
+    return np.fft.irfft(spectrum * np.where((freqs >= lo) & (freqs < hi), 10 ** (db / 20), 1.0), len(x)).astype(
+        np.float32)
+
+
+def _chugs_and_notes(seconds: float, rate: int, seed: int = 1) -> tuple[np.ndarray, list[Note]]:
+    """Two low power chords (chugs: most of their level the lows'), then a high single note, and again; and its
+    chart."""
+    rng = np.random.default_rng(seed)
+    out, notes = np.zeros(int(seconds * rate)), []
+    t = np.arange(int(0.38 * rate)) / rate
+    for k in range(int(seconds / 0.4)):
+        tone = np.zeros(len(t))
+        if k % 3 != 2:
+            root = int(rng.choice([35, 38, 40, 43]))
+            pitches, rolloff, level = (root, root + 7), 1.5, 1.0
+            sounding = (root, root + 7, root + 12)
+        else:
+            pitches = sounding = (int(rng.choice([64, 67, 69, 71, 74])),)
+            rolloff, level = 1.0, 0.5
+        for pitch in sounding:
+            f = 440 * 2 ** ((pitch - 69) / 12)
+            for h in range(1, 40):
+                if f * h < rate / 2:
+                    tone += level * np.sin(2 * np.pi * f * h * t + h) / h ** rolloff
+        a = int(k * 0.4 * rate)
+        out[a:a + len(t)] += tone * np.exp(-t * 3)
+        notes.append(Note(k * 0.4, 0.35, pitches))
+    return (out / np.abs(out).max() * 0.5).astype(np.float32), notes
+
+
+def test_an_eq_on_the_lows_shows_in_full_though_they_rule_the_chugs_level():
+    # (Each moment's spectrum was taken by its level before the moments were averaged: a chug's level is its lows',
+    # so a boost there hardly showed, and smeared into the low mids: +6 dB showed as +1.5)
+    record, notes = _chugs_and_notes(30.0, RATE)
+    for db in (6.0, -6.0):
+        yours = _eq(record, RATE, 70, 180, db)
+        got = tonecheck.analyse(yours, _anchors(len(yours), 0.0), record, RATE, 0.0, notes)
+        assert got.enough and abs(got.matched - tonecheck.analyse(record, _anchors(len(record), 0.0), record, RATE,
+                                                                  0.0, notes).matched) < 1.0  # (the same moments)
+        assert abs(got.regions["lows"] + db) < 1.5, got.regions  # (the record: db less, all of it)
+        assert all(abs(got.regions[r]) < 1.0 for r in ("low mids", "mids", "upper mids", "presence")), got.regions
+
+
 def test_more_distortion_says_less_gain():
     record, notes = _riff(30.0, RATE)
     driven = (np.tanh(12 * record / np.abs(record).max()) * 0.5).astype(np.float32)
