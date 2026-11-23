@@ -230,7 +230,7 @@ def test_settings_are_kept(server, tmp_path):
                                                  "warmup_shown": True, "warmup_ladder": True, "warmup_what": "routine",
                                                  "warmup_tuning": "E standard",
                                                  "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
-                                                 "beta": {"melody": False, "sides": False},
+                                                 "beta": {"melody": False, "sides": False}, "pedal_input": None,
                                                  "split_server": None}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
@@ -2327,3 +2327,50 @@ def test_with_lead_and_rhythm_apart_on_a_split_songs_guitar_is_its_lead_and_rhyt
     assert weights["rhythm"] == -1.0 and weights["lead"] == -0.6 and weights["song"] == 1.0
     call(server, "/api/settings", {"beta": {"sides": False}})  # (off: its guitar as one again, the parts kept)
     assert gui.stems_info(sid)["names"] == list(stems.STEMS) and found[0].apart
+
+
+def test_a_tone_check_records_the_pedal_as_the_song_plays_then_compares_it_with_the_records_guitar(server, monkeypatch,
+                                                                                                   tmp_path):
+    import wave
+
+    import numpy as np
+    from test_tonecheck import FakeStream
+
+    from rs_keylights import stems, tonecheck
+    gui = server.gui
+    monkeypatch.setattr(tonecheck, "_input_stream", lambda device, channels: FakeStream(channels))
+    monkeypatch.setattr(tonecheck, "cache_dir", lambda: tmp_path / "checks")
+    status, said = call(server, "/api/tonecheck", {"action": "start"})
+    assert status == 400 and "pedal" in said["error"]
+    call(server, "/api/settings", {"pedal_input": {"device": "Fake Interface", "channel": 2}})
+    assert gui.settings["pedal_input"] == {"device": "Fake Interface", "channel": 2}
+    meters = call(server, "/api/meters")[1]
+    assert meters["pedal"]["device"] == "Fake Interface" and meters["pedal"]["channel"] == 2
+    status, said = call(server, "/api/tonecheck", {"action": "start"})
+    assert status == 400 and "Play a song" in said["error"]
+    sid = first_song(server)
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    status, said = call(server, "/api/tonecheck", {"action": "start"})
+    assert status == 400 and "Split the song" in said["error"]
+    monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator == "roformer")
+
+    def decode(ref, work, cache=None, separator="demucs", parts=stems.SEPARATED):
+        with wave.open(str(work / "guitar.wav"), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes((np.sin(np.arange(48000 * 70) / 7) * 8000).astype(np.int16).repeat(2).tobytes())
+        return {"guitar": work / "guitar.wav"}
+    monkeypatch.setattr(stems, "decode", decode)
+    info = call(server, "/api/tonecheck", {"action": "start"})[1]
+    assert info["state"] == "recording" and info["part"] == "lead" and info["title"]  # (its lead, by default)
+    assert wait_for(lambda: call(server, "/api/tonecheck")[1]["seconds"], lambda s: s >= 1.1)
+    info = call(server, "/api/tonecheck", {"action": "stop"})[1]
+    assert info["state"] in ("analysing", "idle")
+    done = wait_for(lambda: call(server, "/api/tonecheck")[1], lambda t: t["state"] == "idle")
+    assert done.get("error") is None, done.get("error")
+    last = done["last"]
+    assert last["song"] and last["part"] == "lead" and last["stem"] == "guitar" and not last["enough"]
+    assert [c["recording"] for c in done["checks"]] == [last["recording"]]
+    assert (tmp_path / "checks" / last["recording"]).exists()
+    call(server, "/api/stop", {})

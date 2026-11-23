@@ -15,6 +15,7 @@ import socketserver
 import subprocess
 import shutil
 import tempfile
+import wave
 import threading
 import time
 from collections import OrderedDict, deque
@@ -39,7 +40,7 @@ from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, Planne
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import chartsync, gameparts, gamestems, melody, sides, splitserver, stems, warmup
+from . import chartsync, gameparts, gamestems, melody, sides, splitserver, stems, tonecheck, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -88,6 +89,7 @@ GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
 GAME_KEYS_AT_ONCE = 300  # the song list's keys asked for so many at a time
 PEDAL_FAVOURITES, PEDAL_FAVOURITES_MOST = (51, 187), 8  # the pedal presets the Launchkey's pad goes through
+TAP_IDLE = 4.0  # seconds an input's meter isn't asked for before its input's closed (the page's gone, or folded)
 BETAS = ("melody", "sides")  # beta features, each off till it's turned on (the rs-keylights card): a song's vocal
 # melody as a part of its own (melody.py), and its guitar's lead and rhythm apart (sides.py)
 WARM_AROUND = (0, 1, -1, 2, -2, 3, -3)  # the songs whose art gets ready around the one browsed or pointed at
@@ -574,6 +576,9 @@ class Gui:
         # played or followed), and the songs being measured
         self._chart_offsets: dict[str, float] = {}
         self._measuring: set[str] = set()
+        self._taps: dict[tuple[str, int], tonecheck.Tap] = {}  # (inputs read for their meters, or recorded)
+        self._taps_lock = threading.Lock()
+        self._tone_check: dict[str, Any] = {"state": "idle"}  # (the tone check: recording, analysing, or not)
         self._sides_measuring: dict[str, str] = {}  # (songs whose guitar's being measured for its lead and rhythm:
         # "measuring", or "failed": not again till rs-keylights starts again)
         self._melody_making: dict[str, dict[str, Any]] = {}  # (a song's vocal melody being made: its step, how far,
@@ -657,6 +662,8 @@ class Gui:
                                          "warmup_tuning": warmup.TUNINGS[0][0],
                                          "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
                                          "beta": {name: False for name in BETAS},  # (beta features: each on or off)
+                                         "pedal_input": None,  # (where the pedal's sound comes back in: {"device",
+                                         # "channel"}, for its meter and the tone check)
                                          "split_server": None}  # (another computer splitting songs with
         # BS-RoFormer SW, tools/rs-keylights-split-server.py: {"url", "key"})
         self._server_seen: tuple[float, dict[str, Any]] | None = None  # (it, as last asked: when, and what it said)
@@ -722,6 +729,10 @@ class Gui:
                 self.settings["beta"] = _betas({}, self.settings["beta"])
             except GuiError:
                 self.settings["beta"] = {name: False for name in BETAS}
+            try:
+                self.settings["pedal_input"] = _pedal_input(self.settings["pedal_input"])
+            except GuiError:
+                self.settings["pedal_input"] = None
             try:
                 self.settings["volumes"] = _volumes(self.settings["volumes"])
                 self.settings["keys_volume"] = int(_number(self.settings["keys_volume"], "volume", 0, 127))
@@ -3882,6 +3893,163 @@ class Gui:
         return {"names": [names.get(slot, "") for slot in range(1, PEDAL_SLOTS + 1)],
                 "version": self.pedal.names_version, "error": self._names_error}
 
+    # The Guitar card's meters (the guitar's input, the pedal's sound coming back in), and the tone check: your tone
+    # against the record's (tonecheck)
+
+    def _tap(self, device: str, channel: int) -> tonecheck.Tap:
+        """An input's channel read (opened if it isn't: closed again once it isn't asked for a while)."""
+        with self._taps_lock:
+            tap = self._taps.get((device, channel))
+            if tap is None:
+                tap = self._taps[(device, channel)] = tonecheck.Tap(device, channel)
+                if len(self._taps) == 1:
+                    threading.Thread(target=self._reap_taps, name="rs-keylights inputs", daemon=True).start()
+            if not tap.running:
+                tap.start()
+            return tap
+
+    def _reap_taps(self) -> None:
+        """(Its own thread, while inputs are read.) Each closed once its meter's not asked for a while (TAP_IDLE)
+        and it isn't recording."""
+        while True:
+            time.sleep(1.0)
+            with self._taps_lock:
+                now = time.monotonic()
+                idle = [key for key, tap in self._taps.items() if now - tap.asked > TAP_IDLE and not tap.recording]
+                gone = [self._taps.pop(key) for key in idle]
+                left = bool(self._taps)
+            for tap in gone:
+                tap.stop()
+            if not left:
+                return
+
+    def meters(self) -> dict[str, Any]:
+        """The Guitar card's meters: the guitar's input (the one it's heard on) and the pedal's sound coming back in
+        (if it's set), each's level now (tonecheck.Tap.level), and which input each is."""
+        out: dict[str, Any] = {}
+        guitar = (str(self.settings["listen_device"]), int(self.settings["listen_channel"]))
+        pedal = self.settings["pedal_input"]
+        for name, where in (("guitar", guitar), ("pedal", (pedal["device"], pedal["channel"]) if pedal else None)):
+            if where is None:
+                out[name] = None
+                continue
+            try:
+                out[name] = {**self._tap(*where).level(), "device": where[0], "channel": where[1]}
+            except Exception as exc:  # (no audio: said)
+                out[name] = {"error": str(exc), "device": where[0], "channel": where[1]}
+        return out
+
+    def _chart_at(self, at: float) -> float | None:
+        """Where the song playing (or followed) was at a time on time.monotonic's clock: its chart's time (None:
+        nothing plays, or it's paused)."""
+        session = self._session
+        if isinstance(session, Playback) and session.running:
+            return session.where_at(at)[0]
+        if isinstance(session, Following) and session.running:
+            return session.follower.position(at)
+        return None
+
+    def _tone_check_song(self) -> tuple[str, list[tuple[ArrangementRef, Arrangement]], str | None]:
+        """The song a tone check's of (the one playing, or followed), its parts, and the part the game plays (None:
+        not following)."""
+        with self._lock:
+            session, playing = self._session, self._playing
+        if isinstance(session, Following) and session.running and session.follower.current is not None:
+            current = session.follower.current
+            return song_id(current), self._load(song_id(current)), current.part
+        if isinstance(session, Playback) and session.running and playing:
+            return playing["id"], self._load(playing["id"]), None
+        raise GuiError("Play a song (or follow the game) to check your tone against it")
+
+    def tone_check_info(self) -> dict[str, Any]:
+        """The tone check: recording (the song, your part, how long so far), analysing, or not; the last check's
+        result, and the ones before (the latest last)."""
+        check = dict(self._tone_check)
+        tap = check.pop("tap", None)
+        if tap is not None:
+            check["seconds"] = round(tap.seconds, 1)
+            check["most"] = tonecheck.RECORD_MOST
+        kept = tonecheck.history()
+        return {**check, "checks": kept[-10:], "pedal_input": self.settings["pedal_input"]}
+
+    def tone_check(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A tone check started ("start": your part, "part", the game's if following; else the song's first lead or
+        rhythm), stopped (then analysed: a few seconds, in the background), or cancelled ("cancel")."""
+        action = body.get("action")
+        if action == "start":
+            if self._tone_check.get("state") in ("recording", "analysing"):
+                return self.tone_check_info()
+            pedal = self.settings["pedal_input"]
+            if pedal is None:
+                raise GuiError("Choose the input the pedal's sound comes back in on first")
+            sid, loaded, played = self._tone_check_song()
+            guitars = [r.part for r, _a in loaded if kind(r) in ("lead", "rhythm", "bass")]
+            part = str(body.get("part") or played or next((p for p in guitars if p in ("lead", "rhythm")), "") or
+                       (guitars[0] if guitars else ""))
+            if part not in guitars:
+                raise GuiError(f"No {part or 'guitar'} part in this song")
+            ref = loaded[0][0]
+            which = self._parts_by(ref)
+            if which is None:
+                raise GuiError("Split the song first (Song Audio): your tone's checked against its guitar")
+            tap = self._tap(pedal["device"], pedal["channel"])
+            tap.record(self._chart_at)
+            named = next((r for r, _a in loaded if r.artist), ref)
+            self._tone_check = {"state": "recording", "sid": sid, "title": named.title, "part": part,
+                                "separator": which, "tap": tap, "started": time.time(),
+                                "preset": {"slot": self.pedal.slot, "name": self.pedal.name(self.pedal.slot)}}
+        elif action in ("stop", "cancel"):
+            check = self._tone_check
+            if check.get("state") != "recording":
+                return self.tone_check_info()
+            take, anchors = check["tap"].take()
+            if action == "cancel":
+                self._tone_check = {"state": "idle"}
+            else:
+                self._tone_check = {**{k: v for k, v in check.items() if k != "tap"}, "state": "analysing"}
+                threading.Thread(target=self._tone_check_analyse, args=(dict(self._tone_check), take, anchors),
+                                 name="rs-keylights tone check", daemon=True).start()
+        else:
+            raise GuiError("Expected start, stop or cancel")
+        return self.tone_check_info()
+
+    def _tone_check_analyse(self, check: dict[str, Any], take: Any, anchors: list[tuple[int, float | None]]) -> None:
+        """(Its own thread.) A tone check's recording against the song's guitar (the side of it you play, if its lead
+        and rhythm are apart: else its guitar; a bass part, its bass), kept with its result."""
+        import numpy as np
+        try:
+            sid = check["sid"]
+            loaded = self._load(sid)
+            ref = loaded[0][0]
+            mine = next(a for r, a in loaded if r.part == check["part"])
+            part_kind = kind(next(r for r, _a in loaded if r.part == check["part"]))
+            names = self._part_names(ref, check["separator"])
+            stem = "bass" if part_kind == "bass" else part_kind if part_kind in names else "guitar"
+            offset = self._chart_offsets.get(sid, 0.0)
+            charts = [c for _e, c in anchors if c is not None]
+            if len(take) < tonecheck.RATE or not charts:
+                raise GuiError("Nothing recorded while the song played")
+            first, last = min(charts) + offset - tonecheck.LAG_MOST - 1.0, max(charts) + offset + tonecheck.LAG_MOST + 1.0
+            with tempfile.TemporaryDirectory(prefix="rs-keylights-tone-check-") as work:
+                wavs = stems.decode(ref, Path(work), separator=check["separator"], parts=(stem,))
+                if wavs is None:
+                    raise GuiError("The song's parts are gone: split it again")
+                with wave.open(str(wavs[stem])) as w:
+                    rate, channels = w.getframerate(), w.getnchannels()
+                    start = max(int(first * rate), 0)
+                    w.setpos(min(start, w.getnframes()))
+                    raw = w.readframes(max(int((last - first) * rate), 0))
+                reference = np.frombuffer(raw, dtype=np.int16).reshape(-1, channels).mean(axis=1) / 32768.0
+            result = tonecheck.analyse(take, anchors, reference.astype(np.float32), rate, start / rate, mine.notes,
+                                       offset)
+            kept = tonecheck.keep({"at": time.strftime("%Y-%m-%d %H:%M"), "sid": sid, "song": check["title"],
+                                   "part": check["part"], "stem": stem, "preset": check.get("preset"),
+                                   **tonecheck.as_dict(result)}, take)
+            self._tone_check = {"state": "idle", "last": kept}
+        except Exception as exc:  # (said on the page)
+            self._tone_check = {"state": "idle", "error": str(exc) or type(exc).__name__}
+        self.play_version += 1
+
     def _followed_now(self) -> tuple[ArrangementRef | None, float | None]:
         """Following, the arrangement the game plays and where it is (None, None: not following)."""
         with self._lock:
@@ -4387,6 +4555,11 @@ class Gui:
             raise GuiError(f"{listen_device} has {most} inputs")
         backup = str(body.get("pedal_backup", self.settings["pedal_backup"]) or "").strip()
         beta = _betas(self.settings["beta"], body.get("beta") or {})
+        pedal_input = _pedal_input(body["pedal_input"]) if "pedal_input" in body else self.settings["pedal_input"]
+        if pedal_input is not None:
+            most = _audio_input_channels().get(pedal_input["device"])
+            if most is not None and pedal_input["channel"] > most:
+                raise GuiError(f"{pedal_input['device']} has {most} inputs")
         favourites = _favourites(body.get("pedal_favourites", self.settings["pedal_favourites"]))
         asked, known = _recalled(self.settings["outputs"], body.get("outputs") or {},
                                  self.settings.get("outputs_known"))
@@ -4407,7 +4580,7 @@ class Gui:
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        outputs_known=known,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, listen_channel=listen_channel, pedal_backup=backup,
-                       pedal_favourites=favourites, pinch=pinch, beta=beta)
+                       pedal_favourites=favourites, pinch=pinch, beta=beta, pedal_input=pedal_input)
         betas_were = self.settings["beta"]
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
@@ -4576,6 +4749,10 @@ class Gui:
             self._keys_queue.put(None)
         self.pedal.close()
         self._recorder.stop()
+        with self._taps_lock:
+            taps, self._taps = list(self._taps.values()), {}
+        for tap in taps:
+            tap.stop()
         for synth in list(self._synths.values()):  # (other MIDI devices: their notes stopped)
             synth.close()
         if self._listener is not None:
@@ -4706,6 +4883,15 @@ def _warmup_speeds(value: Any) -> dict[str, int]:
         return {}
     drills = {d.key: d for d in warmup.routine()}
     return {k: v for k, v in value.items() if k in drills and warmup.kept_speed(drills[k], v) == v}
+
+
+def _pedal_input(given: Any) -> dict[str, Any] | None:
+    """Where the pedal's sound comes back in: an audio input and its channel (None: not set)."""
+    if given is None or (isinstance(given, dict) and not given.get("device")):
+        return None
+    if not isinstance(given, dict) or not isinstance(given.get("device"), str):
+        raise GuiError("Expected the pedal's input: its device and channel")
+    return {"device": given["device"], "channel": int(_number(given.get("channel", 1), "the pedal's input", 1, 64))}
 
 
 def _betas(were: dict[str, Any], given: Any) -> dict[str, bool]:
@@ -5095,6 +5281,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.held_keys(int(since) if since.lstrip("-").isdigit() else -1))
             elif url.path == "/api/state":
                 self._json(200, gui.state())
+            elif url.path == "/api/meters":
+                self._json(200, gui.meters())
+            elif url.path == "/api/tonecheck":
+                self._json(200, gui.tone_check_info())
             elif url.path == "/api/follow":
                 self._json(200, gui.follow_info())
             elif url.path == "/api/play/options":
@@ -5155,6 +5345,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/game/music": lambda: gui.set_game_music(body),
             "/api/drums": lambda: gui.set_drums(body),
             "/api/melody": lambda: gui.set_melody(body),
+            "/api/tonecheck": lambda: gui.tone_check(body),
             "/api/stems": lambda: gui.set_stems(body),
             "/api/stems/server": lambda: gui.set_split_server(body),
             "/api/game-stems": lambda: gui.set_game_stems(body),
