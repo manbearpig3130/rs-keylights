@@ -330,7 +330,14 @@
   .tonebox.inline .num { flex: none; font-size: 12px; }
   .tonebox.inline .num:empty { display: none; }
   .tonebox.inline .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
-  .phone-link { user-select: all; word-break: break-all; }
+  .phone-link { display: block; user-select: all; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #appCard .grid2 > * { min-width: 0; }
+  #phone { display: block; }
+  .phone-tools { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  /* (a path on one line, cut at its start: its end's what tells it apart, the whole of it in its title) */
+  .path { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    direction: rtl; text-align: left; }
+
   .keyline { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
   .keyline > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 8px; align-items: center; }
   #songKey { max-width: 100%; }
@@ -569,9 +576,8 @@
   .lyrics-view.seekable .lyrics-line:hover { color: var(--text); opacity: 1; }
   .fret-chord { font-weight: 700; font-size: 16px; color: var(--live); }
   .swatch.now { background: var(--live); }
-  .fret-legend { display: none; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); position: absolute;
-                 left: 12px; right: 12px; bottom: 8px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line);
-                 border-radius: 6px; }  /* (shown over the fretboard as the mouse is on it) */
+  .fret-legend { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+  .fret-legend:empty { display: none; }  /* (always there, under the board: nothing over it) */
   .layout-bar { display: none; }
   body.layout-editing .layout-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px;
     padding: 10px 12px; border: 1px dashed var(--muted); border-radius: 10px; background: var(--panel); font-size: 13px; }
@@ -586,7 +592,6 @@
   body.layout-editing #middle > .card[hidden] { display: block; opacity: .6; }  /* (nothing to show yet: still movable) */
   .card.dragging { opacity: .4; }
   .fret-card { position: relative; }
-  .fret-card:hover .fret-legend:not(:empty) { display: flex; }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--muted); }
   .swatch.root { background: var(--accent); }
   .swatch.other { background: none; border: 1.5px dashed var(--muted); }
@@ -1042,7 +1047,7 @@
     <div class="card" id="appCard">
       <h3>rs-keylights<button type="button" id="layoutBtn" title="Edit layout: move, add and remove cards (saved in this browser)">✎ Layout</button></h3>
       <div class="grid2">
-        <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
+        <label>Songs</label><span id="gameDir" class="path"></span>
         <label>Phone</label><span id="phone" class="small"></span>
       </div>
       <div class="row">
@@ -1168,6 +1173,26 @@ function toast(message) {
 async function act(fn) {
   try { await fn(); } catch (e) { toast(e.message); }
   poll(true);
+}
+
+// A press on the page holds back the song card's redraw till it's let go: its rows are drawn anew each time, so a
+// redraw between a button going down and coming up would take the button away, and the click with it (4 s at most)
+let pressedAt = 0, songOwed = false;
+document.addEventListener("pointerdown", () => { pressedAt = performance.now(); }, true);
+function pressOver() {
+  pressedAt = 0;
+  if (!songOwed) return;
+  songOwed = false;
+  setTimeout(() => { if (selected) drawSong(); }, 0);  // (after the click the press makes)
+}
+for (const type of ["pointerup", "pointercancel"]) document.addEventListener(type, pressOver, true);
+window.addEventListener("blur", pressOver);
+function renderSong() {
+  if (pressedAt && performance.now() - pressedAt < 4000) {
+    songOwed = true;
+    return;
+  }
+  drawSong();
 }
 
 // Info icons: <button type="button" class="info" aria-label="About …"></button><span class="info-text">…</span>,
@@ -1532,11 +1557,11 @@ function makeFretCard(spec) {
     const whose = guitar.name || (guitar.bass ? "bass" : "guitar");
     r("title").textContent = `${scale} · ${whose} in ${guitar.tuning}`;
     r("board").innerHTML = fretboardSvg(key, guitar);
-    const legend = [`<span><span class="swatch root"></span>${esc(key.notes[0])}, the root</span>`,
-      `<span><span class="swatch"></span>the rest of the scale</span>`];
-    if (key.other.length) legend.push(`<span><span class="swatch other"></span>also used: ${esc(key.other_notes.join(" "))}</span>`);
-    if (guitar.capo > 0) legend.push(`<span>capo on fret ${guitar.capo}</span>`);
-    if (guitar.notes) legend.push(`<span><span class="swatch now"></span>playing (the next ringed), the chord's shape R b3 5…</span>`);
+    const legend = [`<span><span class="swatch root"></span>${esc(key.notes[0])} (root)</span>`,
+      `<span><span class="swatch"></span>Scale notes</span>`];
+    if (key.other.length) legend.push(`<span><span class="swatch other"></span>Also used: ${esc(key.other_notes.join(" "))}</span>`);
+    if (guitar.capo > 0) legend.push(`<span>Capo on fret ${guitar.capo}</span>`);
+    if (guitar.notes) legend.push(`<span><span class="swatch now"></span>Playing (next notes ringed) · chord tones R, b3, 5…</span>`);
     r("legend").innerHTML = legend.join("");
   }
   r("flip").checked = fretThickOnTop;
@@ -4195,7 +4220,7 @@ function followedSong() {
   return state.mode === "following" && follow && follow.song && selected && follow.song.id === selected.id ? follow.song : null;
 }
 
-function renderSong() {
+function drawSong() {
   const s = selected, f = followedSong();
   $("noSong").hidden = true;
   $("songView").hidden = false;
@@ -5349,15 +5374,16 @@ async function loadSettings() {
   showPedal(state && state.pedal);
   showToneKinds(s.tone_map);
   showOutputs(s);
-  $("gameDir").textContent = s.game_dir;
+  $("gameDir").textContent = `\u200e${s.game_dir}\u200e`;  // (left-to-right marks: in order, though the line's right-to-left)
+  $("gameDir").title = s.game_dir;
   $("betaMelody").checked = !!(s.beta && s.beta.melody);
   $("betaSides").checked = !!(s.beta && s.beta.sides);
   const phone = $("phone");
   if (s.phone.length) {
-    phone.innerHTML = s.phone.map((u) => `<span class="phone-link">${esc(u)}</span>`).join("<br>") +
-      ' <button type="button" id="copyPhone">Copy</button><button type="button" class="info" aria-label="About the ' +
-      'phone\'s address"></button><span class="info-text">Open it once on the phone, on the same Wi-Fi; after that ' +
-      "the address without the key works too.</span>";
+    phone.innerHTML = s.phone.map((u) => `<span class="phone-link" title="${esc(u)}">${esc(u)}</span>`).join("") +
+      '<span class="phone-tools"><button type="button" id="copyPhone">Copy link</button><button type="button" ' +
+      'class="info" aria-label="About the phone\'s address"></button><span class="info-text">Open the link once on ' +
+      "your phone, on the same Wi-Fi network; after that, the address without the key works too.</span></span>";
     infoTextOf(phone.querySelector("button.info"));
     $("copyPhone").addEventListener("click", () => act(async () => {
       if (!navigator.clipboard) throw new Error("Select the link and copy it");
