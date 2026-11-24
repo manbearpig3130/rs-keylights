@@ -713,6 +713,9 @@ def test_switching_songs_and_going_through_the_library(server, tmp_path):
     assert gui.browse_at(None)["id"] == first and gui.browse_at("gone")["id"] == first  # the active one
     browse = call(server, "/api/state")[1]["browse"]
     assert browse["song"] == first and browse["version"] == 7 and browse["chosen"] is None
+    assert gui.browse_at(other["id"])["id"] == other["id"]
+    assert call(server, "/api/browse/home", {})[1]["id"] == first  # (the page's Home: back on the active song)
+    assert call(server, "/api/state")[1]["browse"]["song"] == first
     assert gui.toggle_real_pitch() is True and gui.play_options["real_pitch"] is True
     _, key = call(server, f"/api/key?id={urllib.request.quote(first)}")
     assert key["name"] and key["notes"]

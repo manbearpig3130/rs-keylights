@@ -620,8 +620,9 @@
      clicked as before, and the song the Launchkey's on (else the one shown) small at its foot (remembered) */
   .library-top { display: flex; gap: 8px; align-items: center; }
   .library-top #search { flex: 1; min-width: 0; }
-  #libraryBtn { flex: none; padding: 5px 6px; line-height: 0; color: var(--muted); }
-  #libraryBtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+  #libraryBtn, #libraryHome { flex: none; padding: 5px 6px; line-height: 0; color: var(--muted); }
+  #libraryBtn svg, #libraryHome svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linejoin: round; stroke-linecap: round; }
   .library-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 4px; margin-top: 8px; }
   .library-filters select { min-width: 0; font-size: 12px; padding: 3px 4px; }
   #libFavorites { flex: none; padding: 2px 8px; font-size: 13px; color: var(--muted); }
@@ -631,7 +632,7 @@
   #songs .fav:hover { border-color: var(--line); }
   #songs .fav[aria-pressed="true"] { color: var(--warn); }
   body.library-collapsed #library { padding: 10px; }
-  body.library-collapsed .library-top { justify-content: flex-start; }
+  body.library-collapsed .library-top { justify-content: space-between; }  /* (Home at the rail's right) */
   body.library-collapsed #search, body.library-collapsed .library-filters, body.library-collapsed #songs .fav { display: none; }
   body.library-collapsed #songs li { padding-right: 8px; }
   body.library-collapsed #count { display: none; }
@@ -677,6 +678,8 @@
     <div class="library-top">
       <button type="button" id="libraryBtn" aria-expanded="true" title="Collapse the song list"><svg viewBox="0 0 20 20"
         aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M7.5 3.5v13"/></svg></button>
+      <button type="button" id="libraryHome" title="Go to the active song (as the Launchkey's ▲ does)"><svg viewBox="0 0 20 20"
+        aria-hidden="true"><path d="M3 9.5 10 3.5l7 6"/><path d="M5 8.2V16.5h3.6v-4.3h2.8v4.3H15V8.2"/></svg></button>
       <input id="search" type="search" placeholder="Search songs, artists, files…" autocomplete="off">
     </div>
     <div class="library-filters">
@@ -5992,6 +5995,13 @@ for (const [id, key] of [["libSort", "sort"], ["libPart", "part"], ["libTuning",
     renderLibrary();
   });
 }
+// Home: the list back on the active song (following: the game's), the Launchkey's place in it too (its ▲'s)
+$("libraryHome").addEventListener("click", () => {
+  const id = state.mode === "following" ? state.follow.song_id : state.active;
+  const li = id ? rows.get(id) : null;
+  if (li) $("songs").scrollTop = middleScroll(li);  // (at once: the box comes round it as the state says so)
+  act(() => api("/api/browse/home", {}));
+});
 $("libFavorites").addEventListener("click", () => {
   libView.favorites = !libView.favorites;
   store.set("rsk.libFavorites", libView.favorites);

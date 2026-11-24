@@ -1670,6 +1670,12 @@ class Gui:
         self.warm_around(listed[index]["id"])
         return {**listed[index], "place": index, "of": len(listed)}
 
+    def browse_home(self) -> dict[str, Any] | None:
+        """A remote's place in the library back on the song (following: the one the game plays, else the active
+        one), as the Launchkey's home does: the page's Home button."""
+        followed, _at = self._followed_now()
+        return self.browse_at(song_id(followed) if followed is not None else None)
+
     def browse_letter(self, steps: int) -> dict[str, Any] | None:
         """Moves a remote's place in the library a letter at a time (its artists': the library is in their order):
         on, to the first song of the next (past the last: the last song); back, to the first of the one it's on,
@@ -5545,6 +5551,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/game-stems": lambda: gui.set_game_stems(body),
             "/api/drums/hit": lambda: gui.hit_drum(body),
             "/api/favorites": lambda: gui.set_favorite(body),
+            "/api/browse/home": lambda: gui.browse_home() or {},
             "/api/warmup": lambda: gui.set_warmup(body),
             "/api/reindex": gui.reindex,
         }
