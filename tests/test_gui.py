@@ -2429,6 +2429,7 @@ def test_a_songs_plays_come_from_rocksmiths_profile_by_its_arrangements_and_the_
     path.write_bytes(b"x")
     monkeypatch.setattr(favorites, "profile_path", lambda root=None: path)
     monkeypatch.setattr(favorites, "stats", lambda p: played)
+    monkeypatch.setattr("rs_keylights.gui.ICON_CACHE", tmp_path / "icons")
     songs = call(server, "/api/song-stats")[1]["songs"]
     assert list(songs) == [sid] and songs[sid]["played"] == "2026-11-24 01:56:06" and songs[sid]["plays"] == 4
     library = next(s for s in call(server, "/api/library")[1]["songs"] if s["id"] == sid)

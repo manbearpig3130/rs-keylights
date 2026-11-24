@@ -376,6 +376,7 @@ DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
 PRESSED_VELOCITY = 100  # a key clicked on the page: how hard it's struck
 PATH_ICONS = {"lead": "pathlead_64", "rhythm": "pathrhythm_64", "bass": "pathbass_64"}  # (the game's own, in its
 # cache.psarc: read from it, never kept here)
+ICON_CACHE = Path.home() / "Library" / "Caches" / "rs-keylights" / "icons"  # (where they're kept once read)
 HELD_WAIT = 20.0  # seconds the page's ask for the keys held waits for a change, at most
 SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
@@ -1468,7 +1469,7 @@ class Gui:
         """The game's icon for a path (lead, rhythm or bass), as a PNG: from its cache.psarc, the first time (kept)."""
         if kind_ not in PATH_ICONS:
             return None
-        folder = Path.home() / "Library" / "Caches" / "rs-keylights" / "icons"
+        folder = ICON_CACHE
         kept = folder / f"{PATH_ICONS[kind_]}.png"
         if kept.exists():
             return kept.read_bytes()
