@@ -115,12 +115,12 @@
   #songs li.active .song::before { content: "▶ "; color: var(--ok); }
   #songs .artist, #songs .parts { font-size: 12px; color: var(--muted); }
   #songs .parts { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .arr { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; font-weight: 500; }
-  .arr i { width: 14px; height: 14px; border-radius: 3px; background: center / cover no-repeat; flex: none; }
+  .arr { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; font-weight: 600; }
+  .arr i { width: 16px; height: 16px; border-radius: 3px; background: center / cover no-repeat; flex: none; }
   .arr.lead { color: var(--lead); } .arr.lead i { background-image: url(/api/path-icon?kind=lead); }
   .arr.rhythm { color: var(--rhythm); } .arr.rhythm i { background-image: url(/api/path-icon?kind=rhythm); }
   .arr.bass { color: var(--bass); } .arr.bass i { background-image: url(/api/path-icon?kind=bass); }
-  .arr small { color: var(--muted); font-weight: 400; font-size: 11px; }
+  .arr small { font-size: 11px; }  /* (its mastery, in its colour) */
   #status.link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .badge { font-size: 12px; font-weight: 600; color: var(--ok); margin-left: 8px; vertical-align: middle; }
   #details { flex: none; height: 124px; border-top: 1px solid var(--line); padding: 10px 2px 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; overflow: hidden; }
@@ -351,6 +351,8 @@
   #songKey { max-width: 100%; }
   .keyline .notes { letter-spacing: .03em; }
   .keyline button { padding: 3px 9px; font-size: 12px; }
+  .keyline .scaleBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* (red, its
+     size as ever: not bold) */
   #messages { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; color: var(--muted); max-height: 180px; overflow-y: auto; }
   #messages li { padding: 2px 0; border-bottom: 1px dashed var(--line); }
   #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--accent); color: var(--accent-text); padding: 9px 14px; border-radius: 8px; max-width: 90vw; z-index: 5; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
@@ -1410,7 +1412,7 @@ function keyLine(key, song) {
   line.append(name, scale);
   const show = document.createElement("button");
   show.type = "button";
-  show.className = "scaleBtn" + (state.showing ? " primary" : "");  // (red while the scale shows)
+  show.className = "scaleBtn" + (state.showing ? " on" : "");  // (red while the scale shows)
   show.textContent = "Show scale";
   show.title = "Run the scale up and down the keys until a key is pressed or a song needs them (red while it shows: click to stop)";
   show.addEventListener("click", () => act(() => state.showing ? api("/api/scale/stop", {}) :
@@ -4029,9 +4031,9 @@ function arrangementsLine(s) {
   const mastery = (songStats[s.id] || {}).mastery || [];
   return s.parts.map((name, i) => {
     const kind = (s.kinds || [])[i] || "lead", m = mastery[i];
-    const pct = m == null ? "" : ` <small>${Math.round(m * 100)}%</small>`;
+    const pct = m == null ? "" : `<small>${Math.round(m * 100)}%</small>`;
     return `<span class="arr ${kind}" title="${esc(name)}${m == null ? "" : `: ${Math.round(m * 100)}% mastery`}">` +
-      `<i></i>${esc(name)}${pct}</span>`;
+      `<i></i>${pct}</span>`;
   }).join("");
 }
 
@@ -5247,7 +5249,7 @@ function showState(st) {
     refreshSong().catch(() => {}).finally(() => { songBusy = false; });
   }
   for (const button of document.querySelectorAll(".scaleBtn")) {
-    button.classList.toggle("primary", !!st.showing);
+    button.classList.toggle("on", !!st.showing);
   }
   if ($("toneCheckCard").open && !$("tcPart").disabled) tonePartOptions();  // (the song playing's parts)
   updateButtons();
@@ -5995,11 +5997,19 @@ function showLibraryFolded(folded) {
 }
 showLibraryFolded(!!store.get("rsk.libraryCollapsed", false));
 $("libraryBtn").addEventListener("click", () => {
+  const list = $("songs");
+  let top = null;  // (the row at the top of the list: at the top again after, the rows' heights changed)
+  for (const [id, li] of rows) {
+    if (li.offsetTop + li.offsetHeight > list.scrollTop) { top = id; break; }
+  }
   const folded = !document.body.classList.contains("library-collapsed");
   store.set("rsk.libraryCollapsed", folded);
   showLibraryFolded(folded);
   renderDetails();
-  placeBrowseBox();  // (the rows' sizes changed: the Launchkey's box round its song again)
+  const browsed = browseShown ? rows.get(browseShown) : null;  // (the Launchkey's song: in its box, mid-list)
+  if (browsed) list.scrollTop = middleScroll(browsed);
+  else if (top && rows.get(top)) list.scrollTop = rows.get(top).offsetTop;
+  placeBrowseBox();
 });
 $("sideBtn").addEventListener("click", () => store.set("rsk.sideHidden", document.body.classList.toggle("side-hidden")));
 // The settings column's cards fold into their titles (remembered; setup ones folded at first)
