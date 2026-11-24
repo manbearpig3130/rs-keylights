@@ -595,6 +595,32 @@
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--muted); }
   .swatch.root { background: var(--accent); }
   .swatch.other { background: none; border: 1.5px dashed var(--muted); }
+  /* The library: a button left of the search collapses it into a rail, the button where it was and the song the
+     Launchkey's on (else the one shown) at its foot, its art and title (remembered) */
+  .library-top { display: flex; gap: 8px; align-items: center; }
+  .library-top #search { flex: 1; min-width: 0; }
+  #libraryBtn { flex: none; padding: 5px 6px; line-height: 0; color: var(--muted); }
+  #libraryBtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+  body.library-collapsed #search, body.library-collapsed #count, body.library-collapsed #songs,
+  body.library-collapsed #browseBox { display: none; }
+  body.library-collapsed #library { height: calc(100vh - 80px); padding: 10px; }
+  body.library-collapsed #details { margin-top: auto; height: auto; grid-template-columns: minmax(0, 1fr); gap: 6px;
+    border-top: 0; padding: 0; }
+  body.library-collapsed #details > div { min-width: 0; }
+  body.library-collapsed #details .art { width: 100%; height: auto; aspect-ratio: 1; }
+  body.library-collapsed #details .d-title { font-size: 12px; line-height: 1.25; white-space: normal; display: -webkit-box;
+    -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  body.library-collapsed #details .d-title + .d-line { font-size: 11px; }
+  body.library-collapsed #details .d-key, body.library-collapsed #details .d-key ~ .d-line { display: none; }
+  body.library-collapsed #details .d-empty { padding-top: 0; font-size: 11px; }
+  body.library-collapsed main { grid-template-columns: 92px minmax(0, 1fr) minmax(260px, 330px); }
+  body.library-collapsed.side-hidden main { grid-template-columns: 92px minmax(0, 1fr); }
+  @media (max-width: 1100px) { body.library-collapsed main { grid-template-columns: 92px minmax(0, 1fr); } }
+  @media (max-width: 720px) {
+    body.library-collapsed main { grid-template-columns: 1fr; }
+    body.library-collapsed #library { height: auto; }
+    body.library-collapsed #details { grid-template-columns: 72px minmax(0, 1fr); }
+  }
 </style>
 </head>
 <body>
@@ -616,7 +642,11 @@
 
 <main>
   <section id="library" class="card">
-    <input id="search" type="search" placeholder="Search songs, artists, files…" autocomplete="off">
+    <div class="library-top">
+      <button type="button" id="libraryBtn" aria-expanded="true" title="Collapse the song list"><svg viewBox="0 0 20 20"
+        aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M7.5 3.5v13"/></svg></button>
+      <input id="search" type="search" placeholder="Search songs, artists, files…" autocomplete="off">
+    </div>
     <div id="count" class="muted">Loading the library…</div>
     <ul id="songs"></ul>
     <div id="browseBox" hidden></div>
@@ -5786,6 +5816,19 @@ $("fullBtn").addEventListener("click", () => fullScreen(!(document.fullscreenEle
 $("followFull").checked = !!store.get("rsk.followFull", false);
 $("followFull").addEventListener("change", () => store.set("rsk.followFull", $("followFull").checked));
 document.body.classList.toggle("side-hidden", !!store.get("rsk.sideHidden", false));
+function showLibraryFolded(folded) {
+  document.body.classList.toggle("library-collapsed", folded);
+  $("libraryBtn").setAttribute("aria-expanded", String(!folded));
+  $("libraryBtn").title = folded ? "Expand the song list" : "Collapse the song list";
+}
+showLibraryFolded(!!store.get("rsk.libraryCollapsed", false));
+$("libraryBtn").addEventListener("click", () => {
+  const folded = !document.body.classList.contains("library-collapsed");
+  store.set("rsk.libraryCollapsed", folded);
+  showLibraryFolded(folded);
+  hovered = null;  // (the rows gone from under the mouse: no song's pointed at)
+  renderDetails();
+});
 $("sideBtn").addEventListener("click", () => store.set("rsk.sideHidden", document.body.classList.toggle("side-hidden")));
 // The settings column's cards fold into their titles (remembered; setup ones folded at first)
 const FOLDED_AT_FIRST = new Set(["outputsCard", "keyboardCard", "appCard"]);
