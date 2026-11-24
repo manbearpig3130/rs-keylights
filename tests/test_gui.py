@@ -231,7 +231,7 @@ def test_settings_are_kept(server, tmp_path):
                                                  "warmup_tuning": "E standard",
                                                  "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
                                                  "beta": {"melody": False, "sides": False}, "pedal_input": None,
-                                                 "split_server": None}
+                                                 "favorites_pending": {}, "split_server": None}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
