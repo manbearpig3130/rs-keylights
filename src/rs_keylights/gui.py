@@ -377,6 +377,8 @@ PRESSED_VELOCITY = 100  # a key clicked on the page: how hard it's struck
 PATH_ICONS = {"lead": "pathlead_64", "rhythm": "pathrhythm_64", "bass": "pathbass_64"}  # (the game's own, in its
 # cache.psarc: read from it, never kept here)
 ICON_CACHE = Path.home() / "Library" / "Caches" / "rs-keylights" / "icons"  # (where they're kept once read)
+SPLIT_SERVER_SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "rs-keylights-split-server.py"  # (the page's
+# download of it: the one in this copy of rs-keylights, for the split server's computer)
 HELD_WAIT = 20.0  # seconds the page's ask for the keys held waits for a change, at most
 SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
@@ -5446,6 +5448,13 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, art, "image/png", cache="private, max-age=86400")
             elif url.path == "/api/favorites":
                 self._json(200, gui.favorites_info())
+            elif url.path == "/api/split-server-script":
+                try:
+                    script = SPLIT_SERVER_SCRIPT.read_bytes()
+                except OSError:
+                    self._json(404, {"error": "The split server's script isn't in this copy of rs-keylights"})
+                else:
+                    self._send(200, script, "text/x-python; charset=utf-8", download=SPLIT_SERVER_SCRIPT.name)
             elif url.path == "/api/song-stats":
                 self._json(200, gui.song_stats())
             elif url.path == "/api/path-icon":

@@ -2437,3 +2437,11 @@ def test_a_songs_plays_come_from_rocksmiths_profile_by_its_arrangements_and_the_
     assert set(library["kinds"]) <= {"lead", "rhythm", "bass"}
     assert call(server, "/api/path-icon?kind=lead")[0] == 404  # (no game's cache.psarc here)
     assert call(server, "/api/path-icon?kind=../etc")[0] == 404
+
+
+def test_the_split_servers_script_downloads_from_the_page(server):
+    with urllib.request.urlopen(server.url.rstrip("/") + "/api/split-server-script", timeout=5) as response:
+        body = response.read()
+        assert "attachment" in response.headers["Content-Disposition"]
+        assert "rs-keylights-split-server.py" in response.headers["Content-Disposition"]
+    assert body.startswith(b"#!") or b"split" in body[:2000]
