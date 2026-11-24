@@ -4357,10 +4357,17 @@ class Gui:
 
     def press_key(self, body: dict[str, Any]) -> dict[str, Any]:
         """A key pressed on the page ("key", a MIDI note; "down": true, or false let go; "velocity", 1 to 127): played
-        as the Launchkey's keys are (where they play, with their tone, lighting it)."""
+        as the Launchkey's keys are (where they play, with their tone, lighting it). With a "tone" (a fretboard's
+        note: its arrangement's), it sounds on the keyboard in that tone, whether the keys' own sound is on or not."""
         key = int(_number(body.get("key"), "key", 0, 127))
         velocity = int(_number(body.get("velocity", PRESSED_VELOCITY), "velocity", 1, 127))
-        self.play_keys([0x90, key, velocity] if body.get("down", True) else [0x80, key, 0])
+        message = [0x90, key, velocity] if body.get("down", True) else [0x80, key, 0]
+        if body.get("tone") is not None:
+            number = int(_number(body["tone"], "tone", 0, 1000))
+            if number not in TONE_NUMBERS:
+                raise GuiError(f"No tone {number}")
+            message.append(number)
+        self.play_keys(message)
         return {"held": sorted(self._held)}
 
     def held_keys(self, since: int = -1, wait: float = HELD_WAIT) -> dict[str, Any]:
@@ -4386,11 +4393,12 @@ class Gui:
         """A key sounds on a channel of its own with the keys' tone, and lights before the song's lights (which
         get the room left until it's let go)."""
         status, number, value = message[0] & 0xF0, message[1], message[2]
+        toned = message[3] if len(message) > 3 else None  # (a fretboard's note: in its arrangement's tone, here)
         down = status == 0x90 and value > 0
-        sound = bool(self.settings["keys_sound"]) and not self.play_options["silent"]  # (the one mute: theirs too)
+        sound = (bool(self.settings["keys_sound"]) or toned is not None) and not self.play_options["silent"]
         lights = bool(self.settings["keys_lights"])
         out = self.settings["keys_output"]
-        synth = self._synth(out["port"]) if out is not None and sound else None  # (not there: on the keyboard)
+        synth = self._synth(out["port"]) if out is not None and sound and toned is None else None  # (else here)
         with self._keys_lock:
             if synth is not None and out is not None:
                 channel = int(out["channel"])
@@ -4423,7 +4431,7 @@ class Gui:
                 if lights and KEY_RANGE.lowest <= number <= KEY_RANGE.highest:
                     keyboard.hold((number,))
                 if sound:
-                    self._voice_keys(keyboard)
+                    self._voice_keys(keyboard, toned)
                     keyboard.sound(KEYS_CHANNEL, number, value)
             else:
                 keyboard.let_go((number,))
@@ -4454,8 +4462,9 @@ class Gui:
             self._idle_keyboard = self._open_keyboard()
         return self._idle_keyboard
 
-    def _voice_keys(self, keyboard: Keyboard) -> None:
-        number = self._keys_tone()
+    def _voice_keys(self, keyboard: Keyboard, number: int | None = None) -> None:
+        """The keys' channel in their tone (or the one given: a fretboard's note's), set only as it changes."""
+        number = self._keys_tone() if number is None else number
         voiced = self._keys_voiced
         if voiced is None or voiced[0] is not keyboard or voiced[1] != number:
             found = tone(number)

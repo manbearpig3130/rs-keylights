@@ -29,7 +29,12 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); }
+  body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text);
+    -webkit-user-select: none; user-select: none; cursor: default; }
+  /* (an app's page: its text not selected by a stray drag; but what's there to copy, and what's typed, is) */
+  input, textarea, pre, code, #gameDir, #splitServerLines, .phone-link { -webkit-user-select: text; user-select: text; }
+  input:not([type]), input[type=text], input[type=search], input[type=password], input[type=number], textarea,
+  pre, code, #gameDir { cursor: text; }
   header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
   header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; line-height: 0; }
   header h1 img { height: 30px; width: auto; }
@@ -60,8 +65,9 @@
     border: 1px solid var(--muted); border-radius: 4px; background: var(--input); vertical-align: -2px; cursor: pointer;
     display: inline-grid; place-content: center; flex: none; }
   input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
-  input[type=checkbox]:checked::after { content: ""; width: 8px; height: 4px; margin-top: -2px;
-    border-left: 2px solid var(--accent-text); border-bottom: 2px solid var(--accent-text); transform: rotate(-45deg); }
+  input[type=checkbox]::after { content: ""; width: 8px; height: 4px; margin-top: -2px;
+    border-left: 2px solid transparent; border-bottom: 2px solid transparent; transform: rotate(-45deg); }
+  input[type=checkbox]:checked::after { border-color: var(--accent-text); }  /* (there either way: nothing moves) */
   input[type=checkbox]:disabled { opacity: .45; cursor: default; }
   input[type=checkbox]:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
   button:hover:not(:disabled) { border-color: var(--muted); }
@@ -338,17 +344,33 @@
   /* The song's scale on its guitar: the frets evenly spaced, the highest string on top (as in tab) */
   .fretboard { overflow-x: auto; margin: 4px -4px 0; padding: 0 4px; }
   /* The tab: two rows of bars (where the song is, and what comes next), the notes being played lit */
+  /* (each note a chip on its string, edged in the string's colour as Rocksmith colours them, a tail along the string
+     as it rings; the ones being played filled, the ones played faded) */
+  .tab { --s0: #e5484d; --s1: #e6b422; --s2: #3e8ee6; --s3: #f0802a; --s4: #3fb35a; --s5: #a463d6; }
   .tab svg { display: block; width: 100%; height: auto; }
-  .tab .string { stroke: var(--line); }
-  .tab .bar { stroke: var(--muted); }
+  .tab .staff { fill: color-mix(in srgb, var(--text) 3%, transparent); }
+  .tab .string { stroke: var(--line); stroke-width: 1.3; }
+  .tab .bar { stroke: var(--muted); stroke-width: 1.2; opacity: .55; }
+  .tab .bar.end { opacity: .9; }
   .tab .head { stroke: var(--live); stroke-width: 2; }
-  .tab text { font: 11px ui-monospace, Menlo, monospace; fill: var(--text); text-anchor: middle; dominant-baseline: central;
-              paint-order: stroke; stroke: var(--panel); stroke-width: 4px; }
-  .tab text.past { fill: var(--muted); }
-  .tab text.now { fill: var(--live); font-weight: 700; }
-  .tab text.pm { font-style: italic; fill-opacity: .75; }
-  .tab text.label { fill: var(--muted); stroke: none; }
-  .tab text.chord { fill: var(--accent); text-anchor: start; font-weight: 600; stroke: none; }
+  .tab .head-cap { fill: var(--live); }
+  .tab text { font: 600 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; font-variant-numeric: tabular-nums;
+              fill: var(--text); text-anchor: middle; dominant-baseline: central; }
+  .tab text.label { fill: var(--muted); font-size: 11px; font-weight: 500; }
+  .tab text.barno { fill: var(--muted); font-size: 10px; font-weight: 500; text-anchor: start; }
+  .tab text.chord { fill: var(--accent); text-anchor: start; font-size: 13px; font-weight: 700; }
+  .tab .tn { --sc: var(--muted); }
+  .tab .tn.s0 { --sc: var(--s0); } .tab .tn.s1 { --sc: var(--s1); } .tab .tn.s2 { --sc: var(--s2); }
+  .tab .tn.s3 { --sc: var(--s3); } .tab .tn.s4 { --sc: var(--s4); } .tab .tn.s5 { --sc: var(--s5); }
+  .tab .tn rect { fill: var(--panel); stroke: var(--sc); stroke-width: 1.6; }
+  .tab .tn .tail { stroke: var(--sc); stroke-width: 4; stroke-linecap: round; opacity: .3; }
+  .tab .tn.past { opacity: .4; }
+  .tab .tn.now rect { fill: var(--sc); }
+  .tab .tn.now text { fill: #fff; paint-order: stroke; stroke: rgb(0 0 0 / 30%); stroke-width: 2px; }
+  .tab .tn.now .tail { opacity: .7; }
+  .tab .tn.pm rect { stroke-dasharray: 3 2; }
+  .tab .tn.pm text { font-style: italic; }
+  .tab .tn.mute text { fill: var(--muted); }
   .fretboard svg { display: block; width: 100%; min-width: 620px; height: auto; }
   .fretboard .string { stroke: var(--fb-string); }
   .fretboard .wood { fill: url(#fb-wood); }
@@ -357,6 +379,8 @@
   .fretboard .fret { fill: url(#fb-fret); }
   .fretboard .nut { fill: var(--fb-nut); stroke: rgb(0 0 0 / 25%); stroke-width: .5; }
   .fretboard .inlay { fill: url(#fb-pearl); stroke: rgb(0 0 0 / 30%); stroke-width: .6; }
+  .fret-card .fretboard svg { cursor: pointer; }  /* (a click plays the string at its fret) */
+  .fretboard .tap { fill: none; stroke: var(--live); stroke-width: 3; pointer-events: none; }
   #fbDefs .fb-wood-mid { stop-color: var(--fb-wood); }
   #fbDefs .fb-wood-edge { stop-color: var(--fb-wood-edge); }
   #fbDefs .fb-grain { stroke: var(--fb-grain); }
@@ -405,9 +429,12 @@
   .wu-choose span { display: contents; }
   .wu-score .good { color: var(--ok); font-weight: 600; }
   .wu-score .bad { color: var(--accent); font-weight: 600; }
-  .tab text.past.ok { fill: var(--ok); font-weight: 700; }
-  .tab text.past.early, .tab text.past.late { fill: var(--warn); font-weight: 700; }
-  .tab text.past.wrong, .tab text.past.missed { fill: var(--accent); font-weight: 700; }
+  .tab .tn.past.ok, .tab .tn.past.early, .tab .tn.past.late, .tab .tn.past.wrong, .tab .tn.past.missed { opacity: 1; }
+  .tab .tn.past.ok rect { stroke: var(--ok); } .tab .tn.past.ok text { fill: var(--ok); }
+  .tab .tn.past.early rect, .tab .tn.past.late rect { stroke: var(--warn); }
+  .tab .tn.past.early text, .tab .tn.past.late text { fill: var(--warn); }
+  .tab .tn.past.wrong rect, .tab .tn.past.missed rect { stroke: var(--accent); }
+  .tab .tn.past.wrong text, .tab .tn.past.missed text { fill: var(--accent); }
   .fretboard .wu-place circle { fill: var(--panel); stroke: var(--muted); stroke-width: 1.5; }
   .fretboard .wu-place text { fill: var(--text); font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
   .fretboard .wu-place.wu-root circle { stroke: var(--accent); stroke-width: 2.5; }
@@ -621,7 +648,6 @@
         </div>
       </div>
       <div id="parts"></div>
-      <div id="lightsNote" class="note" hidden></div>
       <div id="loopLine" class="loopline" hidden title="Set the loop on the Launchkey: press ▼, then use the top pads (A, B, on/off, section), knobs 4 and 5 (one beat per step) or knob 8 (one bar per step)">
         <span id="loopText"></span>
         <button type="button" id="loopOn">Loop</button>
@@ -1523,6 +1549,39 @@ function makeFretCard(spec) {
     saveLayout();
     if (selected) card.render(selected);
   });
+  // A click on the board plays the string clicked at its fret on the keyboard, in the arrangement's tone, for as
+  // long as it's held down (behind a capo: the capo's fret); a dot shows where while it sounds
+  let pressed = null;
+  r("board").addEventListener("pointerdown", (e) => {
+    const svg = r("board").querySelector("svg"), s = selected, guitar = data || (s && s.guitar);
+    if (e.button !== 0 || !svg || !s || !guitar || !guitar.strings) return;
+    const point = svg.createSVGPoint();
+    point.x = e.clientX;
+    point.y = e.clientY;
+    const at = point.matrixTransform(svg.getScreenCTM().inverse());
+    const n = guitar.strings.length, {nut} = geometry(n), {W, LEFT, TOP, GAP} = BOARD;
+    const row = Math.round((at.y - TOP) / GAP);
+    if (at.x < LEFT || row < 0 || row >= n || Math.abs(at.y - (TOP + row * GAP)) > GAP / 2) return;
+    const string = fretThickOnTop ? row : n - 1 - row;
+    const fret = at.x < nut ? 0 : Math.min(FRETS, Math.floor((at.x - nut) / W) + 1);
+    const part = s.parts.find((x) => x.part === fretPartOf(s, card.spec.part));
+    const tone = part ? (part.tones && part.tones.tone) || defaultsFor(part.kind).from.tone : null;
+    const key = guitar.strings[string] + Math.max(fret, guitar.capo || 0);
+    e.preventDefault();
+    r("board").setPointerCapture(e.pointerId);
+    release();
+    pressed = {key, tone};
+    pressKey(key, true, tone);
+    const {x, y} = geometry(n);
+    svg.insertAdjacentHTML("beforeend", `<circle class="tap" cx="${x(fret)}" cy="${y(string)}" r="${BOARD.R + 2}"/>`);
+  });
+  function release() {
+    if (!pressed) return;
+    pressKey(pressed.key, false, pressed.tone);
+    pressed = null;
+    for (const tap of r("board").querySelectorAll(".tap")) tap.remove();
+  }
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) r("board").addEventListener(type, release);
   return card;
 }
 
@@ -1610,7 +1669,7 @@ function liveSvg(live, d, key) {
 // light up, the ones played are dimmed; the chords' names are over them; techniques as tab has them (h, p, t,
 // /, \, b, ~, <harmonics>, x for fret-hand mutes; palm mutes in italics). The strings are as the fretboard has
 // them (the thick one on top, or as tab); the arrangement is the fretboard's (following: the game's), or one picked
-const TAB = {LEFT: 22, RIGHT: 10, TOP: 22, GAP: 13, ROWS: 2, ROW_GAP: 22};
+const TAB = {LEFT: 30, RIGHT: 12, TOP: 40, GAP: 22, ROWS: 2, ROW_GAP: 30, CHIP: 18, CHAR: 7.6, RINGS: 0.25, AFTER: 12};
 const TECH = {HARMONIC: 0x20, PALM_MUTE: 0x40, HAMMER_ON: 0x200, PULL_OFF: 0x400, TAP: 0x4000, PINCH: 0x8000,
   VIBRATO: 0x10000};
 let tabBars = Number(store.get("rsk.tabBars", 2)) || 2;  // (a new tab's bars a row: the last chosen)
@@ -1698,23 +1757,35 @@ function tabSvg(d, first, at, width) {
   const y = (row, string) => TAB.TOP + row * (height + TAB.ROW_GAP + TAB.TOP / 2) +
     (fretThickOnTop ? string : n - 1 - string) * TAB.GAP;
   const out = [];
+  // A note: a chip on its string, edged in its colour (s0 the lowest), its tail along the string as it rings on
+  const chip = (cls, string, cx, cy, text, until) => {
+    const w = Math.max(TAB.CHIP, text.length * TAB.CHAR + 9), h = TAB.CHIP;
+    const tail = until > cx + w / 2 + 6 ? `<line class="tail" x1="${cx + w / 2}" x2="${until}" y1="${cy}" y2="${cy}"/>` : "";
+    return `<g class="tn s${string % 6} ${cls}">${tail}<rect x="${cx - w / 2}" y="${cy - h / 2}" width="${w}" height="${h}" ` +
+      `rx="${h / 2}"/><text x="${cx}" y="${cy + 0.5}">${esc(text)}</text></g>`;
+  };
   for (let row = 0; row < TAB.ROWS && first + row < d.rows.length; row++) {
     const [start, end] = d.rows[first + row];
     const x = (t) => TAB.LEFT + (t - start) / (end - start) * (right - TAB.LEFT);
+    const nx = (t) => x(t) + TAB.AFTER;  // (a note a little after its time's bar line, as printed tab has it)
+    const top = Math.min(y(row, 0), y(row, n - 1)), bottom = Math.max(y(row, 0), y(row, n - 1));
+    out.push(`<rect class="staff" x="${TAB.LEFT}" y="${top - TAB.CHIP / 2 - 2}" width="${right - TAB.LEFT}" ` +
+      `height="${bottom - top + TAB.CHIP + 4}" rx="6"/>`);
     for (let string = 0; string < n; string++) {
       out.push(`<line class="string" x1="${TAB.LEFT}" x2="${right}" y1="${y(row, string)}" y2="${y(row, string)}"/>`,
-               `<text class="label" x="8" y="${y(row, string)}">${SHARPS[d.strings[string] % 12]}</text>`);
+               `<text class="label" x="${TAB.LEFT / 2 - 1}" y="${y(row, string)}">${SHARPS[d.strings[string] % 12]}</text>`);
     }
-    const top = Math.min(y(row, 0), y(row, n - 1)), bottom = Math.max(y(row, 0), y(row, n - 1));
-    for (const bar of d.bars) {
-      if (bar >= start && bar < end) out.push(`<line class="bar" x1="${x(bar)}" x2="${x(bar)}" y1="${top}" y2="${bottom}"/>`);
-    }
-    out.push(`<line class="bar" x1="${right}" x2="${right}" y1="${top}" y2="${bottom}"/>`);
+    d.bars.forEach((bar, i) => {
+      if (bar < start || bar >= end) return;
+      out.push(`<line class="bar" x1="${x(bar)}" x2="${x(bar)}" y1="${top}" y2="${bottom}"/>`,
+               `<text class="barno" x="${x(bar) + 2}" y="${top - TAB.CHIP / 2 - 18}">${i + 1}</text>`);
+    });
+    out.push(`<line class="bar end" x1="${right}" x2="${right}" y1="${top}" y2="${bottom}"/>`);
     let named = -Infinity;
     for (const [chordAt, , name] of d.chords) {
       if (chordAt >= start && chordAt < end && name && x(chordAt) > named) {
-        out.push(`<text class="chord" x="${x(chordAt) - 4}" y="${top - 11}">${esc(name)}</text>`);
-        named = x(chordAt) + 7 * name.length + 6;
+        out.push(`<text class="chord" x="${nx(chordAt) - 6}" y="${top - TAB.CHIP / 2 - 6}">${esc(name)}</text>`);
+        named = nx(chordAt) - 6 + 8 * name.length + 6;
       }
     }
     d.notes.forEach((note, i) => {
@@ -1723,20 +1794,21 @@ function tabSvg(d, first, at, width) {
       const tech = d.techniques ? d.techniques[i] : null;
       const shown = t > at ? "" : Math.max(sounds, t + LIT) >= at ? "now" : "past";
       const kind = `${shown}${tech && tech[0] & TECH.PALM_MUTE ? " pm" : ""}${d.marks && d.marks[i] ? " " + d.marks[i] : ""}`;
-      for (const [string, fret] of places) {
-        out.push(`<text class="${kind}" x="${x(t)}" y="${y(row, string)}">${esc(fretText(fret, tech))}</text>`);
-      }
+      const until = sounds - t >= TAB.RINGS ? Math.min(nx(Math.min(sounds, end)), right - 2) : 0;
+      for (const [string, fret] of places) out.push(chip(kind, string, nx(t), y(row, string), fretText(fret, tech), until));
     });
     for (const [t, places] of d.muted || []) {
       if (t < start || t >= end) continue;
-      for (const [string] of places) out.push(`<text class="${t > at ? "" : "past"}" x="${x(t)}" y="${y(row, string)}">x</text>`);
+      for (const [string] of places) out.push(chip(`mute ${t > at ? "" : "past"}`, string, nx(t), y(row, string), "×", 0));
     }
     if (row === 0 && at >= start && at < end) {
-      out.push(`<line class="head" x1="${x(at)}" x2="${x(at)}" y1="${top - 4}" y2="${bottom + 4}"/>`);
+      const head = nx(at), above = top - TAB.CHIP / 2 - 3;
+      out.push(`<line class="head" x1="${head}" x2="${head}" y1="${above}" y2="${bottom + TAB.CHIP / 2 + 4}"/>`,
+               `<path class="head-cap" d="M${head - 5} ${above - 6}h10l-5 6z"/>`);
     }
   }
   const rows = Math.min(TAB.ROWS, d.rows.length - first);
-  const total = y(rows - 1, fretThickOnTop ? n - 1 : 0) + TAB.GAP;
+  const total = y(rows - 1, fretThickOnTop ? n - 1 : 0) + TAB.CHIP / 2 + 6;
   return `<svg viewBox="0 0 ${width} ${total}" role="img" aria-label="Tab">${out.join("")}</svg>`;
 }
 
@@ -1779,10 +1851,11 @@ let rollAhead = Number(store.get("rsk.rollAhead", 4)) || 4;  // (a new keys card
 // /api/keys/press), each in turn (a key's let go never overtakes its press)
 const held = {keys: new Set(), version: -1};
 let pressing = Promise.resolve();
-function pressKey(key, down) {
+function pressKey(key, down, tone = null) {
   if (down) held.keys.add(key); else held.keys.delete(key);  // (shown at once, before the answer)
   heldDrawn++;
-  pressing = pressing.then(() => api("/api/keys/press", {key, down})).catch(() => {});
+  const body = tone == null ? {key, down} : {key, down, tone};  // (a fretboard's: in its arrangement's tone)
+  pressing = pressing.then(() => api("/api/keys/press", body)).catch(() => {});
 }
 let heldDrawn = 0;  // (one more each time the keys held change: the keys cards drawn again)
 (async function followHeld() {
@@ -4181,7 +4254,6 @@ function renderSong() {
   }
   $("len").textContent = fmt(s.length);
   if (f) {
-    $("lightsNote").hidden = true;
     updateButtons();
   } else {
     checkLights();
@@ -4700,9 +4772,6 @@ $("audioDevice").addEventListener("click", (e) => e.preventDefault());  // (in i
 // or shut)
 
 function checkLights() {
-  const message = selected.parts.some((p) => p.play) ? "" : "Every part is muted: it plays on as you unmute them.";
-  $("lightsNote").textContent = message;
-  $("lightsNote").hidden = !message;
   playable = true;  // (every part muted too: they can be played again as it goes)
   updateButtons();
 }

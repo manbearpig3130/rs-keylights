@@ -2069,6 +2069,21 @@ def test_a_key_clicked_on_the_page_plays_as_the_launchkeys_and_the_keys_held_are
     assert call(server, "/api/keys/press", {"key": 200})[0] == 400
 
 
+def test_a_fretboards_note_sounds_in_its_arrangements_tone_though_the_keys_own_sound_is_off(server):
+    from rs_keylights.tones import tone
+    gui = server.gui
+    gui.settings["keys_sound"] = False  # (the Launchkey's keys silent: a fretboard's note sounds anyway)
+    guitar = tone(292)
+    assert call(server, "/api/keys/press", {"key": 52, "down": True, "tone": 292})[0] == 200
+    gui._keys_queue.join()
+    sent = server.outs[-1].sent
+    assert [0xC0, guitar.program] in sent and [0x90, 52, 100] in sent  # (its tone on the keys' channel, then it)
+    call(server, "/api/keys/press", {"key": 52, "down": False, "tone": 292})
+    gui._keys_queue.join()
+    assert [0x80, 52, 0] in server.outs[-1].sent
+    assert call(server, "/api/keys/press", {"key": 52, "tone": 99999})[0] == 400
+
+
 def test_following_a_split_song_its_parts_play_in_the_games_song_at_the_stem_mixers_levels(server, monkeypatch, tmp_path):
     import struct
     import wave as wave_module
