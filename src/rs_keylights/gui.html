@@ -411,21 +411,33 @@
   .wu-spark .now { fill: var(--live); stroke: var(--panel); stroke-width: 2; }
   .wu-spark .hit { fill: transparent; }
   .wu-spark .hit:hover + .day, .wu-spark .hit:hover + .now { stroke: var(--text); stroke-width: 2; }
+  /* The drum kit: its own colours either theme (a black sparkle wrap, coated heads, chrome, bronze: kitSvg), its
+     shadow and the light it's struck with the page's */
   .drumkit svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
   .drumkit .piece { cursor: pointer; }
-  .drumkit { user-select: none; -webkit-user-select: none; touch-action: manipulation; }  /* (clicked fast: no text
+  .drumkit { user-select: none; -webkit-user-select: none; touch-action: manipulation;  /* (clicked fast: no text
      picked, no zoom) */
-  .drumkit .shell { fill: var(--input); stroke: var(--muted); stroke-width: 1.5; }
-  .drumkit .head { fill: var(--panel); stroke: var(--muted); stroke-width: 1.5; }
-  .drumkit .metal { fill: color-mix(in srgb, var(--warn) 30%, var(--panel)); stroke: var(--muted); stroke-width: 1.2; }
-  .drumkit .stand { stroke: var(--line); stroke-width: 2; }
-  .drumkit .glow { fill: var(--live); pointer-events: none; }
-  .drumkit .piece:hover .head, .drumkit .piece:hover .metal { stroke: var(--text); stroke-width: 2.2; }
+    --dk-floor: rgb(60 50 40 / 24%); --dk-rim: transparent; }
+  @media (prefers-color-scheme: dark) {
+    .drumkit { --dk-floor: rgb(0 0 0 / 60%); --dk-rim: rgb(255 255 255 / 13%); }  /* (a black shell's edge: lit) */
+  }
+  .drumkit .lit { stop-color: var(--live); }
+  .drumkit .shade { stop-color: var(--dk-floor); }
+  .drumkit .wrap { stroke: var(--dk-rim); stroke-width: .8; }
+  .drumkit .glow, .drumkit .ripple, .drumkit .hov { pointer-events: none; }
+  .drumkit .ripple { fill: none; stroke: var(--live); stroke-width: 2; }
+  .drumkit .hov { fill: var(--live); fill-opacity: .12; stroke: var(--live); stroke-width: 1.5; opacity: 0;
+    transition: opacity .12s; }
+  .drumkit .piece:hover .hov { opacity: 1; }
+  .drumkit text { font-size: 11px; font-weight: 500; fill: var(--muted); text-anchor: middle; pointer-events: none;
+    paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }  /* (over a stand: clear) */
+  .drumkit text.on-head { font-size: 8.5px; font-weight: 600; letter-spacing: .22em; fill: #a9a9b0; stroke: none; }
+  .drumkit .piece:hover text { fill: var(--text); }
+  .drumkit .piece:hover text.on-head { fill: #fff; }
   .circuit-kit { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 14px; margin-top: 10px; font-size: 13px; }
   .circuit-kit label { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
   .circuit-kit .name { flex: 1; color: var(--muted); }
   .circuit-kit input { width: 52px; }
-  .drumkit text { font-size: 11px; fill: var(--muted); text-anchor: middle; pointer-events: none; }
   .roll canvas { display: block; width: 100%; height: 300px; border-radius: 6px; user-select: none; -webkit-user-select: none; }
   [data-kind="keys"] .fret-head h3, #audioCard .fret-head h3, #drumsCard .fret-head h3 { flex-basis: auto; }  /* (a
      short title: what's at its top beside it, on a phone too) */
@@ -1922,52 +1934,281 @@ function drawRoll(canvas, d, at, seconds, width, height, ratio) {
   }
 }
 
-// The drums: a drum kit drawn from the front, each drum lighting as the song's drum part strikes it (brighter the
-// harder, fading), playing or following; a click strikes it, where the drums play (the keyboard's drum channel or
-// their device, its note for it), to hear it and tune its sound. Under it, how many of each the part has and where
-// it plays. GET /api/drums/part, POST /api/drums/hit
-const KIT = {  // each drum: its General MIDI notes (the first struck by a click), name, and how it's drawn
-  crash: {notes: [49], name: "Crash", shape: "cymbal", x: 150, y: 52, w: 80},
-  ride: {notes: [51], name: "Ride", shape: "cymbal", x: 500, y: 62, w: 92},
-  hihat: {notes: [42, 46], name: "Hi-hat", shape: "hat", x: 62, y: 150, w: 52},
-  high: {notes: [50], name: "High tom", shape: "tom", x: 262, y: 108, w: 40, h: 34},
-  mid: {notes: [47], name: "Mid tom", shape: "tom", x: 372, y: 108, w: 44, h: 38},
-  snare: {notes: [38], name: "Snare", shape: "tom", x: 170, y: 192, w: 50, h: 26},
-  low: {notes: [43], name: "Low tom", shape: "tom", x: 500, y: 188, w: 56, h: 64},
-  kick: {notes: [36, 35], name: "Kick", shape: "kick", x: 318, y: 232, w: 64},
+// The drums: a drum kit as its drummer sees it (the hi-hat on the left, the floor tom on the right, the kick's front
+// head facing), each drum lighting as the song's drum part strikes it (brighter the harder, fading: a cymbal rocking
+// on its stand, a ring spreading over a head, the kick's beater swinging in), playing or following; a click strikes
+// it, where the drums play (the keyboard's drum channel or their device, its note for it), to hear it and tune its
+// sound. Under it, how many of each the part has and where it plays. GET /api/drums/part, POST /api/drums/hit
+const KIT = {  // each drum: its General MIDI notes (the first struck by a click), name, and how it's drawn (its
+  // middle; a cymbal's radius or a head's; a shell's depth; tilted so many degrees)
+  crash: {notes: [49], name: "Crash", shape: "cymbal", x: 168, y: 72, w: 74, tilt: -7},
+  ride: {notes: [51], name: "Ride", shape: "cymbal", x: 516, y: 80, w: 88, tilt: 6},
+  hihat: {notes: [42, 46], name: "Hi-hat", shape: "hat", x: 68, y: 170, w: 52},
+  high: {notes: [50], name: "High tom", shape: "tom", x: 270, y: 148, w: 40, h: 30, tilt: 7},
+  mid: {notes: [47], name: "Mid tom", shape: "tom", x: 372, y: 148, w: 44, h: 33, tilt: -7},
+  snare: {notes: [38], name: "Snare", shape: "snare", x: 180, y: 228, w: 50, h: 22},
+  low: {notes: [43], name: "Low tom", shape: "floor", x: 486, y: 210, w: 58, h: 70},
+  kick: {notes: [36, 35], name: "Kick", shape: "kick", x: 320, y: 236, w: 80},
 };
+const KIT_DRAWN = ["ride", "crash", "kick", "high", "mid", "low", "snare", "hihat"];  // (back to front)
 const DRUM_FLASH = 0.18;  // seconds a drum's light fades over
-let drumsData = null, drumsWanted = "", drumsOutputs = "", drumsFlash = new Map(), drumsShown = "";
+const DRUM_RING = 1.0;  // seconds a cymbal rocks on after it's struck (a head's ring, the kick's beater: less)
+const KIT_STILL = matchMedia("(prefers-reduced-motion: reduce)");  // (then lit only: nothing rocks or spreads)
+let drumsData = null, drumsWanted = "", drumsOutputs = "", drumsFlash = new Map(), drumsShown = "", kitParts = null;
+
+// Its paints, once: the kit's own (black lacquer with a sparkle of the logo's red, chrome, coated heads, bronze),
+// the light it's struck with the page's --live, its shadow the page's (.lit, .shade)
+const KIT_PICK = "M0,-1C.6,-1.02 1,-.82 1,-.42C1,.06 .44,.78 .1,1.08Q0,1.16 -.1,1.08C-.44,.78 -1,.06 -1,-.42" +
+  "C-1,-.82 -.6,-1.02 0,-1Z";  // (the logo's pick, 2 wide)
+const KIT_DEFS = `<defs>
+<linearGradient id="dk-wrap"><stop offset="0" stop-color="#060607"/><stop offset=".08" stop-color="#202024"/>
+<stop offset=".2" stop-color="#5a5a62"/><stop offset=".32" stop-color="#1f1f23"/>
+<stop offset=".62" stop-color="#0b0b0d"/><stop offset=".86" stop-color="#2a2a2f"/>
+<stop offset="1" stop-color="#070708"/></linearGradient>
+<pattern id="dk-flake" width="26" height="19" patternUnits="userSpaceOnUse">
+<circle cx="8.7" cy="3.4" r=".44" fill="#ff4f58" opacity=".54"/>
+<circle cx="16.7" cy="2.1" r=".45" fill="#fff" opacity=".27"/>
+<circle cx="13.9" cy="7.2" r=".57" fill="#ff4f58" opacity=".76"/>
+<circle cx="2.2" cy="9.6" r=".44" fill="#fff" opacity=".31"/>
+<circle cx="2.5" cy="2.4" r=".61" fill="#ff4f58" opacity=".76"/>
+<circle cx="11.2" cy="15.2" r=".39" fill="#ff4f58" opacity=".51"/>
+<circle cx="16.1" cy="17.3" r=".5" fill="#ff4f58" opacity=".62"/>
+<circle cx="24.6" cy="1.6" r=".45" fill="#ff4f58" opacity=".45"/>
+<circle cx="21.7" cy="5.8" r=".61" fill="#ff4f58" opacity=".65"/>
+<circle cx="8.5" cy="11" r=".51" fill="#ff9aa0" opacity=".43"/>
+<circle cx="20.2" cy="13" r=".59" fill="#ff9aa0" opacity=".31"/>
+<circle cx="21.3" cy="17.2" r=".56" fill="#ff9aa0" opacity=".52"/>
+<circle cx="2.2" cy="14.2" r=".35" fill="#ff4f58" opacity=".59"/></pattern>
+<linearGradient id="dk-chrome" x2="0" y2="1"><stop offset="0" stop-color="#fdfdfe"/>
+<stop offset=".38" stop-color="#9a9aa1"/><stop offset=".56" stop-color="#ededf0"/>
+<stop offset=".82" stop-color="#5a5a61"/><stop offset="1" stop-color="#b4b4ba"/></linearGradient>
+<linearGradient id="dk-tube"><stop offset="0" stop-color="#55555b"/><stop offset=".32" stop-color="#f7f7f9"/>
+<stop offset=".56" stop-color="#a3a3aa"/><stop offset=".82" stop-color="#3c3c42"/>
+<stop offset="1" stop-color="#8c8c93"/></linearGradient>
+<radialGradient id="dk-head" cx=".46" cy=".38" r=".66"><stop offset="0" stop-color="#fefdfa"/>
+<stop offset=".55" stop-color="#f0ede5"/><stop offset=".88" stop-color="#d8d3c8"/>
+<stop offset="1" stop-color="#bfb9ad"/></radialGradient>
+<pattern id="dk-coat" width="5" height="4" patternUnits="userSpaceOnUse">
+<circle cx="1" cy="1" r=".45" fill="#857b67" opacity=".2"/>
+<circle cx="3.6" cy="2.9" r=".4" fill="#857b67" opacity=".16"/>
+<circle cx="2.4" cy="3.5" r=".35" fill="#fff" opacity=".6"/></pattern>
+<linearGradient id="dk-hoop" x2="0" y2="1"><stop offset="0" stop-color="#3a3a40"/>
+<stop offset=".25" stop-color="#151518"/><stop offset=".8" stop-color="#0b0b0d"/><stop offset="1" stop-color="#26262b"/>
+</linearGradient>
+<radialGradient id="dk-reso" cx=".4" cy=".34" r=".75"><stop offset="0" stop-color="#3c3c42"/>
+<stop offset=".45" stop-color="#19191c"/><stop offset="1" stop-color="#08080a"/></radialGradient>
+<radialGradient id="dk-bronze" fx=".4" fy=".36"><stop offset="0" stop-color="#f7de9c"/>
+<stop offset=".3" stop-color="#ddb365"/><stop offset=".62" stop-color="#c6984b"/>
+<stop offset=".9" stop-color="#a77a36"/><stop offset="1" stop-color="#8a6027"/></radialGradient>
+<radialGradient id="dk-bell" cy=".75" r=".75" fx=".38" fy=".3"><stop offset="0" stop-color="#fff5d2"/>
+<stop offset=".45" stop-color="#e3b96a"/><stop offset="1" stop-color="#97692b"/></radialGradient>
+<linearGradient id="dk-sheen"><stop offset="0" stop-color="#fff" stop-opacity="0"/>
+<stop offset=".2" stop-color="#fff" stop-opacity=".8"/><stop offset=".42" stop-color="#fff" stop-opacity="0"/>
+<stop offset=".58" stop-color="#fff" stop-opacity="0"/><stop offset=".8" stop-color="#fff" stop-opacity=".8"/>
+<stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<radialGradient id="dk-felt" fx=".4" fy=".35"><stop offset="0" stop-color="#fbf9f4"/>
+<stop offset="1" stop-color="#c9c2b4"/></radialGradient>
+<linearGradient id="dk-board" x2="0" y2="1"><stop offset="0" stop-color="#4a4a51"/>
+<stop offset="1" stop-color="#1b1b1f"/></linearGradient>
+<radialGradient id="dk-gloss"><stop offset="0" stop-color="#fff" stop-opacity=".16"/>
+<stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<radialGradient id="dk-lit"><stop offset="0" class="lit" stop-opacity=".95"/>
+<stop offset=".7" class="lit" stop-opacity=".6"/><stop offset="1" class="lit" stop-opacity=".1"/></radialGradient>
+<radialGradient id="dk-glint"><stop offset="0" stop-color="#fff" stop-opacity=".8"/>
+<stop offset=".28" class="lit" stop-opacity=".42"/><stop offset="1" class="lit" stop-opacity=".12"/></radialGradient>
+<radialGradient id="dk-edge"><stop offset=".69" class="lit" stop-opacity="0"/>
+<stop offset=".74" class="lit" stop-opacity=".7"/><stop offset="1" class="lit" stop-opacity="0"/></radialGradient>
+<radialGradient id="dk-spill"><stop offset=".5" class="lit" stop-opacity=".45"/>
+<stop offset="1" class="lit" stop-opacity="0"/></radialGradient>
+<radialGradient id="dk-floor"><stop offset="0" class="shade"/><stop offset="1" class="shade" stop-opacity="0"/>
+</radialGradient>
+<clipPath id="dk-pick"><path d="${KIT_PICK}"/></clipPath>
+</defs>`;
+
+const kitN = (v) => Math.round(v * 10) / 10;  // (a tenth of a pixel: shorter markup)
+
+function kitRod(x1, y1, x2, y2, w = 2.4) {  // a stand's tube, its shine on the side the light's from (up, left)
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+  let px = (y1 - y2) / len, py = (x2 - x1) / len;
+  if (px + py > 0) { px = -px; py = -py; }
+  const line = (o) => `M${kitN(x1 + px * o)},${kitN(y1 + py * o)}L${kitN(x2 + px * o)},${kitN(y2 + py * o)}`;
+  return `<path d="${line(0)}" stroke="#6e6e75" stroke-width="${w}" stroke-linecap="round"/>` +
+    `<path d="${line(w * .22)}" stroke="#f0f0f3" stroke-width="${kitN(w * .34)}" stroke-linecap="round"/>`;
+}
+
+function kitJoint(x, y, w = 6, h = 6) {  // a stand's clamp, where one tube meets the next
+  return `<rect x="${kitN(x - w / 2)}" y="${kitN(y - h / 2)}" width="${w}" height="${h}" rx="1.5" fill="url(#dk-tube)" ` +
+    `stroke="#45454b" stroke-width=".5"/>`;
+}
+
+function kitTripod(x, floor, spread, top) {  // a stand's three legs, from its tube's foot (x, top) to the floor
+  const foot = (fx, fy) => `<ellipse cx="${kitN(fx)}" cy="${fy + 1}" rx="3" ry="1.4" fill="#1c1c1f"/>`;
+  return kitRod(x, top, x + spread * .15, floor - 9, 2) + kitRod(x, top, x - spread, floor) +
+    kitRod(x, top, x + spread * .92, floor - 2) + foot(x - spread, floor) + foot(x + spread * .92, floor - 2) +
+    kitJoint(x, top + 2, 7, 7);
+}
+
+function kitLabel(x, y, name, more = "") {
+  return `<text x="${kitN(x)}" y="${kitN(y)}"${more}>${name}</text>`;
+}
+
+function kitCymbal(r, k, shine, crown) {  // a cymbal round (0, 0), tilted (a circle, k as deep as it's wide): its
+  // edge, its face, the lathe's rings, its shine (turned as it rocks), lit as it's struck; then its bell and crown
+  const rings = [[], []], b = kitN(r * .21), h = kitN(r * .11);
+  for (let i = 1; i <= 14; i++) {
+    const rr = kitN(r * (.24 + .74 * i / 14));
+    rings[i % 2].push(`M${-rr},0a${rr},${rr} 0 1 0 ${kitN(2 * rr)},0a${rr},${rr} 0 1 0 ${kitN(-2 * rr)},0`);
+  }
+  return `<g transform="scale(1 ${k})"><circle cy="${kitN(2 / k)}" r="${r}" fill="#6f4c1f"/>` +
+    `<circle r="${r}" fill="url(#dk-bronze)"/>` +
+    `<path d="${rings[0].join("")}" fill="none" stroke="#5b3c10" stroke-opacity=".3" stroke-width=".8"/>` +
+    `<path d="${rings[1].join("")}" fill="none" stroke="#fff3cc" stroke-opacity=".32" stroke-width=".6"/>` +
+    `<g transform="rotate(${shine})"><ellipse class="sheen" rx="${kitN(r * .97)}" ry="${kitN(r * .14)}" ` +
+    `fill="url(#dk-sheen)" opacity=".55"/></g>` +
+    `<circle class="hov" r="${r}" vector-effect="non-scaling-stroke"/>` +
+    `<g class="glow" opacity="0"><circle r="${kitN(r * 1.4)}" fill="url(#dk-edge)"/>` +
+    `<circle r="${r}" fill="url(#dk-glint)"/></g></g>` +
+    `<path d="M${-b},0C${kitN(-b * .7)},${kitN(-h * 1.35)} ${kitN(b * .7)},${kitN(-h * 1.35)} ${b},0` +
+    `A${b},${kitN(b * k)} 0 0 1 ${-b},0Z" fill="url(#dk-bell)"/>` + crown(h);
+}
+
+function kitDrum(cx, cy, rx, ry, depth, lugs, tubes) {  // a drum standing, its head round (cx, cy): its shell (the
+  // wrap's sparkle, a red pinstripe), lugs and rods (tubes: the snare's, its depth), chrome hoops, its coated head;
+  // lit as it's struck, a ring spreading out
+  const L = cx - rx, R = cx + rx, low = cy + depth, n = kitN, ar = `${rx},${kitN(ry)} 0 0`;
+  const band = (y0, y1) => `M${L},${n(y0)}A${ar} 0 ${R},${n(y0)}V${n(y1)}A${ar} 1 ${L},${n(y1)}Z`;
+  const shell = `M${L},${cy}V${low}A${ar} 0 ${R},${low}V${cy}Z`;
+  const oval = (k, more) => `<ellipse cx="${cx}" cy="${cy}" rx="${n(rx * k)}" ry="${n(ry * k)}"${more}/>`;
+  let out = `<path class="wrap" d="${shell}" fill="url(#dk-wrap)"/><path d="${shell}" fill="url(#dk-flake)"/>` +
+    `<path d="${band(cy + depth * .6, cy + depth * .6 + 2.2)}" fill="#f2464f"/>` +
+    `<path d="${band(low - 2.5, low + 1.5)}" fill="url(#dk-chrome)"/>`;
+  for (let i = 0; i < lugs; i++) {
+    const a = ((i + .5) / lugs - .5) * 2 * Math.PI, c = Math.cos(a);
+    if (c < .25) continue;  // (round the back, or edge on)
+    const x = n(cx + rx * Math.sin(a) * .96), top = cy + ry * c, w = n(Math.max(1.4, 4.8 * c));
+    const spans = tubes ? [[5, depth - 3]] : depth > 40 ? [[9, 21], [depth - 19, depth - 7]] :
+      [[depth / 2 - 6, depth / 2 + 6]];
+    out += `<path d="M${x},${n(top + 3)}V${n(top + spans[0][0])}M${x},${n(top + spans.at(-1)[1])}V${n(top + depth)}" ` +
+      `stroke="#a6a6ad" stroke-width="${n(1.3 * c)}"/>` + spans.map(([a0, a1]) => `<rect x="${n(x - w / 2)}" ` +
+      `y="${n(top + a0)}" width="${w}" height="${n(a1 - a0)}" rx="${n(w / 2)}" fill="url(#dk-tube)"/>`).join("");
+  }
+  const head = 1 - 1.6 / rx;
+  return out + `<path d="${band(cy, cy + 4.5)}" fill="url(#dk-chrome)"/>` +
+    oval(head, ` fill="url(#dk-head)"`) + oval(head, ` fill="url(#dk-coat)"`) +
+    oval(.85, ` fill="none" stroke="#857b67" stroke-opacity=".22"`) +
+    oval(1, ` fill="none" stroke="url(#dk-chrome)" stroke-width="2.2"`) + oval(head, ` class="hov"`) +
+    `<g class="glow" opacity="0">${oval(1.55, ` fill="url(#dk-spill)"`)}${oval(1, ` fill="url(#dk-lit)"`)}</g>` +
+    `<g transform="translate(${cx} ${cy})"><ellipse class="ripple" rx="${rx}" ry="${n(ry)}" opacity="0"/></g>`;
+}
+
+function kitPick(x, y, s) {  // the logo's pick: its keys, red and white, the black ones over them
+  const key = (kx, w, fill, to = 1.2) => `<rect x="${kx}" y="-1.2" width="${w}" height="${to + 1.2}" fill="${fill}"/>`;
+  return `<g transform="translate(${x} ${y}) scale(${s})"><path d="${KIT_PICK}" fill="#f4f2ed"/>` +
+    `<g clip-path="url(#dk-pick)">${key(-.6, .4, "#ee4850")}${key(-.2, .4, "#ee4850")}${key(.6, .5, "#ee4850")}` +
+    `<path d="M-.6,-1.2V1.2M-.2,-1.2V1.2M.2,-1.2V1.2M.6,-1.2V1.2" stroke="#141416" stroke-width=".06"/>` +
+    `${key(-.71, .22, "#141416", .12)}${key(-.31, .22, "#141416", .12)}${key(.49, .22, "#141416", .12)}` +
+    `<path d="M-1.2,-1.2H.5V-1.1L-1.2,-.16Z" fill="#f4f2ed"/>` +
+    `<path d="M.5,-1.1L-1.2,-.16" stroke="#141416" stroke-width=".07"/></g>` +
+    `<path d="${KIT_PICK}" fill="none" stroke="#141416" stroke-width=".09"/></g>`;
+}
+
+const KIT_DRAW = {  // each shape's drawing (its label over it)
+  cymbal: (d) => {  // on a boom stand to its side
+    const bx = d.x + (d.x < 320 ? -52 : 70), top = d.y + 70, mid = (290 + top) / 2, nut = (h) =>
+      `<rect x="-3.4" y="${-h - 5}" width="6.8" height="4" rx="1.2" fill="#a8323a"/>` +
+      `<path d="M-6,${-h - 9}h12l-2.5,4h-7z" fill="#d9d9de" stroke="#6e6e75" stroke-width=".5"/>`;
+    return kitTripod(bx, 302, 17, 286) + kitRod(bx, 290, bx, mid, 3.8) + kitRod(bx, mid, bx, top, 2.8) +
+      kitRod(bx, top, d.x, d.y + 7) + kitJoint(bx, mid, 6, 7) + kitJoint(bx, top, 8, 8) +
+      `<g transform="translate(${d.x} ${d.y}) rotate(${d.tilt})"><g class="swing">` +
+      `${kitCymbal(d.w, .23, d.x < 320 ? 35 : -40, nut)}</g></g>` + kitLabel(d.x, d.y - d.w * .23 - 14, d.name);
+  },
+  hat: (d) => {  // two cymbals on its stand, the top one's clutch on the pull rod; its pedal
+    const {x, y, w} = d, clutch = (h) => kitRod(0, -h, 0, -h - 22, 1.8) +
+      `<rect x="-5" y="${-h - 5}" width="10" height="3" rx="1" fill="#cfc7b8"/>` +
+      `<rect x="-4" y="${-h - 12}" width="8" height="7" rx="1.5" fill="url(#dk-tube)"/>` +
+      `<rect x="-3" y="${-h - 15}" width="6" height="3" rx="1" fill="#8c8c93"/>`;
+    return kitTripod(x, 326, 22, 292) + kitRod(x, 304, x, y + 36, 4.4) + kitRod(x, y + 36, x, y + 6, 2.2) +
+      kitJoint(x, y + 36, 7, 6) +
+      `<path d="M${x - 5},316h10l5,24h-20z" fill="url(#dk-board)" stroke="#8c8c93" stroke-width=".8"/>` +
+      `<g transform="translate(${x} ${y + 6}) scale(1 .22)"><circle cy="9" r="${w}" fill="#6b481c"/>` +
+      `<circle r="${w}" fill="url(#dk-bronze)"/></g>` +
+      `<g transform="translate(${x} ${y}) rotate(-2)"><g class="swing">${kitCymbal(w, .22, 50, clutch)}</g></g>` +
+      kitLabel(x, y - 36, d.name);
+  },
+  tom: (d) => {  // a rack tom on its arm from the kick, tilted to its drummer
+    const ry = d.w * .5;
+    return kitRod(320, 130, d.x + (d.x < 320 ? 14 : -14), d.y + d.h * .6, 3.2) +
+      `<g transform="rotate(${d.tilt} ${d.x} ${d.y})">${kitDrum(d.x, d.y, d.w, ry, d.h, 8)}</g>` +
+      kitLabel(d.x, d.y - ry - 9, d.name);
+  },
+  snare: (d) => {  // in its stand's basket, its strainer at the side
+    const {x, y, w, h} = d, ry = w * .34, low = y + h + ry;
+    return kitTripod(x, 334, 22, 310) + kitRod(x, 314, x, low + 2, 3.4) +
+      kitRod(x, low + 3, x - w * .78, low - ry * .6, 2) + kitRod(x, low + 3, x + w * .78, low - ry * .6, 2) +
+      kitJoint(x, low + 4, 9, 6) + kitDrum(x, y, w, ry, h, 10, true) +
+      `<rect x="${kitN(x - w * .55 - 3)}" y="${kitN(y + ry * .83 + h * .25)}" width="6" height="${kitN(h * .55)}" ` +
+      `rx="1.5" fill="url(#dk-tube)"/>` + kitLabel(x, y - ry - 9, d.name);
+  },
+  floor: (d) => {  // on its three legs (two to be seen)
+    const {x, y, w, h} = d, ry = w * .34;
+    const legs = [[-1, 330], [1, 327]].map(([s, fy]) => kitRod(x + s * w * .95, y + h * .34, x + s * w * 1.16, fy,
+      2.8) + `<ellipse cx="${kitN(x + s * w * 1.16)}" cy="${fy + 1}" rx="3.4" ry="1.5" fill="#1c1c1f"/>`).join("");
+    const brackets = [-1, 1].map((s) => `<rect x="${kitN(x + s * w * .97 - 3)}" y="${kitN(y + h * .24)}" width="6" ` +
+      `height="11" rx="1.5" fill="url(#dk-tube)"/>`).join("");
+    return legs + kitDrum(x, y, w, ry, h, 8) + brackets + kitLabel(x, y - ry - 9, d.name);
+  },
+  kick: (d) => {  // its shell going back (the far hoop, the toms' holder on it), the near hoop and its claws, its
+    // black front head (the logo's pick, a port), its pedal in front (the beater upright as it strikes)
+    const {x, y, w: r} = d, D = 24, back = y - D, fy = y + r + 6;  // (D: as much of its shell as shows over it)
+    const top = `M${x - r},${y}V${back}A${r},${r} 0 0 1 ${x + r},${back}V${y}Z`;
+    const arc = (k, at) => `M${x - r * k},${at}A${r * k},${r * k} 0 0 1 ${x + r * k},${at}`;
+    let out = kitRod(x - r * .72, y + r * .55, x - r * 1.08, y + r + 8, 2.6) +
+      kitRod(x + r * .72, y + r * .55, x + r * 1.08, y + r + 8, 2.6) +
+      `<path class="wrap" d="${top}" fill="url(#dk-wrap)"/><path d="${top}" fill="url(#dk-flake)"/>` +
+      `<path d="${arc(1, y - D * .55)}" fill="none" stroke="#f2464f" stroke-width="2.2"/>` +
+      `<path d="${arc(1 - 2.5 / r, back)}" fill="none" stroke="#141417" stroke-width="5"/>`;
+    const claws = [];
+    for (let i = 0; i < 10; i++) {
+      const a = (i + .5) / 10 * 2 * Math.PI, cx = kitN(x + (r - 1) * Math.sin(a)), cy = kitN(y - (r - 1) * Math.cos(a));
+      if (Math.cos(a) > -.2) out += `<path d="M${cx},${cy}V${kitN(cy - D * .62)}" stroke="#a6a6ad" stroke-width="1.4"/>` +
+        `<rect x="${kitN(cx - 2.5)}" y="${kitN(cy - D * .62 - 4)}" width="5" height="6" rx="2" fill="url(#dk-tube)"/>`;
+      claws.push(`<rect x="-2.3" y="-5" width="4.6" height="10" rx="1.5" fill="url(#dk-tube)" ` +
+        `transform="translate(${cx} ${cy}) rotate(${kitN(a * 180 / Math.PI)})"/>`);
+    }
+    out += kitRod(x, back - r + 12, x, back - r - 4, 4.4) +
+      `<rect x="${x - 5}" y="${back - r - 8}" width="10" height="8" rx="2" fill="url(#dk-tube)"/>` +
+      `<circle class="wrap" cx="${x}" cy="${y}" r="${r}" fill="url(#dk-hoop)"/>` +
+      `<circle cx="${x}" cy="${y}" r="${r - 3.6}" fill="none" stroke="#f2464f" stroke-width="1.3"/>` + claws.join("") +
+      `<circle cx="${x}" cy="${y}" r="${r - 7}" fill="url(#dk-reso)"/>` +
+      `<ellipse cx="${kitN(x - r * .3)}" cy="${kitN(y - r * .36)}" rx="${kitN(r * .5)}" ry="${kitN(r * .28)}" ` +
+      `transform="rotate(-28 ${kitN(x - r * .3)} ${kitN(y - r * .36)})" fill="url(#dk-gloss)"/>` +
+      `<path d="M${kitN(x - r * .62)},${kitN(y + r * .5)}A${r - 13},${r - 13} 0 0 1 ${kitN(x - r * .5)},` +
+      `${kitN(y - r * .62)}" fill="none" stroke="#fff" stroke-opacity=".09" stroke-width="7" stroke-linecap="round"/>` +
+      kitPick(x, y - 14, 15) + kitLabel(x, y + 13, d.name.toUpperCase(), ` class="on-head"`) +
+      `<circle cx="${kitN(x + r * .46)}" cy="${kitN(y + r * .36)}" r="${kitN(r * .12)}" fill="#020203" ` +
+      `stroke="url(#dk-chrome)" stroke-width="1.6"/>` +
+      `<circle class="hov" cx="${x}" cy="${y}" r="${r - 7}"/>` +
+      `<g class="glow" opacity="0"><circle cx="${x}" cy="${y}" r="${kitN(r * 1.22)}" fill="url(#dk-spill)"/>` +
+      `<circle cx="${x}" cy="${y}" r="${r - 7}" fill="url(#dk-lit)"/></g>` +
+      `<g transform="translate(${x} ${y})"><circle class="ripple" r="${r - 7}" opacity="0"/></g>` +
+      `<path d="M${x - 22},${fy - 1}h44l6,10h-56z" fill="#26262b" stroke="#55555b" stroke-width=".6"/>` +
+      kitRod(x - 16, fy + 1, x - 16, fy - 24, 3) + kitRod(x + 16, fy + 1, x + 16, fy - 24, 3) +
+      `<g transform="translate(${x} ${fy - 20})"><g class="beater" transform="scale(1 .78)">` +
+      kitRod(0, 0, 0, -36, 2.2) + `<rect x="-7.5" y="-46" width="15" height="11" rx="4.5" fill="url(#dk-felt)"/></g></g>` +
+      kitRod(x - 16, fy - 20, x + 16, fy - 20, 2.8) +
+      `<path d="M${x - 7},${fy - 6}h14l5,30h-24z" fill="url(#dk-board)" stroke="#8c8c93" stroke-width=".8"/>` +
+      `<rect x="${x - 12}" y="${fy + 20}" width="24" height="6" rx="1.5" fill="#3a3a40"/>`;
+    return out;
+  },
+};
 
 function kitSvg() {
-  const out = [], piece = (key, body) => out.push(`<g class="piece" data-drum="${key}">${body}</g>`);
-  for (const [key, d] of Object.entries(KIT)) {
-    if (d.shape === "cymbal") {
-      piece(key, `<line class="stand" x1="${d.x}" y1="${d.y}" x2="${d.x}" y2="285"/>` +
-        `<ellipse class="metal" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}"/>` +
-        `<ellipse class="glow" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}" opacity="0"/>` +
-        `<text x="${d.x}" y="${d.y - d.w * 0.14 - 5}">${d.name}</text>`);
-    } else if (d.shape === "hat") {
-      piece(key, `<line class="stand" x1="${d.x}" y1="${d.y}" x2="${d.x}" y2="285"/>` +
-        `<ellipse class="metal" cx="${d.x}" cy="${d.y + 7}" rx="${d.w}" ry="${d.w * 0.14}"/>` +
-        `<ellipse class="metal" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}"/>` +
-        `<ellipse class="glow" cx="${d.x}" cy="${d.y}" rx="${d.w}" ry="${d.w * 0.14}" opacity="0"/>` +
-        `<text x="${d.x}" y="${d.y - d.w * 0.14 - 5}">${d.name}</text>`);
-    } else if (d.shape === "tom") {
-      const top = d.y, ry = d.w * 0.28;
-      piece(key, (key === "low" || key === "snare" ? `<line class="stand" x1="${d.x}" y1="${top + d.h}" x2="${d.x}" y2="285"/>` : "") +
-        `<rect class="shell" x="${d.x - d.w}" y="${top}" width="${d.w * 2}" height="${d.h}"/>` +
-        `<ellipse class="shell" cx="${d.x}" cy="${top + d.h}" rx="${d.w}" ry="${ry}"/>` +
-        `<ellipse class="head" cx="${d.x}" cy="${top}" rx="${d.w}" ry="${ry}"/>` +
-        `<ellipse class="glow" cx="${d.x}" cy="${top}" rx="${d.w}" ry="${ry}" opacity="0"/>` +
-        `<text x="${d.x}" y="${top - ry - 5}">${d.name}</text>`);
-    } else {
-      piece(key, `<circle class="head" cx="${d.x}" cy="${d.y}" r="${d.w}"/>` +
-        `<circle class="glow" cx="${d.x}" cy="${d.y}" r="${d.w}" opacity="0"/>` +
-        `<text x="${d.x}" y="${d.y + 4}">${d.name}</text>`);
-    }
+  const out = [KIT_DEFS, `<ellipse cx="320" cy="326" rx="300" ry="24" fill="url(#dk-floor)"/>`];
+  for (const key of KIT_DRAWN) {
+    out.push(`<g class="piece" data-drum="${key}">${KIT_DRAW[KIT[key].shape](KIT[key])}</g>`);
   }
-  return `<svg viewBox="0 0 620 304" role="img" aria-label="A drum kit: click a drum to hear it">${out.join("")}</svg>`;
+  return `<svg viewBox="0 28 640 324" role="img" aria-label="A drum kit: click a drum to hear it">${out.join("")}` +
+    `</svg>`;
 }
 
 function renderDrumsCard(s) {
@@ -2125,29 +2366,75 @@ function drumsFrame() {
   const clock = fretClock && fretClock.song === s.id ? fretClock : null;
   const since = clock && clock.moving ? Math.min((performance.now() - clock.at) / 1000, COASTING) * clock.speed : 0;
   const at = clock && clock.moving ? clock.position + since : null;  // (lit only as it plays)
-  const now = performance.now(), lights = [];
-  for (const g of $("drumkit").querySelectorAll(".piece")) {
-    const key = g.dataset.drum;
-    let level = 0;
-    const struck = drumsData && drumsData.byDrum.get(key);
+  const now = performance.now(), lights = [], still = KIT_STILL.matches;
+  if (!kitParts || kitParts.svg !== $("drumkit").firstChild) kitParts = kitPartsOf($("drumkit").firstChild);
+  for (const p of kitParts.pieces) {
+    let level = 0, age = Infinity, force = 0;  // (its last stroke: seconds since, how hard)
+    const struck = drumsData && drumsData.byDrum.get(p.key);
     if (struck && at !== null) {
       let lo = 0, hi = struck.times.length;
       while (lo < hi) { const mid = (lo + hi) >> 1; if (struck.times[mid] <= at) lo = mid + 1; else hi = mid; }
       const i = lo - 1;
-      if (i >= 0 && at - struck.times[i] < DRUM_FLASH) level = struck.velocities[i] / 127 * (1 - (at - struck.times[i]) / DRUM_FLASH);
+      if (i >= 0) {
+        age = at - struck.times[i];
+        force = struck.velocities[i] / 127;
+        if (age < DRUM_FLASH) level = force * (1 - age / DRUM_FLASH);
+      }
     }
-    const clicked = drumsFlash.get(key);
+    const clicked = drumsFlash.get(p.key);
     if (clicked) {
-      const age = (now - clicked.at) / 1000;
-      if (age < DRUM_FLASH * 2) level = Math.max(level, clicked.velocity / 127 * (1 - age / (DRUM_FLASH * 2)));
-      else drumsFlash.delete(key);
+      const ago = (now - clicked.at) / 1000;
+      if (ago < DRUM_FLASH * 2) level = Math.max(level, clicked.velocity / 127 * (1 - ago / (DRUM_FLASH * 2)));
+      if (ago < age) { age = ago; force = clicked.velocity / 127; }
+      if (ago >= Math.max(DRUM_FLASH * 2, DRUM_RING)) drumsFlash.delete(p.key);  // (rung out)
     }
     lights.push(level.toFixed(2));
-    g.querySelector(".glow").setAttribute("opacity", (level * 0.85).toFixed(2));
+    kitMove(p, level, still ? Infinity : age, force);
   }
   drumsShown = lights.join(",");
 }
 requestAnimationFrame(drumsFrame);
+
+// What drumsFrame moves in each piece of the kit (found once, not every frame), and what it last gave each
+function kitPartsOf(svg) {
+  return {svg, pieces: [...svg.querySelectorAll(".piece")].map((g) => {
+    const d = KIT[g.dataset.drum];
+    return {key: g.dataset.drum, glow: g.querySelector(".glow"), swing: g.querySelector(".swing"),
+      sheen: g.querySelector(".sheen"), ripple: g.querySelector(".ripple"), beater: g.querySelector(".beater"),
+      rock: d.shape === "hat" ? 1 : d.shape === "cymbal" ? 280 / d.w : 0,  // (degrees: a ride less than a crash,
+      shown: {}};  // a closed hi-hat hardly)
+  })};
+}
+
+// A piece as it's struck (age: seconds since, Infinity when it's still or nothing's to move): its light; a cymbal
+// rocking (tilting back and forth, so deeper and shallower) and its shine turning, dying away; a ring spreading out
+// over a head; the kick's beater upright. Each attribute set only as it changes (nothing while the kit's still)
+function kitMove(p, level, age, force) {
+  const put = (key, el, name, value) => {
+    if (el && p.shown[key] !== value) {
+      p.shown[key] = value;
+      el.setAttribute(name, value);
+    }
+  };
+  put("glow", p.glow, "opacity", (level * 0.85).toFixed(2));
+  if (p.swing) {
+    const fade = age < DRUM_RING ? force * Math.exp(-age / 0.3) : 0, rock = fade * p.rock;
+    const wave = 2 * Math.PI * 2.6 * age;  // (rocking 2.6 times a second: its tilt deepening it 7.5% a degree)
+    put("swing", p.swing, "transform", fade ? `rotate(${(rock * 0.5 * Math.sin(wave)).toFixed(2)}) ` +
+      `scale(1 ${(1 + rock * 0.075 * Math.cos(wave)).toFixed(3)})` : "");
+    put("sheen", p.sheen, "transform", fade ? `rotate(${(rock * 7 * Math.cos(wave)).toFixed(1)})` : "");
+    put("shine", p.sheen, "opacity", (0.55 + 0.45 * Math.max(level, fade)).toFixed(2));
+  }
+  if (p.ripple) {
+    const t = age / 0.35;
+    put("ripple", p.ripple, "opacity", t < 1 ? (force * 0.9 * (1 - t)).toFixed(2) : "0");
+    if (t < 1) put("spread", p.ripple, "transform", `scale(${(0.3 + 0.8 * (1 - (1 - t) ** 2)).toFixed(3)})`);
+  }
+  if (p.beater) {
+    const swing = age < 0.3 ? force * Math.exp(-age / 0.06) : 0;
+    put("beater", p.beater, "transform", `scale(1 ${(0.78 + 0.22 * swing).toFixed(3)})`);
+  }
+}
 
 // The theory card: the chord now as a number in the song's key, what it does there and what's borrowed or outside;
 // the section's phrases (the one playing outlined, its chord bold) and its riffs' scale; and a strip of a part's
