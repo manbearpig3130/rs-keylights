@@ -11,6 +11,9 @@
     --ok: #1f7a3a; --input: #ffffff; --live: #1a6fd8; --live-text: #ffffff;
     --lead: #e0700f; --rhythm: #2e9a3e; --bass: #2f6fd6; --vocals: #c2389a; --white-key: #ffffff; --black-key: #1d1d1f;
     --eq-up: #1a6fd8; --eq-down: #c4202b;  /* (the tone check's: the record has more there, or less) */
+    --fb-wood: #6a4630; --fb-wood-edge: #4b301f; --fb-grain: rgb(30 14 4 / 30%); --fb-binding: #efe6d2;
+    --fb-nut: #f1e9d6; --fb-fret: #8f939b; --fb-fret-hi: #e9eaee; --fb-string: #e4dfd6;
+    --fb-pearl: #fbf8f1; --fb-pearl-mid: #e6dfcf; --fb-pearl-tint: #c9d6e2;  /* (the fretboard: rosewood) */
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -19,6 +22,9 @@
       --ok: #5fd27f; --input: #2a2a2d; --live: #5aa7ff; --live-text: #0b1a2e;
       --lead: #ff9a3d; --rhythm: #5fd27f; --bass: #6aa8ff; --vocals: #ec6fcf; --white-key: #d8d8dc; --black-key: #101012;
       --eq-up: #4a93f0; --eq-down: #f0454f;
+      --fb-wood: #33231a; --fb-wood-edge: #221710; --fb-grain: rgb(0 0 0 / 24%); --fb-binding: #b9ae98;
+      --fb-nut: #d9cfb9; --fb-fret: #62666e; --fb-fret-hi: #b9bcc3; --fb-string: #bdb6aa;
+      --fb-pearl: #ddd6c8; --fb-pearl-mid: #ada492; --fb-pearl-tint: #8798aa;  /* (darker: an ebony-ish board) */
     }
   }
   * { box-sizing: border-box; }
@@ -344,10 +350,21 @@
   .tab text.label { fill: var(--muted); stroke: none; }
   .tab text.chord { fill: var(--accent); text-anchor: start; font-weight: 600; stroke: none; }
   .fretboard svg { display: block; width: 100%; min-width: 620px; height: auto; }
-  .fretboard .string { stroke: var(--muted); }
-  .fretboard .fret { stroke: var(--line); stroke-width: 2; }
-  .fretboard .nut { stroke: var(--text); stroke-width: 5; }
-  .fretboard .inlay { fill: var(--line); }
+  .fretboard .string { stroke: var(--fb-string); }
+  .fretboard .wood { fill: url(#fb-wood); }
+  .fretboard .grain { fill: url(#fb-grain); }
+  .fretboard .binding { stroke: var(--fb-binding); stroke-width: 1.5; }
+  .fretboard .fret { fill: url(#fb-fret); }
+  .fretboard .nut { fill: var(--fb-nut); stroke: rgb(0 0 0 / 25%); stroke-width: .5; }
+  .fretboard .inlay { fill: url(#fb-pearl); stroke: rgb(0 0 0 / 30%); stroke-width: .6; }
+  #fbDefs .fb-wood-mid { stop-color: var(--fb-wood); }
+  #fbDefs .fb-wood-edge { stop-color: var(--fb-wood-edge); }
+  #fbDefs .fb-grain { stroke: var(--fb-grain); }
+  #fbDefs .fb-fret { stop-color: var(--fb-fret); }
+  #fbDefs .fb-fret-hi { stop-color: var(--fb-fret-hi); }
+  #fbDefs .fb-pearl { stop-color: var(--fb-pearl); }
+  #fbDefs .fb-pearl-mid { stop-color: var(--fb-pearl-mid); }
+  #fbDefs .fb-pearl-tint { stop-color: var(--fb-pearl-tint); }
   .fretboard .label { fill: var(--muted); font-size: 11px; text-anchor: middle; dominant-baseline: central; }
   .fretboard .note text { font-size: 11px; font-weight: 600; text-anchor: middle; dominant-baseline: central; }
   .fretboard .scale circle { fill: var(--muted); }
@@ -1318,27 +1335,47 @@ function noteNames(key) {
   return names;
 }
 
+document.body.insertAdjacentHTML("beforeend", '<svg id="fbDefs" width="0" height="0" aria-hidden="true" ' +
+  'style="position:absolute"><defs>' +
+  '<linearGradient id="fb-wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="fb-wood-edge"/>' +
+  '<stop offset=".18" class="fb-wood-mid"/><stop offset=".82" class="fb-wood-mid"/><stop offset="1" class="fb-wood-edge"/>' +
+  '</linearGradient>' +
+  '<pattern id="fb-grain" width="240" height="9" patternUnits="userSpaceOnUse"><g class="fb-grain" fill="none">' +
+  '<path d="M0 1.5c60-.8 120 .9 240 0" stroke-width=".7"/><path d="M0 4.6c80 .7 150-.9 240 0" stroke-width=".5"/>' +
+  '<path d="M0 7.2c50-.5 130 .8 240 0" stroke-width=".9" opacity=".7"/></g></pattern>' +
+  '<linearGradient id="fb-fret" x1="0" y1="0" x2="1" y2="0"><stop offset="0" class="fb-fret"/>' +
+  '<stop offset=".45" class="fb-fret-hi"/><stop offset="1" class="fb-fret"/></linearGradient>' +
+  '<radialGradient id="fb-pearl" cx=".38" cy=".34" r=".75"><stop offset="0" class="fb-pearl"/>' +
+  '<stop offset=".55" class="fb-pearl-mid"/><stop offset="1" class="fb-pearl-tint"/></radialGradient>' +
+  '</defs></svg>');
+
 function fretboardSvg(key, guitar) {
   const {W, LEFT, TOP, GAP, R} = BOARD;
   const strings = guitar.strings, n = strings.length, capo = guitar.capo || 0;
   const {nut, right, bottom, middle, x, y} = geometry(n);
   const names = noteNames(key);
   const out = [];
+  // The board: rosewood (its grain over it), bound along its edges, under the inlays, the frets and the nut
+  const edge = R + 3, top = TOP - edge, height = bottom - TOP + 2 * edge;
+  out.push(`<rect class="wood" x="${nut}" y="${top}" width="${right - nut}" height="${height}"/>`,
+    `<rect class="grain" x="${nut}" y="${top}" width="${right - nut}" height="${height}"/>`,
+    `<line class="binding" x1="${nut}" y1="${top + 0.75}" x2="${right}" y2="${top + 0.75}"/>`,
+    `<line class="binding" x1="${nut}" y1="${top + height - 0.75}" x2="${right}" y2="${top + height - 0.75}"/>`);
   for (const fret of INLAYS) out.push(`<circle class="inlay" cx="${x(fret)}" cy="${middle}" r="5"/>`);
   for (const fret of DOUBLE_INLAYS) {
     for (const at of [middle - GAP, middle + GAP]) out.push(`<circle class="inlay" cx="${x(fret)}" cy="${at}" r="5"/>`);
   }
   for (let fret = 1; fret <= FRETS; fret++) {
-    out.push(`<line class="fret" x1="${nut + fret * W}" y1="${TOP}" x2="${nut + fret * W}" y2="${bottom}"/>`);
+    out.push(`<rect class="fret" x="${nut + fret * W - 1.5}" y="${top}" width="3" height="${height}" rx="1"/>`);
   }
   strings.forEach((open, string) => {
     out.push(`<line class="string" x1="${nut}" y1="${y(string)}" x2="${right}" y2="${y(string)}" ` +
       `stroke-width="${1 + (n - 1 - string) * 0.35}"/>`);
     out.push(`<text class="label" x="${LEFT / 2 - 2}" y="${y(string)}">${esc(names[open % 12] || SHARPS[open % 12])}</text>`);
   });
-  out.push(`<line class="nut" x1="${nut}" y1="${TOP - 3}" x2="${nut}" y2="${bottom + 3}"/>`);
+  out.push(`<rect class="nut" x="${nut - 5}" y="${top - 1}" width="6" height="${height + 2}" rx="1.5"/>`);
   for (const fret of [...INLAYS, ...DOUBLE_INLAYS].sort((a, b) => a - b)) {
-    out.push(`<text class="label" x="${x(fret)}" y="${bottom + 19}">${fret}</text>`);
+    out.push(`<text class="label" x="${x(fret)}" y="${bottom + edge + 9}">${fret}</text>`);  // (under the board)
   }
   if (capo > 0) out.push(`<rect class="capo" x="${nut + capo * W - 8}" y="${TOP - 9}" width="6" height="${bottom - TOP + 18}" rx="3"/>`);
   strings.forEach((open, string) => {
@@ -1352,7 +1389,7 @@ function fretboardSvg(key, guitar) {
     }
   });
   const label = `${key.name} on a ${guitar.bass ? "bass" : "guitar"} in ${guitar.tuning}`;
-  return `<svg viewBox="0 0 ${right + 8} ${bottom + 30}" role="img" aria-label="${esc(label)}">${out.join("")}` +
+  return `<svg viewBox="0 0 ${right + 8} ${bottom + edge + 18}" role="img" aria-label="${esc(label)}">${out.join("")}` +
     `<g class="fret-live"></g></svg>`;
 }
 
