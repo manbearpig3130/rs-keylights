@@ -4865,7 +4865,7 @@ function showLoop(st) {
     !game.hook ? " · the game needs RS Re-ARMed 1.2 or later" : " · pick it in Riff Repeater";
   $("loopText").textContent = `Loop ${end(loop.a)} – ${end(loop.b)}${hint}`;
   $("loopOn").classList.toggle("on", !!loop.on);
-  $("loopOn").textContent = loop.on ? "Looping" : "Loop";
+  setOnly($("loopOn"), "textContent", loop.on ? "Looping" : "Loop");
   $("loopOn").disabled = loop.a == null || loop.b == null;
 }
 
@@ -4873,17 +4873,38 @@ function playingThis() {
   return selected && state.song && state.song.id === selected.id && ["playing", "paused", "ended"].includes(state.mode);
 }
 
+// An element's property set only as it changes: a button's text set again (even to the same) is a new text node, and
+// WebKit drops a click whose press was on the one taken away (the state's asked for 3 or 4 times a second)
+function setOnly(el, property, value) {
+  if (el[property] !== value) el[property] = value;
+}
+
 function updateButtons() {
   const here = playingThis();
   const pausing = here && state.mode === "playing";  // one button: plays, pauses and goes on
-  $("playBtn").disabled = state.mode === "following" || (!pausing && (!selected || !playable));
-  $("playBtn").textContent = pausing ? "❚❚" : "▶";
-  $("playBtn").title = pausing ? "Pause" : here && state.mode === "paused" ? "Resume" : "Play";
-  $("stopBtn").disabled = state.mode === "idle";
+  setOnly($("playBtn"), "disabled", state.mode === "following" || (!pausing && (!selected || !playable)));
+  setOnly($("playBtn"), "textContent", pausing ? "❚❚" : "▶");
+  setOnly($("playBtn"), "title", pausing ? "Pause" : here && state.mode === "paused" ? "Resume" : "Play");
+  setOnly($("stopBtn"), "disabled", state.mode === "idle");
   $("muteBtn").classList.toggle("on", state.sound === false);
-  $("muteBtn").textContent = state.sound === false ? "🔇" : "🔊";
-  $("muteBtn").title = state.sound === false ? "Keyboard muted (lights only): click to unmute" :
-    `Mute the ${KB()} (lights only)`;
+  setOnly($("muteBtn"), "textContent", state.sound === false ? "🔇" : "🔊");
+  setOnly($("muteBtn"), "title", state.sound === false ? "Keyboard muted (lights only): click to unmute" :
+    `Mute the ${KB()} (lights only)`);
+}
+
+// Play and Stop act as they're pressed, not as they're let go (as transport buttons do): nothing the page redraws in
+// between can lose it. From the keyboard (Space, Enter: a click with no press) as before
+function onPress(button, fn) {
+  let pressed = -Infinity;
+  button.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || button.disabled) return;
+    pressed = performance.now();
+    fn();
+  });
+  button.addEventListener("click", () => {
+    if (performance.now() - pressed < 1500) return;  // (its press did it)
+    fn();
+  });
 }
 
 async function play() {
@@ -5038,7 +5059,7 @@ function showState(st) {
     refreshSong().catch(() => {}).finally(() => { songBusy = false; });
   }
   for (const button of document.querySelectorAll(".scaleBtn")) {
-    button.textContent = st.showing ? "Hide scale" : "Show scale";
+    setOnly(button, "textContent", st.showing ? "Hide scale" : "Show scale");
   }
   if ($("toneCheckCard").open && !$("tcPart").disabled) tonePartOptions();  // (the song playing's parts)
   updateButtons();
@@ -5758,8 +5779,8 @@ $("search").addEventListener("input", () => {  // (a search puts the song the La
   if (browseShown) hideBrowse();
   renderLibrary();
 });
-$("playBtn").addEventListener("click", () => act(() => playingThis() && state.mode === "playing" ? api("/api/pause", {}) : play()));
-$("stopBtn").addEventListener("click", () => act(() => api("/api/stop", {})));
+onPress($("playBtn"), () => act(() => playingThis() && state.mode === "playing" ? api("/api/pause", {}) : play()));
+onPress($("stopBtn"), () => act(() => api("/api/stop", {})));
 $("followBtn").addEventListener("click", () => act(toggleFollow));
 $("fullBtn").addEventListener("click", () => fullScreen(!(document.fullscreenElement || document.webkitFullscreenElement)));
 $("followFull").checked = !!store.get("rsk.followFull", false);
