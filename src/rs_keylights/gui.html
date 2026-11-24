@@ -636,7 +636,9 @@
   #songs .fav:hover { border-color: var(--line); }
   #songs .fav[aria-pressed="true"] { color: var(--warn); }
   body.library-collapsed #library { padding: 10px; }
-  body.library-collapsed .library-top { justify-content: space-between; }  /* (Home at the rail's right) */
+  body.library-collapsed .library-top { justify-content: space-between; gap: 0; }  /* (Home at the rail's right) */
+  body.library-collapsed .library-top button { padding: 5px; }  /* (three in the rail's 98 px: 28 px each) */
+  body.library-collapsed .library-top button svg { width: 16px; height: 16px; }
   body.library-collapsed #search, body.library-collapsed .library-filters, body.library-collapsed #songs .fav { display: none; }
   body.library-collapsed #songs li { padding-right: 8px; }
   body.library-collapsed #count { display: none; }
