@@ -102,12 +102,11 @@
   #search { width: 100%; padding: 7px 9px; }
   #count { font-size: 12px; margin: 6px 2px; }
   #songs { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; border-top: 1px solid var(--line); position: relative; }
-  #songs li { padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: center; }
+  #songs li { padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; }
   #songs li > div { display: grid; min-width: 0; }
   #songs li:hover { background: var(--soft); }
   #songs li.selected { background: var(--soft); box-shadow: inset 3px 0 var(--accent); }
   #songs.browsing li:not(.selected):hover { background: none; }  /* the mouse resting on the list: no other song lit */
-  #songs.following .switch { visibility: hidden; }  /* following: the game picks the song (the rows don't move) */
   #songs.following li { cursor: default; }
   input:disabled, select:disabled { opacity: .45; cursor: default; }
   /* lit as a song the mouse is on, but with the box (the song gliding into it) */
@@ -115,10 +114,7 @@
   #songs .song { font-weight: 600; }
   #songs li.active .song::before { content: "▶ "; color: var(--ok); }
   #songs .artist, #songs .parts { font-size: 12px; color: var(--muted); }
-  #songs .switch { padding: 3px 8px; font-size: 12px; }
   #status.link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
-  .activebar { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 7px 10px; margin: -2px 0 10px; border-radius: 8px; background: var(--soft); font-size: 13px; }
-  .activebar button { padding: 3px 9px; font-size: 12px; }
   .badge { font-size: 12px; font-weight: 600; color: var(--ok); margin-left: 8px; vertical-align: middle; }
   #details { flex: none; height: 124px; border-top: 1px solid var(--line); padding: 10px 2px 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; overflow: hidden; }
   #details .art, .song-art { width: 96px; height: 96px; border-radius: 6px; object-fit: cover; background: var(--input); }
@@ -627,7 +623,6 @@
   <section id="songCard" class="card">
     <div id="noSong" class="empty">Select a song from the library.</div>
     <div id="songView" hidden>
-      <div id="activeBar" class="activebar" hidden></div>
       <div class="song-head">
         <img id="songArt" class="song-art none" alt="">
         <div class="song-lines">
@@ -3904,22 +3899,12 @@ function renderLibrary() {
     const li = document.createElement("li");
     li.innerHTML = `<div><span class="song">${esc(s.song)}</span><span class="artist">${esc(s.artist)}</span>` +
       `<span class="parts">${esc(s.parts.join(" · "))}</span></div>`;
-    const switchTo = document.createElement("button");
-    switchTo.type = "button";
-    switchTo.className = "switch";
-    switchTo.textContent = "⏵";
-    switchTo.title = "Switch to it: the Launchkey shows it, and Play plays it (another song playing stops)";
-    switchTo.addEventListener("click", (e) => {
-      e.stopPropagation();
-      act(() => switchTo_(s.id));
-    });
-    li.appendChild(switchTo);
     li.classList.toggle("selected", !!selected && selected.id === s.id);
     li.classList.toggle("active", s.id === markedId());
-    li.addEventListener("click", () => {
+    li.addEventListener("click", () => {  // (the song it's on: the active one, shown, on the Launchkey, to play)
       if (state.mode === "following" && state.game_list) act(() => api("/api/game/focus", {song: s.id}));
       else if (state.mode === "following") toast("Following Rocksmith: the game's current song is shown here");
-      else act(() => selectSong(s.id));
+      else if (!selected || selected.id !== s.id || state.active !== s.id) act(() => switchTo_(s.id));
     });
     rows.set(s.id, li);
     fragment.appendChild(li);
@@ -4202,27 +4187,6 @@ function renderActive() {
   const following = state.mode === "following", here = selected.id === state.active;
   $("activeBadge").textContent = following ? "● following" : "● active";
   $("activeBadge").hidden = following ? !followedSong() : !here;
-  const bar = $("activeBar");
-  const switching = songTarget === state.active && selected.id !== songTarget;  // (on its way: no bar meanwhile)
-  bar.hidden = following || here || switching;
-  if (bar.hidden) return;
-  const active = songs.find((song) => song.id === state.active);
-  bar.innerHTML = "";
-  const note = document.createElement("span");
-  note.textContent = "Viewing only: this isn't the active song.";
-  const switchTo = document.createElement("button");
-  switchTo.type = "button";
-  switchTo.textContent = "⏵ Make active";
-  switchTo.addEventListener("click", () => act(() => switchTo_(selected.id)));
-  bar.append(note, switchTo);
-  if (active) {
-    const back = document.createElement("button");
-    back.type = "button";
-    back.textContent = `Back to ${active.song}`;
-    back.title = "The active song (the one the Launchkey shows)";
-    back.addEventListener("click", () => act(() => selectSong(active.id)));
-    bar.append(back);
-  }
 }
 
 // While following, the song card shows the song the game plays (once it ends, the last one, until the next): its
@@ -4986,6 +4950,11 @@ function showState(st) {
     markRows();
     renderActive();
   }
+  if (st.mode !== "following" && st.active && selected && selected.id !== st.active && songTarget !== st.active &&
+      !activeSelecting) {  // (switched elsewhere, the Launchkey say: shown here too)
+    activeSelecting = true;
+    selectSong(st.active).catch(() => {}).finally(() => { activeSelecting = false; });
+  }
   const followedId = st.mode === "following" ? st.follow.song_id : null;  // the song the game plays, shown
   if (followedId && (!selected || selected.id !== followedId) && !followSelecting) {
     followSelecting = true;
@@ -5053,6 +5022,7 @@ function showState(st) {
 let shownActive;
 let shownFollowing = false;
 let followSelecting = false;
+let activeSelecting = false;
 $("status").addEventListener("click", () => {
   const goTo = state.mode === "following" ? state.follow.song_id : state.song ? state.song.id : state.active;
   if (goTo && (!selected || selected.id !== goTo)) act(() => selectSong(goTo));
@@ -5909,7 +5879,7 @@ applyLayout();  // (the cards as laid out: before anything's shown in them)
     await moveOldOptions();
     await Promise.all([loadLibrary(), loadSettings()]);
     loadPedalRules();
-    const last = playOptions.song || store.get("rsk.last", null);
+    const last = state.active || playOptions.song || store.get("rsk.last", null);
     if (last && songs.some((s) => s.id === last)) await selectSong(last);
   } catch (e) {
     toast(e.message);
