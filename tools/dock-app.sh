@@ -80,12 +80,11 @@ esac
 EOF
 install -m 755 "$work/server.sh" "$new/Contents/Resources/server.sh"
 
-# The icon
-swift "$repo/tools/dock-icon.swift" "$work/icon.png"
+# The icon: rs-keylights' pick (its keys in it), tools/rs-keylights-icon.png (1024x1024, its background clear)
 mkdir "$work/icon.iconset"
 for s in 16 32 128 256 512; do
-    sips -z $s $s "$work/icon.png" --out "$work/icon.iconset/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s * 2)) $((s * 2)) "$work/icon.png" --out "$work/icon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+    sips -z $s $s "$repo/tools/rs-keylights-icon.png" --out "$work/icon.iconset/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) "$repo/tools/rs-keylights-icon.png" --out "$work/icon.iconset/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns -o "$new/Contents/Resources/AppIcon.icns" "$work/icon.iconset"
 

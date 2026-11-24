@@ -1508,7 +1508,10 @@ def test_a_songs_drum_part_plays_along_on_the_drum_channel_and_making_one_says_w
     assert song["drums"] == {"play": False, "volume": 100, "made": False, "hits": 0, "making": None, "progress": None, "error": None,
                              "tools": False, "kit": gui.settings["drum_set"], "device": None,
                              "drum_sets": [[0, "Standard Set"], [8, "Room Set"], [16, "Power Set"], [25, "Synth Set"],
-                                           [40, "Brush Set"], [48, "Orchestra Set"]]}
+                                           [40, "Brush Set"], [48, "Orchestra Set"]], "lights": False}
+    status, info = call(server, "/api/drums", {"song": sid, "lights": True})  # (its bulb: the remote's beat lights)
+    assert status == 200 and info["lights"] and gui.settings["beat_lights"]
+    assert not call(server, "/api/drums", {"song": sid, "lights": False})[1]["lights"] and not gui.settings["beat_lights"]
     ref = gui._load(sid)[0][0]
     drums.keep(ref, [drums.Hit(1.5, drums.KICK, 110), drums.Hit(1.75, drums.SNARE, 90)])
     status, info = call(server, "/api/drums", {"song": sid, "play": True, "volume": 90})

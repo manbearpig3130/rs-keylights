@@ -992,7 +992,8 @@ class Gui:
     def drums_info(self, sid: str) -> dict[str, Any]:
         """A song's drum part, for the page: whether it's made (its hits), played and how loud, being made (the
         step) or failed (why), and whether the tools to make one are there; the keyboard's drum kit and its kits,
-        and the device the drums play on instead (none: the keyboard, its kit)."""
+        the device the drums play on instead (none: the keyboard, its kit), and whether a remote's lights pulse to
+        the beat (lights: its drums' lights pad's, every song's)."""
         ref = self._load(sid)[0][0]
         hits = drums.kept(ref)
         making = self._making.get(sid, {})
@@ -1001,7 +1002,8 @@ class Gui:
         return {**self._drum_settings(sid), "made": hits is not None, "hits": len(hits) if hits else 0,
                 "making": making.get("step"), "progress": making.get("progress") if making.get("step") else None,
                 "error": making.get("error"), "tools": drums.setup_done(), "kit": int(self.settings["drum_set"]),
-                "drum_sets": [[program, name.title()] for name, program in DRUM_SETS], "device": elsewhere}
+                "drum_sets": [[program, name.title()] for name, program in DRUM_SETS], "device": elsewhere,
+                "lights": bool(self.settings["beat_lights"])}
 
     def _with_drums(self, sid: str, arrangements: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """A remote's arrangements of a song, with its drum part as one more: after them, in DRUMS_PLACE_MOST at
@@ -1053,9 +1055,13 @@ class Gui:
     def set_drums(self, body: dict[str, Any]) -> dict[str, Any]:
         """A song's drum part played or not ("play"), how loud ("volume", 0 to 127), or made ("make": again, if it
         is), in the background (a minute or so); what plays goes on with it at once. Or the keyboard's drum kit
-        ("kit": its program; every song's)."""
+        ("kit": its program; every song's), or a remote's lights pulsing to the beat ("lights": its drums' lights
+        pad's; every song's)."""
         sid = str(body.get("song", ""))
         loaded = self._load(sid)
+        if "lights" in body and bool(body["lights"]) != bool(self.settings["beat_lights"]):
+            self.toggle_beat_lights()
+            self.play_version += 1  # (every page shows it, as the Launchkey's pad does)
         if "kit" in body:
             kit = int(_number(body["kit"], "drum kit", 0, 127))
             if kit not in dict(DRUM_SETS).values():
