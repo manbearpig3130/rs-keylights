@@ -143,6 +143,11 @@
   #side .card.folded h3.fold::before { content: "▸ "; }
   #side .card.folded h3 { margin: 0; }
   #side .card.folded > :not(h3):not(.card-tools) { display: none; }
+  /* The middle's cards fold the same way, into their title rows (the song's doesn't: its art stays where it is) */
+  #middle .card > .fret-head > h3.fold { cursor: pointer; user-select: none; }
+  #middle .card > .fret-head > h3.fold::before { content: "▾ "; color: var(--muted); font-weight: normal; }
+  #middle .card.folded > .fret-head > h3.fold::before { content: "▸ "; }
+  #middle .card.folded > :not(.fret-head):not(.card-tools) { display: none; }
   /* A settings card's sections (the Keyboard's default tones, the Guitar's pedal...): each folds into its title too */
   .card-section { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
   /* The Guitar card's meters: each input's level now (dB of full scale, -60 to 0), the peak held a while (a tick),
@@ -226,7 +231,6 @@
   .part-name { flex: 1 1 130px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .part-name .on-air { font-size: 12px; }
   .part-head .part-tone { flex: 1 1 150px; min-width: 130px; max-width: 240px; }  /* (over a tone box's own flex) */
-  .part-head .part-kit { flex-basis: auto; min-width: 0; }
   .part-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
   .part-lit, .part-volume { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .part-volume { min-width: 0; }
@@ -697,10 +701,10 @@
         <input id="splitServerKey" class="audio-wide" type="password" autocomplete="off">
       </div>
       <div class="audio-parts-head"><span id="splitServerNote" class="small muted"></span>
-        <button type="button" id="splitServerForget">Forget it</button>
+        <button type="button" id="splitServerForget">Forget</button>
         <button type="button" id="splitServerSave">Save and check</button></div>
       <details id="splitServerLog" class="split-server-log">
-        <summary class="small">Its output</summary>
+        <summary class="small">Separator server output</summary>
         <pre id="splitServerLines" aria-live="polite"></pre>
         <div id="splitServerWorking" class="small muted"></div>
       </details>
@@ -1009,8 +1013,8 @@
     <div class="fret-head">
       <h3 data-r="title">Fretboard</h3>
       <span data-r="chord" class="fret-chord" title="The chord being played"></span>
-      <label class="small" title="The thick string on top, as you see the neck looking down at the guitar (else the thin one, as tab has it)">
-        <input type="checkbox" data-r="flip"> Thick string on top</label>
+      <label class="small" title="Show the lowest string at the top, as seen looking down at the guitar (off: the highest, as in tablature)">
+        <input type="checkbox" data-r="flip"> Low string on top</label>
       <select data-r="part" aria-label="Whose notes light up" title="Whose notes light up as the song plays (following the game: the arrangement it plays)"></select>
     </div>
     <div data-r="board" class="fretboard"></div>
@@ -1260,7 +1264,7 @@ function keyLine(key, song) {
   const show = document.createElement("button");
   show.type = "button";
   show.className = "scaleBtn";
-  show.textContent = state.showing ? "Stop showing" : "Show on the keys";
+  show.textContent = state.showing ? "Hide scale" : "Show scale";
   show.title = "Its scale climbs the keys and back, over and over, until a key is pressed or a song needs them";
   show.addEventListener("click", () => act(() => state.showing ? api("/api/scale/stop", {}) :
     api("/api/scale", song ? {song: song} : {})));
@@ -3231,6 +3235,7 @@ function applyLayout() {
     placed.push(root);
   }
   for (const card of had.values()) card.root.remove();
+  for (const card of placed) foldable(card);
   for (const [kind, k] of Object.entries(CARD_KINDS)) {
     if (k.fixed && !layout.middle.some((c) => c.kind === kind)) parked.append($(k.fixed));  // (removed: put by)
   }
@@ -3242,6 +3247,29 @@ function applyLayout() {
   for (const card of [...placed, ...$("side").querySelectorAll(":scope > .card")]) cardTools(card);
   showLayoutBar();
   if (selected) renderSong();
+}
+
+// A middle card folds into its title row, as a settings card does (remembered by its place in the layout); not the
+// song's, whose art stays put
+function foldable(card) {
+  if (card.id === "songCard" || card.dataset.foldable) return;
+  const title = card.querySelector(":scope > .fret-head > h3");
+  if (!title) return;
+  card.dataset.foldable = "1";
+  title.classList.add("fold");
+  title.tabIndex = 0;
+  if (!title.title) title.title = "Collapse or expand";
+  const key = () => "rsk.fold." + (card.dataset.card || card.id);
+  card.classList.toggle("folded", !!store.get(key(), false));
+  const flip = () => {
+    store.set(key(), card.classList.toggle("folded"));
+    if (selected && !card.classList.contains("folded")) renderSong();  // (opened: drawn as it is now)
+  };
+  const own = (e) => !e.target.closest("button.info, .info-text");  // (its info icon: not a fold)
+  title.addEventListener("click", (e) => { if (own(e)) flip(); });
+  title.addEventListener("keydown", (e) => {
+    if (own(e) && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); flip(); }
+  });
 }
 
 // A settings card's title as it reads (its info icon's text left out)
@@ -4070,17 +4098,18 @@ function drumsBlock(s) {
     "no drum part yet";
   name.innerHTML = `<b>Drums</b> <span class="muted small">${esc(detail)}</span>`;
   head.append(name);
-  if (!d.device && d.drum_sets) {  // (in the middle, as a part's tone: the keyboard's drum kit, every song's)
-    const kit = drumKitSelect(d.drum_sets, d.kit);
-    kit.classList.add("part-tone", "part-kit");
+  if (!d.device && d.drum_sets) {  // (in the middle, as a part's tone, in the same box: the keyboard's drum kit)
+    const kit = toneBox(drumKitSelect(d.drum_sets, d.kit), true);
+    kit.classList.add("part-tone");
     head.append(kit);
   } else if (d.device) {  // (or the device they play on instead)
     const there = document.createElement("select");
-    there.className = "part-tone part-kit";
     there.disabled = true;
-    there.title = "The drums play on another device (the Other MIDI devices card)";
-    there.append(new Option(`on ${d.device}`));
-    head.append(there);
+    there.append(new Option(`On ${d.device}`));
+    const box = toneBox(there, true);
+    box.classList.add("part-tone");
+    box.title = "The drums play on another device (see Other MIDI devices)";
+    head.append(box);
   }
   const controls = document.createElement("span");
   controls.className = "part-controls";
@@ -4586,7 +4615,7 @@ function showState(st) {
     refreshSong().catch(() => {}).finally(() => { songBusy = false; });
   }
   for (const button of document.querySelectorAll(".scaleBtn")) {
-    button.textContent = st.showing ? "Stop showing" : "Show on the keys";
+    button.textContent = st.showing ? "Hide scale" : "Show scale";
   }
   if ($("toneCheckCard").open && !$("tcPart").disabled) tonePartOptions();  // (the song playing's parts)
   updateButtons();
