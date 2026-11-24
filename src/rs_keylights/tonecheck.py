@@ -27,7 +27,9 @@ from .sng import Note
 #   10 dB on a record's guitar down to 5 with a little more drive; an EQ moves it half a dB), yours against the
 #   record's (a rough guide: the record's guitars are mixed, often doubled, which raises it, and mastered).
 # Each check kept (CHECKS_MOST, with its recording), so what's the same over several songs (the pedal's input level's
-# share) shows apart from what differs (each preset's).
+# share) shows apart from what differs (each preset's); and with it your guitar dry, if it comes in on the same
+# interface (its own channel, read in the same blocks: sample for sample with the pedal's), to play through the pedal
+# again later (reamping: presets tried without you playing).
 
 RATE = 48000  # (an input read at this rate, as the guitar's is to be heard)
 BLOCK = 512  # samples read at a time (about 11 ms)
@@ -75,7 +77,7 @@ def _input_stream(device: str, channels: int) -> Any:
 class Tap:
     """An audio input's channel, read as it comes in: its level (a meter's), and while it's recording, its samples,
     each block with where the song was as it came in (where: the chart's time at a time on time.monotonic's
-    clock)."""
+    clock); and another of its channels beside it, if asked (dry: the guitar's, before the pedal)."""
 
     def __init__(self, device: str, channel: int) -> None:
         self.device, self.channel = device, channel
@@ -86,6 +88,8 @@ class Tap:
         self._lock = threading.Lock()
         self._where: Callable[[float], float | None] | None = None
         self._blocks: list[tuple[float | None, Any]] = []  # (recording: the chart's time at each block's end, it)
+        self._dry: int | None = None  # (recording: the other channel recorded beside it)
+        self._dry_blocks: list[Any] = []
         self._quit = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -127,6 +131,8 @@ class Tap:
                         where = self._where
                         if where is not None and len(self._blocks) * BLOCK < RECORD_MOST * RATE:
                             self._blocks.append((where(now - latency), x))
+                            if self._dry is not None:
+                                self._dry_blocks.append(np.array(samples[:, self._dry - 1], dtype=np.float32))
         except Exception as exc:  # (no such input, unplugged: said)
             self.error = str(exc) or type(exc).__name__
 
@@ -144,22 +150,27 @@ class Tap:
         return {"peak": most(PEAK_FOR), "hold": most(HOLD_FOR), "loudest": most(LOUDEST_FOR), "clipped": clipped,
                 "error": self.error, "recording": self.recording}
 
-    def record(self, where: Callable[[float], float | None]) -> None:
-        """Recording from now: each block with where the song was as it came in."""
+    def record(self, where: Callable[[float], float | None], dry: int | None = None) -> None:
+        """Recording from now: each block with where the song was as it came in; and another of its channels beside
+        it (dry: 1-based; one the stream has, under its own: else not)."""
         with self._lock:
-            self._blocks, self._where = [], where
+            self._blocks, self._dry_blocks, self._where = [], [], where
+            self._dry = dry if dry is not None and 1 <= dry < self.channel else None
 
-    def take(self) -> tuple[Any, list[tuple[int, float | None]]]:
-        """What it recorded (mono, float32, at RATE), and where the song was at the end of each block (the sample
-        after it, the chart's time); recording stops."""
+    def take(self) -> tuple[Any, list[tuple[int, float | None]], Any]:
+        """What it recorded (mono, float32, at RATE), where the song was at the end of each block (the sample after
+        it, the chart's time), and the other channel recorded beside it (as long; None if it wasn't); recording
+        stops."""
         import numpy as np
         with self._lock:
             blocks, self._blocks, self._where = self._blocks, [], None
+            dry_blocks, self._dry_blocks, self._dry = self._dry_blocks, [], None
         if not blocks:
-            return np.zeros(0, dtype=np.float32), []
+            return np.zeros(0, dtype=np.float32), [], None
         samples = np.concatenate([x for _at, x in blocks])
         ends = np.cumsum([len(x) for _at, x in blocks])
-        return samples, [(int(end), at) for end, (at, _x) in zip(ends, blocks)]
+        dry = np.concatenate(dry_blocks)[:len(samples)] if len(dry_blocks) == len(blocks) else None
+        return samples, [(int(end), at) for end, (at, _x) in zip(ends, blocks)], dry
 
     @property
     def seconds(self) -> float:
@@ -373,9 +384,10 @@ def history(cache: Path | None = None) -> list[dict[str, Any]]:
 
 
 def keep(check: dict[str, Any], take: Any, rate: int = RATE, cache: Path | None = None,
-         anchors: Sequence[tuple[int, float | None]] = ()) -> dict[str, Any]:
+         anchors: Sequence[tuple[int, float | None]] = (), dry: Any = None) -> dict[str, Any]:
     """A check kept, with its recording (16-bit WAV beside it, and where the song was at the end of each of its
-    blocks: anchors, as JSON, to check it again); the oldest gone over CHECKS_MOST."""
+    blocks: anchors, as JSON, to check it again), and your guitar dry beside it if it was recorded (24-bit: a guitar's
+    input is quiet, and it's to be played through the pedal again); the oldest gone over CHECKS_MOST."""
     import numpy as np
     folder = cache or cache_dir()
     folder.mkdir(parents=True, exist_ok=True)
@@ -386,12 +398,23 @@ def keep(check: dict[str, Any], take: Any, rate: int = RATE, cache: Path | None 
         w.setframerate(rate)
         w.writeframes(np.clip(np.round(np.asarray(take) * 32767), -32768, 32767).astype(np.int16).tobytes())
     (folder / f"{name}.json").write_text(json.dumps([[e, None if c is None else round(c, 4)] for e, c in anchors]))
-    checks = [*history(cache), {**check, "recording": f"{name}.wav"}]
+    kept = {**check, "recording": f"{name}.wav"}
+    if dry is not None and len(dry):
+        whole = np.clip(np.round(np.asarray(dry, dtype=np.float64) * 8388607), -8388608, 8388607).astype("<i4")
+        with wave.open(str(folder / f"{name}-dry.wav"), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(3)
+            w.setframerate(rate)
+            w.writeframes(whole.view(np.uint8).reshape(-1, 4)[:, :3].tobytes())
+        kept["dry"] = f"{name}-dry.wav"
+    checks = [*history(cache), kept]
     for gone in checks[:-CHECKS_MOST]:
         if gone.get("recording"):
             recording = folder / Path(str(gone["recording"])).name
             recording.unlink(missing_ok=True)
             recording.with_suffix(".json").unlink(missing_ok=True)
+        if gone.get("dry"):
+            (folder / Path(str(gone["dry"])).name).unlink(missing_ok=True)
     checks = checks[-CHECKS_MOST:]
     temp = folder / f".checks.json.{os.getpid()}"
     temp.write_text(json.dumps(checks, indent=1))

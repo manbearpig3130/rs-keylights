@@ -4001,7 +4001,9 @@ class Gui:
             if which is None:
                 raise GuiError("Split the song first (Song Audio): your tone's checked against its guitar")
             tap = self._tap(pedal["device"], pedal["channel"])
-            tap.record(self._chart_at)
+            guitar = (str(self.settings["listen_device"]), int(self.settings["listen_channel"]))
+            # (your guitar dry beside it, if it comes in on the same interface: kept, to play through the pedal again)
+            tap.record(self._chart_at, dry=guitar[1] if guitar[0] == pedal["device"] else None)
             named = next((r for r, _a in loaded if r.artist), ref)
             self._tone_check = {"state": "recording", "sid": sid, "title": named.title, "part": part,
                                 "separator": which, "tap": tap, "started": time.time(), "preset": self._preset_on()}
@@ -4009,20 +4011,22 @@ class Gui:
             check = self._tone_check
             if check.get("state") != "recording":
                 return self.tone_check_info()
-            take, anchors = check["tap"].take()
+            take, anchors, dry = check["tap"].take()
             if action == "cancel":
                 self._tone_check = {"state": "idle"}
             else:
                 self._tone_check = {**{k: v for k, v in check.items() if k != "tap"}, "state": "analysing"}
-                threading.Thread(target=self._tone_check_analyse, args=(dict(self._tone_check), take, anchors),
+                threading.Thread(target=self._tone_check_analyse, args=(dict(self._tone_check), take, anchors, dry),
                                  name="rs-keylights tone check", daemon=True).start()
         else:
             raise GuiError("Expected start, stop or cancel")
         return self.tone_check_info()
 
-    def _tone_check_analyse(self, check: dict[str, Any], take: Any, anchors: list[tuple[int, float | None]]) -> None:
+    def _tone_check_analyse(self, check: dict[str, Any], take: Any, anchors: list[tuple[int, float | None]],
+                            dry: Any = None) -> None:
         """(Its own thread.) A tone check's recording against the song's guitar (the side of it you play, if its lead
-        and rhythm are apart: else its guitar; a bass part, its bass), kept with its result."""
+        and rhythm are apart: else its guitar; a bass part, its bass), kept with its result (and your guitar dry, if
+        it was recorded beside it)."""
         import numpy as np
         try:
             sid = check["sid"]
@@ -4054,7 +4058,7 @@ class Gui:
                 preset = self._preset_on()
             kept = tonecheck.keep({"at": time.strftime("%Y-%m-%d %H:%M"), "sid": sid, "song": check["title"],
                                    "part": check["part"], "stem": stem, "preset": preset, "offset": offset,
-                                   **tonecheck.as_dict(result)}, take, anchors=anchors)
+                                   **tonecheck.as_dict(result)}, take, anchors=anchors, dry=dry)
             self._tone_check = {"state": "idle", "last": kept}
         except Exception as exc:  # (said on the page)
             self._tone_check = {"state": "idle", "error": str(exc) or type(exc).__name__}

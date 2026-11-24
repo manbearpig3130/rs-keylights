@@ -1,6 +1,7 @@
 import math
 import threading
 import time
+import wave
 
 import numpy as np
 
@@ -128,10 +129,11 @@ def test_more_distortion_says_less_gain():
 
 
 class FakeStream:
-    """An input's stream: a tone at half scale, then full scale (clipped), BLOCK samples a read."""
+    """An input's stream: a tone at half scale, then full scale (clipped), BLOCK samples a read, on its last channel;
+    on its first, each sample's place in the stream (a quiet ramp: the dry guitar's)."""
 
     def __init__(self, channels):
-        self.channels, self.latency, self.reads = channels, 0.005, 0
+        self.channels, self.latency, self.reads, self.given = channels, 0.005, 0, 0
 
     def __enter__(self):
         return self
@@ -145,6 +147,8 @@ class FakeStream:
         level = 0.5 if self.reads < 20 else 1.0
         block = np.zeros((count, self.channels), np.float32)
         block[:, -1] = level * np.sin(np.arange(count) / 5)
+        block[:, 0] = (self.given + np.arange(count)) * 1e-7
+        self.given += count
         return block, False
 
 
@@ -165,13 +169,19 @@ def test_an_inputs_tap_meters_its_channel_and_records_with_where_the_song_was(mo
             with where_lock:
                 asked.append(at)
             return 12.0 + len(asked) * tonecheck.BLOCK / RATE
-        tap.record(where)
+        tap.record(where, dry=1)
         assert tap.recording
         while tap.seconds < 0.05:
             time.sleep(0.01)
-        take, anchors = tap.take()
+        take, anchors, dry = tap.take()
         assert not tap.recording and len(take) == anchors[-1][0] and len(anchors) == len(take) // tonecheck.BLOCK
         assert anchors[0][1] > 12.0 and len(take) % tonecheck.BLOCK == 0
+        assert dry is not None and len(dry) == len(take)
+        assert np.allclose(np.diff(dry), 1e-7, atol=1e-9)  # (the dry channel, sample for sample: none lost)
+        tap.record(where, dry=3)  # (its own channel, or one the stream doesn't have: not recorded)
+        while tap.seconds < 0.02:
+            time.sleep(0.01)
+        assert tap.take()[2] is None
     finally:
         tap.stop()
     assert not tap.running
@@ -181,8 +191,16 @@ def test_checks_are_kept_with_their_recordings_the_oldest_going(tmp_path, monkey
     monkeypatch.setattr(tonecheck, "CHECKS_MOST", 2)
     names = iter(["a", "b", "c"])
     monkeypatch.setattr(tonecheck.time, "strftime", lambda _f: next(names))
+    quiet = (np.arange(100) - 50).astype(np.float32) * 3e-6  # (a guitar's input: quiet, kept in 24 bits)
     for song in ("one", "two", "three"):
-        tonecheck.keep({"song": song}, np.zeros(100, np.float32), cache=tmp_path)
+        tonecheck.keep({"song": song}, np.zeros(100, np.float32), cache=tmp_path, dry=quiet)
     assert [c["song"] for c in tonecheck.history(tmp_path)] == ["two", "three"]
-    assert sorted(p.name for p in tmp_path.glob("*.wav")) == ["b.wav", "c.wav"]
+    assert [c["dry"] for c in tonecheck.history(tmp_path)] == ["b-dry.wav", "c-dry.wav"]
+    assert sorted(p.name for p in tmp_path.glob("*.wav")) == ["b-dry.wav", "b.wav", "c-dry.wav", "c.wav"]
     assert sorted(p.name for p in tmp_path.glob("[abc].json")) == ["b.json", "c.json"]
+    with wave.open(str(tmp_path / "c-dry.wav")) as w:
+        assert (w.getsampwidth(), w.getframerate(), w.getnframes()) == (3, RATE, 100)
+        raw = np.frombuffer(w.readframes(100), np.uint8).reshape(-1, 3)
+    low, high = raw[:, 0].astype(np.int32) | raw[:, 1].astype(np.int32) << 8, raw[:, 2].astype(np.int8).astype(np.int32)
+    back = low | high << 16
+    assert np.allclose(back / 8388607, quiet, atol=2e-7)
