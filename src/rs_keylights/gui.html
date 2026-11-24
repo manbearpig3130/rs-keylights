@@ -62,11 +62,11 @@
   input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 45%, transparent); }
   input[type=range]:disabled { opacity: .45; cursor: default; }
   input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; padding: 0; margin: 0 3px 0 0;
-    border: 1px solid var(--muted); border-radius: 4px; background: var(--input); vertical-align: -2px; cursor: pointer;
-    display: inline-grid; place-content: center; flex: none; }
+    border: 1px solid var(--muted); border-radius: 4px; background: var(--input); vertical-align: -3px; cursor: pointer;
+    display: inline-block; position: relative; flex: none; }  /* (its middle level with its text's capitals) */
   input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
-  input[type=checkbox]::after { content: ""; width: 8px; height: 4px; margin-top: -2px;
-    border-left: 2px solid transparent; border-bottom: 2px solid transparent; transform: rotate(-45deg); }
+  input[type=checkbox]::after { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 4px;
+    border-left: 2px solid transparent; border-bottom: 2px solid transparent; transform: translate(-50%, -70%) rotate(-45deg); }
   input[type=checkbox]:checked::after { border-color: var(--accent-text); }  /* (there either way: nothing moves) */
   input[type=checkbox]:disabled { opacity: .45; cursor: default; }
   input[type=checkbox]:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
@@ -1084,6 +1084,8 @@
   <section class="card" data-kind="tab" hidden>
     <div class="fret-head">
       <h3 data-r="title">Tab</h3>
+      <label class="small" title="Show the lowest string at the top (off: the highest, as in standard tablature)">
+        <input type="checkbox" data-r="flip"> Low string on top</label>
       <label class="small" title="Bars per row (two rows: the current one and the next)">Bars
         <select data-r="bars"><option>1</option><option>2</option><option>3</option><option>4</option></select></label>
       <select data-r="part" aria-label="Whose tab" title="Arrangement shown (while following: the one being played)"></select>
@@ -1551,37 +1553,55 @@ function makeFretCard(spec) {
   });
   // A click on the board plays the string clicked at its fret on the keyboard, in the arrangement's tone, for as
   // long as it's held down (behind a capo: the capo's fret); a dot shows where while it sounds
-  let pressed = null;
-  r("board").addEventListener("pointerdown", (e) => {
+  // (held down and dragged: each string and fret the cursor comes over played in turn, as the keys card's keys are)
+  let pressed = null, dragging_ = false;
+  const placeAt = (e) => {  // the string and fret under the cursor (none: off the strings)
     const svg = r("board").querySelector("svg"), s = selected, guitar = data || (s && s.guitar);
-    if (e.button !== 0 || !svg || !s || !guitar || !guitar.strings) return;
+    if (!svg || !s || !guitar || !guitar.strings) return null;
     const point = svg.createSVGPoint();
     point.x = e.clientX;
     point.y = e.clientY;
     const at = point.matrixTransform(svg.getScreenCTM().inverse());
-    const n = guitar.strings.length, {nut} = geometry(n), {W, LEFT, TOP, GAP} = BOARD;
+    const n = guitar.strings.length, {nut, right} = geometry(n), {W, LEFT, TOP, GAP} = BOARD;
     const row = Math.round((at.y - TOP) / GAP);
-    if (at.x < LEFT || row < 0 || row >= n || Math.abs(at.y - (TOP + row * GAP)) > GAP / 2) return;
+    if (at.x < LEFT || at.x > right || row < 0 || row >= n || Math.abs(at.y - (TOP + row * GAP)) > GAP / 2) return null;
     const string = fretThickOnTop ? row : n - 1 - row;
     const fret = at.x < nut ? 0 : Math.min(FRETS, Math.floor((at.x - nut) / W) + 1);
-    const part = s.parts.find((x) => x.part === fretPartOf(s, card.spec.part));
+    return {svg, s, guitar, n, string, fret, key: guitar.strings[string] + Math.max(fret, guitar.capo || 0)};
+  };
+  const play = (place) => {
+    if (pressed && place && pressed.key === place.key && pressed.string === place.string) return;  // (still on it)
+    release();
+    if (!place) return;
+    const part = place.s.parts.find((x) => x.part === fretPartOf(place.s, card.spec.part));
     const tone = part ? (part.tones && part.tones.tone) || defaultsFor(part.kind).from.tone : null;
-    const key = guitar.strings[string] + Math.max(fret, guitar.capo || 0);
+    pressed = {key: place.key, string: place.string, tone};
+    pressKey(place.key, true, tone);
+    const {x, y} = geometry(place.n);
+    place.svg.insertAdjacentHTML("beforeend",
+      `<circle class="tap" cx="${x(place.fret)}" cy="${y(place.string)}" r="${BOARD.R + 2}"/>`);
+  };
+  r("board").addEventListener("pointerdown", (e) => {
+    const place = e.button === 0 ? placeAt(e) : null;
+    if (!place) return;
     e.preventDefault();
     r("board").setPointerCapture(e.pointerId);
-    release();
-    pressed = {key, tone};
-    pressKey(key, true, tone);
-    const {x, y} = geometry(n);
-    svg.insertAdjacentHTML("beforeend", `<circle class="tap" cx="${x(fret)}" cy="${y(string)}" r="${BOARD.R + 2}"/>`);
+    dragging_ = true;
+    play(place);
   });
+  r("board").addEventListener("pointermove", (e) => { if (dragging_) play(placeAt(e)); });
   function release() {
     if (!pressed) return;
     pressKey(pressed.key, false, pressed.tone);
     pressed = null;
     for (const tap of r("board").querySelectorAll(".tap")) tap.remove();
   }
-  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) r("board").addEventListener(type, release);
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    r("board").addEventListener(type, () => {
+      dragging_ = false;
+      release();
+    });
+  }
   return card;
 }
 
@@ -1673,6 +1693,7 @@ const TAB = {LEFT: 30, RIGHT: 12, TOP: 40, GAP: 22, ROWS: 2, ROW_GAP: 30, CHIP: 
 const TECH = {HARMONIC: 0x20, PALM_MUTE: 0x40, HAMMER_ON: 0x200, PULL_OFF: 0x400, TAP: 0x4000, PINCH: 0x8000,
   VIBRATO: 0x10000};
 let tabBars = Number(store.get("rsk.tabBars", 2)) || 2;  // (a new tab's bars a row: the last chosen)
+let tabLowOnTop = !!store.get("rsk.tabLowOnTop", false);  // (the tabs' own: the lowest string on top, or as tab has it)
 
 // Its rows: each one's start and end (seconds), bars bars a row
 function tabRows(d, bars = tabBars) {
@@ -1707,6 +1728,10 @@ function makeTabCard(spec) {
       }).catch(() => {});
     },
     flipped() { shown = ""; },
+    tabFlipped() {
+      r("flip").checked = tabLowOnTop;
+      shown = "";
+    },
     frame() {
       const s = selected;
       if (!data || !s || !data.rows.length || `${s.id}|${data.part}` !== wanted) return;
@@ -1716,12 +1741,18 @@ function makeTabCard(spec) {
       const width = Math.max(320, Math.round(r("tab").clientWidth));
       const lo = data.notes.findIndex((note) => note[0] > at);
       const playing = data.notes.reduce((n, note, i) => n + (note[0] <= at && Math.max(note[1], note[0] + LIT) >= at ? i : 0), 0);
-      const now = `${first}|${lo}|${playing}|${width}|${fretThickOnTop}|${Math.round(at * 20)}`;
+      const now = `${first}|${lo}|${playing}|${width}|${tabLowOnTop}|${Math.round(at * 20)}`;
       if (now === shown) return;
       shown = now;
       r("tab").innerHTML = tabSvg(data, first, at, width);
     },
   };
+  r("flip").checked = tabLowOnTop;
+  r("flip").addEventListener("change", () => {
+    tabLowOnTop = r("flip").checked;
+    store.set("rsk.tabLowOnTop", tabLowOnTop);
+    for (const c of liveCards) if (c.tabFlipped) c.tabFlipped();  // (every tab, the other way up)
+  });
   r("bars").value = String(bars());
   r("bars").addEventListener("change", () => {
     card.spec.bars = tabBars = Number(r("bars").value) || 2;
@@ -1755,7 +1786,7 @@ function fretText(fret, tech) {
 function tabSvg(d, first, at, width) {
   const n = d.strings.length, height = (n - 1) * TAB.GAP, right = width - TAB.RIGHT;
   const y = (row, string) => TAB.TOP + row * (height + TAB.ROW_GAP + TAB.TOP / 2) +
-    (fretThickOnTop ? string : n - 1 - string) * TAB.GAP;
+    (tabLowOnTop ? string : n - 1 - string) * TAB.GAP;
   const out = [];
   // A note: a chip on its string, edged in its colour (s0 the lowest), its tail along the string as it rings on
   const chip = (cls, string, cx, cy, text, until) => {
@@ -1808,7 +1839,7 @@ function tabSvg(d, first, at, width) {
     }
   }
   const rows = Math.min(TAB.ROWS, d.rows.length - first);
-  const total = y(rows - 1, fretThickOnTop ? n - 1 : 0) + TAB.CHIP / 2 + 6;
+  const total = y(rows - 1, tabLowOnTop ? n - 1 : 0) + TAB.CHIP / 2 + 6;
   return `<svg viewBox="0 0 ${width} ${total}" role="img" aria-label="Tab">${out.join("")}</svg>`;
 }
 
