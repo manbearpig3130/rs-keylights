@@ -5309,7 +5309,7 @@ async function poll(now) {
 // rhythm and bass parts (playing a song uses those too). The song being followed shows its arrangements,
 // each with tones of its own or else the defaults.
 
-const BUILT_IN = {lead: 79, rhythm: 79, bass: 85};
+const BUILT_IN = {lead: 79, rhythm: 79, bass: 85, vocals: 196};  // (vocals: the server's KIND_DEFAULTS, VOICE LEAD)
 const PINCH_TONE = 298;  // GM GT HARMONICS: pinch harmonics' squeals, unless chosen otherwise
 const KIND_NAMES = {lead: "Lead parts", rhythm: "Rhythm parts", bass: "Bass parts"};
 let shownDefaults = "";
@@ -5422,9 +5422,9 @@ function toneSet(o) {
 // What a part without tones of its own gets: {tone, mute_tone, pinch_tone} as text, and the numbers (pinch
 // harmonics: GM GT HARMONICS unless the kind's are the same tone, 0)
 function defaultsFor(kind) {
-  const k = follow[kind];
-  const main = k.tone || BUILT_IN[kind];
-  const pinch = k.pinch_tone === 0 ? null : k.pinch_tone || PINCH_TONE;
+  const own = follow[kind], k = own || {};  // (a kind with no defaults of its own here, the vocal melody: its built-in)
+  const main = k.tone || BUILT_IN[kind] || BUILT_IN.lead;
+  const pinch = !own || k.pinch_tone === 0 ? null : k.pinch_tone || PINCH_TONE;
   return {
     text: {
       tone: `${toneLabel(main)} · default`,
