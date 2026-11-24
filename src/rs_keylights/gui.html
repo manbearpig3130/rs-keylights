@@ -75,7 +75,6 @@
   button.warn { border-color: var(--warn); }  /* (something it did failed: its title says why) */
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   #muteBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* muted */
-  #audioBtn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }  /* the song's audio */
   input, select { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
   select { max-width: 100%; }
   main { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr) minmax(260px, 330px); gap: 12px; padding: 12px; align-items: start; }
@@ -138,6 +137,8 @@
   .song-side { flex: none; max-width: 48%; margin-left: auto; display: flex; flex-direction: column; align-items: flex-end;
     justify-content: space-between; align-self: stretch; gap: 6px; }
   .song-speed { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .song-controls { display: flex; align-items: center; gap: 10px; }
+  #muteBtn { padding: 1px 6px; font-size: 13px; line-height: 1.3; }  /* (the keyboard's sound, every part's) */
   .song-speed input { width: 110px; }
   .song-speed output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
   .song-head h2 { font-size: 18px; }
@@ -151,6 +152,9 @@
   .part-make svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
   /* The settings column: each card folds into its title; the whole column folds away (the middle gets its room) */
   #side h3.fold { cursor: pointer; user-select: none; }
+  #appCard > h3 { display: flex; align-items: center; gap: 4px; }
+  #layoutBtn { margin-left: auto; padding: 1px 8px; font-size: 12px; font-weight: 500; }
+  body.layout-editing #layoutBtn { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   #side h3.fold::before { content: "▾ "; color: var(--muted); }
   #side .card.folded h3.fold::before { content: "▸ "; }
   #side .card.folded h3 { margin: 0; }
@@ -604,10 +608,7 @@
   </div>
   <button id="playBtn" class="primary icon" title="Play" disabled>▶</button>
   <button id="stopBtn" class="icon" title="Stop" disabled>■</button>
-  <button id="muteBtn" class="icon" title="Keyboard sound on or off (when muted, only the lights show)">🔊</button>
-  <button id="audioBtn" class="icon" title="Play the song's original audio from the Mac along with the keyboard (pitch is preserved when slowed down)">🎵</button>
   <button id="followBtn" class="icon" aria-label="Follow Rocksmith" title="Follow Rocksmith: light the keys along with the song playing in the game"><span class="rs-pick" aria-hidden="true"></span></button>
-  <button id="layoutBtn" class="icon" title="Edit layout: move, add and remove cards (saved in this browser)">✎</button>
   <button id="sideBtn" class="icon" title="Show or hide the settings column">⚙</button>
   <button id="fullBtn" class="icon" title="Full screen (Esc to exit)">⛶</button>
 </header>
@@ -642,9 +643,12 @@
         </div>
         <div class="song-side">
           <div id="songKey"></div>
-          <label class="song-speed" title="Playback speed: double-click to reset to 100% (while following, the game sets the speed)">Speed
-            <input type="range" id="speed" min="0.25" max="2" step="0.01" value="1" aria-label="Speed"><output
-              id="speedShown">100%</output></label>
+          <div class="song-controls">
+            <label class="song-speed" title="Playback speed: double-click to reset to 100% (while following, the game sets the speed)">Speed
+              <input type="range" id="speed" min="0.25" max="2" step="0.01" value="1" aria-label="Speed"><output
+                id="speedShown">100%</output></label>
+            <button type="button" id="muteBtn" title="Mute the keyboard (lights only)">🔊</button>
+          </div>
         </div>
       </div>
       <div id="parts"></div>
@@ -1041,7 +1045,7 @@
     </div>
 
     <div class="card" id="appCard">
-      <h3>rs-keylights</h3>
+      <h3>rs-keylights<button type="button" id="layoutBtn" title="Edit layout: move, add and remove cards (saved in this browser)">✎ Layout</button></h3>
       <div class="grid2">
         <label>Songs</label><span id="gameDir" class="muted" style="font-size:12px;word-break:break-all"></span>
         <label>Phone</label><span id="phone" class="small"></span>
@@ -3630,7 +3634,8 @@ function loadLayout() {
   }
   const side = (Array.isArray(kept.side) ? kept.side : []).filter((id) => SIDE_CARDS.includes(id));
   for (const id of SIDE_CARDS) if (!side.includes(id)) side.push(id);  // (cards new since: at the end)
-  return {middle, side, away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id)),
+  return {middle, side, away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id) &&
+            id !== "appCard"),  // (Edit layout's card: never put away)
           known: Object.keys(CARD_KINDS)};
 }
 let layout = loadLayout();
@@ -3707,7 +3712,7 @@ function foldable(card) {
 // A settings card's title as it reads (its info icon's text left out)
 function cardTitle(card) {
   const title = card.querySelector(":scope > h3");
-  return title ? [...title.childNodes].filter((n) => !(n.classList && n.classList.contains("info-text")))
+  return title ? [...title.childNodes].filter((n) => !(n.classList && n.classList.contains("info-text")) && n.tagName !== "BUTTON")
     .map((n) => n.textContent).join("").trim() : "";
 }
 
@@ -3754,7 +3759,7 @@ function cardTools(card) {
     card.prepend(tools);
   }
   tools.querySelector(".name").textContent = cardName(card);
-  tools.querySelector("[data-remove]").hidden = card.dataset.kind === "song";  // (the song's card: always there)
+  tools.querySelector("[data-remove]").hidden = card.dataset.kind === "song" || card.id === "appCard";  // (the song's card: always there)
 }
 
 let draggingCard = null;
@@ -4776,15 +4781,13 @@ function showOptions() {
   }
   if (playOptions) {  // the song's own audio: on or off, how loud, and why it can't play (if it can't)
     const on = !!playOptions.audio;
-    $("audioBtn").classList.toggle("on", on);
     $("audioOn").classList.toggle("primary", on);  // (red while it's on, as Follow Rocksmith is while following)
     $("audioOn").disabled = !playOptions.audio_there;
-    $("audioBtn").disabled = !playOptions.audio_there;
-    $("audioBtn").title = $("audioOn").title = !playOptions.audio_there ?
-      "The song's own audio needs the drum tools (tools/drums-setup.sh)" :
+    $("audioOn").title = !playOptions.audio_there ?
+      "Playing the song's audio requires the drum tools (tools/drums-setup.sh)" :
       playOptions.audio_error ? `The song's audio couldn't play: ${playOptions.audio_error}` :
-      on ? "The song's own audio plays with the song you play: off" :
-      "The song's own audio, from the Mac, with the song you play (slowed down: at its pitch; off each time rs-keylights starts)";
+      on ? "Stop the song's original audio" :
+      "Play the song's original audio from the Mac (pitch is preserved when slowed down; off each time rs-keylights starts)";
     if (document.activeElement !== $("audioVolume")) $("audioVolume").value = String(playOptions.audio_volume);
     $("audioVolumeShown").textContent = `${$("audioVolume").value}%`;
     const chosen = playOptions.audio_device;
@@ -4795,7 +4798,6 @@ function showOptions() {
     $("audioDevice").value = chosen || "";
   }
 }
-$("audioBtn").addEventListener("click", () => changeOptions({audio: !(playOptions && playOptions.audio)}));
 $("audioVolume").addEventListener("input", () => { $("audioVolumeShown").textContent = `${$("audioVolume").value}%`; });
 $("audioVolume").addEventListener("change", () => changeOptions({audio_volume: Number($("audioVolume").value)}));
 $("audioDevice").addEventListener("change", () => changeOptions({audio_device: $("audioDevice").value || null}));
@@ -4891,8 +4893,8 @@ function updateButtons() {
   $("stopBtn").disabled = state.mode === "idle";
   $("muteBtn").classList.toggle("on", state.sound === false);
   $("muteBtn").textContent = state.sound === false ? "🔇" : "🔊";
-  $("muteBtn").title = state.sound === false ? "Muted (just the lights): sound on" :
-    `The sound on the ${KB()}, playing or following: mute it (just the lights)`;
+  $("muteBtn").title = state.sound === false ? "Keyboard muted (lights only): click to unmute" :
+    `Mute the ${KB()} (lights only)`;
 }
 
 async function play() {
@@ -5778,7 +5780,7 @@ for (const card of document.querySelectorAll("#side > .card")) {
   title.title = "Collapse or expand";
   card.classList.toggle("folded", !!store.get("rsk.fold." + card.id, FOLDED_AT_FIRST.has(card.id)));
   const flip = () => store.set("rsk.fold." + card.id, card.classList.toggle("folded"));
-  const own = (e) => !e.target.closest("button.info, .info-text");  // (its info icon: not a fold)
+  const own = (e) => !e.target.closest("button, .info-text");  // (its info icon, or a button in it: not a fold)
   title.addEventListener("click", (e) => { if (own(e)) flip(); });
   title.addEventListener("keydown", (e) => {
     if (own(e) && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); flip(); }
