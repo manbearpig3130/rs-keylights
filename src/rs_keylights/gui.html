@@ -287,7 +287,8 @@
   #splitServerSaid { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   #audioSplit { flex: none; font-size: 14px; }
   #splitServer[open] > summary { margin-bottom: 8px; }
-  .split-server-log { margin-top: 10px; }
+  .split-server-log { margin-top: 4px; }
+  .row-buttons { display: inline-flex; gap: 6px; flex: none; }
   .split-server-log pre { max-height: 240px; overflow: auto; margin: 6px 0 4px; padding: 8px; border-radius: 6px;
     background: var(--input); border: 1px solid var(--line); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
     white-space: pre-wrap; word-break: break-word; }
@@ -595,32 +596,35 @@
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; background: var(--muted); }
   .swatch.root { background: var(--accent); }
   .swatch.other { background: none; border: 1.5px dashed var(--muted); }
-  /* The library: a button left of the search collapses it into a rail, the button where it was and the song the
-     Launchkey's on (else the one shown) at its foot, its art and title (remembered) */
+  /* The library: a button left of the search narrows it, a compact list (each song's title and artist), scrolled and
+     clicked as before, and the song the Launchkey's on (else the one shown) small at its foot (remembered) */
   .library-top { display: flex; gap: 8px; align-items: center; }
   .library-top #search { flex: 1; min-width: 0; }
   #libraryBtn { flex: none; padding: 5px 6px; line-height: 0; color: var(--muted); }
   #libraryBtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; }
-  body.library-collapsed #search, body.library-collapsed #count, body.library-collapsed #songs,
-  body.library-collapsed #browseBox { display: none; }
-  body.library-collapsed #library { height: calc(100vh - 80px); padding: 10px; }
-  body.library-collapsed #details { margin-top: auto; height: auto; grid-template-columns: minmax(0, 1fr); gap: 6px;
-    border-top: 0; padding: 0; }
+  body.library-collapsed #library { padding: 10px; }
+  body.library-collapsed .library-top { gap: 6px; }
+  body.library-collapsed #search { font-size: 12px; padding: 4px 6px; }
+  body.library-collapsed #count { display: none; }
+  body.library-collapsed #songs { margin-top: 8px; }
+  body.library-collapsed #songs li { padding: 4px 6px; }
+  body.library-collapsed #songs .parts { display: none; }
+  body.library-collapsed #songs .song { font-size: 12px; }
+  body.library-collapsed #songs .artist { font-size: 11px; }
+  body.library-collapsed #songs .song, body.library-collapsed #songs .artist { white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  body.library-collapsed #details { height: auto; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; padding-top: 8px; }
   body.library-collapsed #details > div { min-width: 0; }
-  body.library-collapsed #details .art { width: 100%; height: auto; aspect-ratio: 1; }
+  body.library-collapsed #details .art { width: 44px; height: 44px; }
   body.library-collapsed #details .d-title { font-size: 12px; line-height: 1.25; white-space: normal; display: -webkit-box;
-    -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   body.library-collapsed #details .d-title + .d-line { font-size: 11px; }
   body.library-collapsed #details .d-key, body.library-collapsed #details .d-key ~ .d-line { display: none; }
   body.library-collapsed #details .d-empty { padding-top: 0; font-size: 11px; }
-  body.library-collapsed main { grid-template-columns: 92px minmax(0, 1fr) minmax(260px, 330px); }
-  body.library-collapsed.side-hidden main { grid-template-columns: 92px minmax(0, 1fr); }
-  @media (max-width: 1100px) { body.library-collapsed main { grid-template-columns: 92px minmax(0, 1fr); } }
-  @media (max-width: 720px) {
-    body.library-collapsed main { grid-template-columns: 1fr; }
-    body.library-collapsed #library { height: auto; }
-    body.library-collapsed #details { grid-template-columns: 72px minmax(0, 1fr); }
-  }
+  body.library-collapsed main { grid-template-columns: 180px minmax(0, 1fr) minmax(260px, 330px); }
+  body.library-collapsed.side-hidden main { grid-template-columns: 180px minmax(0, 1fr); }
+  @media (max-width: 1100px) { body.library-collapsed main { grid-template-columns: 180px minmax(0, 1fr); } }
+  @media (max-width: 720px) { body.library-collapsed main { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -776,27 +780,10 @@
         <select id="audioDevice" aria-label="Output device"
           title="Audio output (Default output follows macOS's Sound settings)"></select>
         <button type="button" id="audioSplit"></button></summary>
-      <div class="audio-grid">
-        <label for="audioSeparator">Separator</label>
-        <select id="audioSeparator" class="audio-wide" title="The model that splits songs into stems (and whose stems play)"></select>
-      </div>
-      <p class="small muted">Run BS-RoFormer SW on another computer's NVIDIA GPU, many times faster than on the Mac:
-        start <code>tools/rs-keylights-split-server.py</code> there (it installs itself on first run), then enter the
-        address and key it prints. If the server doesn't respond, songs are split on this Mac instead.</p>
-      <div class="audio-grid">
-        <label for="splitServerUrl">Address</label>
-        <input id="splitServerUrl" class="audio-wide" placeholder="http://my-pc.local:8042" autocomplete="off">
-        <label for="splitServerKey">Key</label>
-        <input id="splitServerKey" class="audio-wide" type="password" autocomplete="off">
-      </div>
-      <div class="audio-parts-head"><span id="splitServerNote" class="small muted"></span>
-        <button type="button" id="splitServerForget">Forget</button>
-        <button type="button" id="splitServerSave">Save and check</button></div>
-      <details id="splitServerLog" class="split-server-log">
-        <summary class="small">Separator server output</summary>
+      <div class="split-server-log">
         <pre id="splitServerLines" aria-live="polite"></pre>
         <div id="splitServerWorking" class="small muted"></div>
-      </details>
+      </div>
     </details>
   </section>
 
@@ -1072,6 +1059,26 @@
           <button id="pinchDefaults">Defaults</button>
         </div>
       </details>
+    </div>
+
+    <div class="card" id="stemsCard">
+      <h3>Stem separation<button type="button" class="info" aria-label="About stem separation"></button><span
+        class="info-text">How songs are split into stems (drums, bass, guitar, vocals, keys and other). BS-RoFormer SW
+        gives the cleanest stems; Demucs is quicker. To run BS-RoFormer SW on another computer's NVIDIA GPU, many times
+        faster than on the Mac, start <code>tools/rs-keylights-split-server.py</code> there (it installs itself on first
+        run), then enter the address and key it prints. If the server doesn't respond, songs are split on this Mac
+        instead. Its console output shows in the Song Audio card.</span></h3>
+      <div class="audio-grid">
+        <label for="audioSeparator">Separator</label>
+        <select id="audioSeparator" class="audio-wide" title="The model that splits songs into stems (and whose stems play)"></select>
+        <label for="splitServerUrl">Server</label>
+        <input id="splitServerUrl" class="audio-wide" placeholder="http://my-pc.local:8042" autocomplete="off">
+        <label for="splitServerKey">Key</label>
+        <input id="splitServerKey" class="audio-wide" type="password" autocomplete="off">
+      </div>
+      <div class="audio-parts-head"><span id="splitServerNote" class="small muted"></span>
+        <span class="row-buttons"><button type="button" id="splitServerForget">Forget</button>
+        <button type="button" id="splitServerSave">Save and check</button></span></div>
     </div>
 
     <div class="card" id="appCard">
@@ -4400,7 +4407,7 @@ function renderAudioCard(s) {
   $("splitServerNote").textContent = server && server.error ? server.error : "";
   $("splitServerForget").hidden = !server;
   if (document.activeElement !== $("splitServerUrl")) $("splitServerUrl").value = server ? server.url : "";
-  $("splitServerKey").placeholder = server ? "Saved (enter a new key to change it)" : "The key the server prints";
+  $("splitServerKey").placeholder = server ? "Saved (type to replace)" : "The key the server prints";
   separator.value = chosen;
   separator.disabled = d.making;
   const split = $("audioSplit");
@@ -4494,7 +4501,7 @@ async function setSplitServer(change) {  // (then the song again: what the serve
 let serverLogNext = 0, serverLogTimer = null;
 async function followServerLog() {
   clearTimeout(serverLogTimer);
-  const box = $("splitServerLog");
+  const box = $("splitServer");
   if (!box.open) return;
   try {
     const d = await api(`/api/stems/server/log?since=${serverLogNext}`);
@@ -4519,8 +4526,8 @@ async function followServerLog() {
   }
   serverLogTimer = setTimeout(followServerLog, 1000);
 }
-$("splitServerLog").addEventListener("toggle", () => {
-  if ($("splitServerLog").open) followServerLog(); else clearTimeout(serverLogTimer);
+$("splitServer").addEventListener("toggle", () => {  // (its summary opened: the separator server's console)
+  if ($("splitServer").open) followServerLog(); else clearTimeout(serverLogTimer);
 });
 
 $("splitServerSave").addEventListener("click", () => act(() =>
@@ -5820,18 +5827,19 @@ function showLibraryFolded(folded) {
   document.body.classList.toggle("library-collapsed", folded);
   $("libraryBtn").setAttribute("aria-expanded", String(!folded));
   $("libraryBtn").title = folded ? "Expand the song list" : "Collapse the song list";
+  $("search").placeholder = folded ? "Search…" : "Search songs, artists, files…";
 }
 showLibraryFolded(!!store.get("rsk.libraryCollapsed", false));
 $("libraryBtn").addEventListener("click", () => {
   const folded = !document.body.classList.contains("library-collapsed");
   store.set("rsk.libraryCollapsed", folded);
   showLibraryFolded(folded);
-  hovered = null;  // (the rows gone from under the mouse: no song's pointed at)
   renderDetails();
+  placeBrowseBox();  // (the rows' sizes changed: the Launchkey's box round its song again)
 });
 $("sideBtn").addEventListener("click", () => store.set("rsk.sideHidden", document.body.classList.toggle("side-hidden")));
 // The settings column's cards fold into their titles (remembered; setup ones folded at first)
-const FOLDED_AT_FIRST = new Set(["outputsCard", "keyboardCard", "appCard"]);
+const FOLDED_AT_FIRST = new Set(["outputsCard", "keyboardCard", "appCard", "stemsCard"]);
 for (const card of document.querySelectorAll("#side > .card")) {
   const title = card.querySelector(":scope > h3");
   if (!title) continue;
