@@ -30,7 +30,7 @@ from rs_keylights.pedalwriter import ACK, _client  # noqa: E402
 R = tonecheck.RATE
 SLOT = 192  # (the search's own: no rule points at it)
 NEVER = (187, 200)  # (the user's own: Dimebag, This Love)
-BASE = 190  # GODS B BRIGHT
+BASE = 190  # (Gods: GODS B BRIGHT when rounds 1 and 2 ran; GODS C, their winner, since)
 WINDOW, GAP = 5.0, 0.5  # seconds: the take's stretches compared, and the silence between them as they're played
 OUT = Path.home() / "Library/Caches/rs-keylights/tonesearch"
 HOLD = Path.home() / ".config/dnafx-preset/hold"
@@ -193,6 +193,7 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="the windows and the live take's check only: no pedal")
     ap.add_argument("--only", help="which tries (their numbers, from 0)")
     ap.add_argument("--round", type=int, default=1)
+    ap.add_argument("--base", type=int, default=BASE, help="the slot the tries start from")
     ap.add_argument("--quick", type=float, help="seconds of playing per try: each try's exact effect, from try 0")
     args = ap.parse_args()
     check, folder = reamp.find_check(args.check)
@@ -221,8 +222,8 @@ def main() -> None:
     for slot in range(188, 198):
         (backups / f"{slot:03d}-{presets[slot].name or 'unnamed'}.bin").write_bytes(presets[slot].to_bytes())
     print("saved 188-197 in", backups, flush=True)
-    base = presets[BASE]
-    assert base.name == "GODS B BRIGHT", base.name
+    base = presets[args.base]
+    print(f"base: {args.base} {base.name}: {describe(base)}", flush=True)
     tries = {1: round_one, 2: round_two}[args.round](base)
     if args.only:
         tries = [tries[int(k)] for k in args.only.split(",")]
@@ -248,7 +249,7 @@ def main() -> None:
             said = client.upload(p)
             if not any(c == ACK for c, _d in said):
                 sys.exit(f"The pedal didn't take {p.name}")
-            client.switch(BASE)  # (away and back: the slot's new values loaded)
+            client.switch(args.base)  # (away and back: the slot's new values loaded)
             time.sleep(0.3)
             client.switch(SLOT)
             time.sleep(0.7)
@@ -275,7 +276,7 @@ def main() -> None:
             print(f"{n:2d} {p.name:14s} score {score(result.eq):5.2f} " +
                   " ".join(f"{k} {v:+.1f}" for k, v in result.regions.items()), flush=True)
     finally:
-        client.switch(BASE)
+        client.switch(args.base)
         if not held:
             HOLD.unlink(missing_ok=True)
         remember_names({SLOT: tries[-1].name if results else presets[SLOT].name})
