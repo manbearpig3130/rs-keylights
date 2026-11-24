@@ -40,7 +40,7 @@ from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, Planne
 from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
-from . import chartsync, gameparts, gamestems, melody, sides, splitserver, stems, tonecheck, warmup
+from . import chartsync, favorites, gameparts, gamestems, melody, sides, splitserver, stems, tonecheck, warmup
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -664,9 +664,15 @@ class Gui:
                                          "beta": {name: False for name in BETAS},  # (beta features: each on or off)
                                          "pedal_input": None,  # (where the pedal's sound comes back in: {"device",
                                          # "channel"}, for its meter and the tone check)
+                                         "favorites_pending": {},  # (favourites changed here while the game
+                                         # was open, written to its profile once it's closed: song key -> on)
                                          "split_server": None}  # (another computer splitting songs with
         # BS-RoFormer SW, tools/rs-keylights-split-server.py: {"url", "key"})
         self._server_seen: tuple[float, dict[str, Any]] | None = None  # (it, as last asked: when, and what it said)
+        self._favorites_lock = threading.Lock()
+        self._favorites_read: tuple[tuple[Path, float], list[str]] | None = None  # (the profile's, by when written)
+        self._favorites_error: str | None = None
+        self._favorites_wrote = 0.0  # (when the profile was last written here: no wait for it after that)
         self._server_asking = False
         self._warmup_log_lock = threading.Lock()  # (the progress log: a drill's line at a time)
         self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
@@ -725,6 +731,9 @@ class Gui:
             self.settings.update({k: saved[k] for k in self.settings if k in saved})
             if not _split_server_ok(self.settings["split_server"]):
                 self.settings["split_server"] = None
+            pending = self.settings["favorites_pending"]
+            self.settings["favorites_pending"] = ({str(k): bool(v) for k, v in pending.items()}
+                                                  if isinstance(pending, dict) else {})
             try:
                 self.settings["beta"] = _betas({}, self.settings["beta"])
             except GuiError:
@@ -1353,6 +1362,69 @@ class Gui:
             self.play_version += 1
             self._save()
         return self.state()
+
+    # Rocksmith's favourite songs (favorites.py): the profile's, with what's changed here while the game was open
+    # waiting (favorites_pending) till it's closed: it keeps its own copy as it runs, and writes that back
+
+    def favorites_info(self) -> dict[str, Any]:
+        """The songs favoured (their keys: the profile's, with the changes waiting on it), whether any wait (the
+        game's open), and why the profile couldn't be read or written (none: it could)."""
+        self._apply_favorites()
+        with self._favorites_lock:
+            pending = dict(self.settings["favorites_pending"])
+            error = self._favorites_error
+        keys, read_error = self._profile_favorites()
+        return {"keys": _with_pending(keys, pending), "waiting": bool(pending), "error": read_error or error}
+
+    def _profile_favorites(self) -> tuple[list[str], str | None]:
+        path = favorites.profile_path()
+        if path is None:
+            return [], "No Rocksmith profile found"
+        try:
+            seen = (path, path.stat().st_mtime)
+            if self._favorites_read is None or self._favorites_read[0] != seen:
+                self._favorites_read = (seen, favorites.read(path))
+            return list(self._favorites_read[1]), None
+        except (OSError, favorites.ProfileError) as exc:
+            return [], f"The Rocksmith profile couldn't be read: {exc}"
+
+    def set_favorite(self, body: dict[str, Any]) -> dict[str, Any]:
+        """A song favoured or not ("song": its id, "on"): in the game's profile at once if the game's closed, else as
+        soon as it is."""
+        key = favorites.song_key(str(body.get("song", "")))
+        if not key:
+            raise GuiError("No song given")
+        with self._favorites_lock:
+            pending = {**self.settings["favorites_pending"], key: bool(body.get("on", True))}
+            self.settings["favorites_pending"] = self._kept["favorites_pending"] = pending
+        self._save()
+        return self.favorites_info()
+
+    def _apply_favorites(self) -> None:
+        """The changes waiting written to the profile, if the game's closed and its profile's been quiet a moment
+        (the game writes it as it closes); kept waiting (and why said) if it couldn't be."""
+        with self._favorites_lock:
+            pending = dict(self.settings["favorites_pending"])
+            if not pending or favorites.game_running():
+                return
+            path = favorites.profile_path()
+            if path is None:
+                return
+            try:
+                written = path.stat().st_mtime
+                if written != self._favorites_wrote and time.time() - written < 2:
+                    return  # (the game writing it, as it closed)
+                keys = favorites.read(path)
+                wanted = _with_pending(keys, pending)
+                if wanted != keys:
+                    favorites.write(path, wanted)
+                    self._favorites_wrote = path.stat().st_mtime
+                self._favorites_read, self._favorites_error = None, None
+            except (OSError, favorites.ProfileError) as exc:
+                self._favorites_error = f"Favourites couldn't be saved to the Rocksmith profile: {exc}"
+                return
+            self.settings["favorites_pending"] = self._kept["favorites_pending"] = {}
+        self._save()
 
     def toggle_beat_lights(self) -> bool:
         """A remote's lights pulsing to the song's beat (its drums' pad below: a metronome you see), on or off; kept."""
@@ -5134,6 +5206,11 @@ def _is_address(text: str) -> bool:
     return True
 
 
+def _with_pending(keys: list[str], pending: dict[str, bool]) -> list[str]:
+    """Favourites' keys with changes made on them: the ones taken off gone, the ones added at the end."""
+    return [k for k in keys if pending.get(k, True)] + [k for k, on in pending.items() if on and k not in keys]
+
+
 def _other_follow_running() -> bool:
     """Another `rs-keylights follow` (e.g. the RS Re-ARMed sidekick) would light the keys too."""
     found = subprocess.run(["pgrep", "-f", "rs-keylights follow"], capture_output=True, text=True)
@@ -5298,6 +5375,8 @@ class _Handler(BaseHTTPRequestHandler):
                     self._json(404, {"error": "No album art"})
                 else:
                     self._send(200, art, "image/png", cache="private, max-age=86400")
+            elif url.path == "/api/favorites":
+                self._json(200, gui.favorites_info())
             elif url.path == "/api/key":
                 self._json(200, gui.song_key(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/tones":
@@ -5379,6 +5458,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/stems/server": lambda: gui.set_split_server(body),
             "/api/game-stems": lambda: gui.set_game_stems(body),
             "/api/drums/hit": lambda: gui.hit_drum(body),
+            "/api/favorites": lambda: gui.set_favorite(body),
             "/api/warmup": lambda: gui.set_warmup(body),
             "/api/reindex": gui.reindex,
         }

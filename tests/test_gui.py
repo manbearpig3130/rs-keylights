@@ -2392,3 +2392,26 @@ def test_a_tone_check_records_the_pedal_as_the_song_plays_then_compares_it_with_
     assert [c["recording"] for c in done["checks"]] == [last["recording"]]
     assert (tmp_path / "checks" / last["recording"]).exists()
     call(server, "/api/stop", {})
+
+
+def test_a_song_favoured_here_goes_into_the_games_profile_at_once_or_once_its_closed(server, monkeypatch, tmp_path):
+    import os
+    from rs_keylights import favorites
+    from test_favorites import _profile
+    path = _profile(tmp_path)
+    os.utime(path, (time.time() - 60, time.time() - 60))  # (written a while ago: quiet)
+    monkeypatch.setattr(favorites, "profile_path", lambda root=None: path)
+    monkeypatch.setattr(favorites, "BACKUPS", tmp_path / "backups")
+    running = [True]
+    monkeypatch.setattr(favorites, "game_running", lambda: running[0])
+    assert call(server, "/api/favorites")[1] == {"keys": ["NiAmonAGodsO", "AmonPurs"], "waiting": False, "error": None}
+    status, info = call(server, "/api/favorites", {"song": "dlc/radio_m.psarc#CusRammsteinRADIO", "on": True})
+    assert status == 200 and info["keys"] == ["NiAmonAGodsO", "AmonPurs", "CusRammsteinRADIO"] and info["waiting"]
+    assert favorites.read(path) == ["NiAmonAGodsO", "AmonPurs"]  # (the game open: it waits)
+    running[0] = False
+    info = call(server, "/api/favorites")[1]
+    assert not info["waiting"] and favorites.read(path) == ["NiAmonAGodsO", "AmonPurs", "CusRammsteinRADIO"]
+    info = call(server, "/api/favorites", {"song": "dlc/purs_m.psarc#AmonPurs", "on": False})[1]  # (at once, closed)
+    assert info["keys"] == favorites.read(path) == ["NiAmonAGodsO", "CusRammsteinRADIO"] and not info["waiting"]
+    assert len(list((tmp_path / "backups").iterdir())) == 2  # (saved before each write)
+    assert server.gui.settings["favorites_pending"] == {}
