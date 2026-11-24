@@ -29,6 +29,7 @@ OUT = Path.home() / "Library/Caches/rs-keylights/reamp"
 HPVOL = Path.home() / "Library/Application Support/rs-keylights/bin/hpvol"
 R = tonecheck.RATE
 PEDAL = ("Blender", 11)
+DRY = 1  # (the guitar's channel on the same interface: what reaches the pedal, if it's played in at the chain's start)
 
 
 def read_wav(p: Path) -> np.ndarray:
@@ -127,9 +128,10 @@ def compare(live: np.ndarray, reamped: np.ndarray) -> dict:
     return out
 
 
-def reamp(piece: np.ndarray) -> np.ndarray:
+def reamp(piece: np.ndarray, with_dry: bool = False):
     """A piece of dry guitar played into the pedal (the jack at full volume while it plays), and what came back:
-    from a second before it was sent to a moment after it ended."""
+    from a second before it was sent to a moment after it ended (with_dry: and what reached the guitar's channel, as
+    it was played in at the start of the chain, beside it)."""
     jack = headphones()
     if "headphone" in sd.query_devices(kind="output")["name"].lower():
         sys.exit("The Mac's sound output switched to the headphones: set it back to the Blender (the game's sound would"
@@ -138,7 +140,7 @@ def reamp(piece: np.ndarray) -> np.ndarray:
         sys.exit("It would clip the output")
     stereo = np.zeros((len(piece) + R // 2, 2), np.float32)
     stereo[: len(piece), 0] = piece  # (left only: a mono 1/4" plug in a stereo adapter grounds the right)
-    recorded, stop = [], threading.Event()
+    recorded, dry_in, stop = [], [], threading.Event()
 
     def record() -> None:
         with sd.InputStream(samplerate=R, channels=PEDAL[1], device=PEDAL[0], blocksize=512, dtype="float32",
@@ -146,6 +148,7 @@ def reamp(piece: np.ndarray) -> np.ndarray:
             while not stop.is_set():
                 x, _ = s.read(512)
                 recorded.append(x[:, PEDAL[1] - 1].copy())
+                dry_in.append(x[:, DRY - 1].copy())
     before = jack_volume()
     try:
         jack_volume(1.0)
@@ -158,7 +161,7 @@ def reamp(piece: np.ndarray) -> np.ndarray:
         t.join()
     finally:
         jack_volume(before)
-    return np.concatenate(recorded)
+    return (np.concatenate(recorded), np.concatenate(dry_in)) if with_dry else np.concatenate(recorded)
 
 
 def main() -> None:
@@ -175,7 +178,10 @@ def main() -> None:
     piece, live_piece = dry[start:end] * 10 ** (args.gain / 20), live[start:end]
     print(f"{check['song']} ({check['preset']['name']}), {start / R:.1f}–{end / R:.1f} s, gain {args.gain:+.1f} dB: "
           f"the piece peaks at {20 * np.log10(np.abs(piece).max()):.1f} dBFS", flush=True)
-    got = reamp(piece)
+    got, came = reamp(piece, with_dry=True)
+    at_dry = lag_of(came, piece)
+    if np.abs(came).max() > 1e-3:  # (played in at the chain's start: what reached the pedal's input, against the take)
+        print("reached the pedal's input, against the dry take (dB):", compare(piece, came[at_dry:at_dry + len(piece)]))
     at = lag_of(got, live_piece)
     reamped = got[at:at + len(live_piece)]
     name = f"{check['recording'][:-4]}-{start / R:.0f}s-{args.gain:+.0f}dB"

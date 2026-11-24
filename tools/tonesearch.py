@@ -167,6 +167,41 @@ def effects(back: list, chosen, centres_in) -> list:
     return out
 
 
+def round_three(base) -> list:
+    """Pursuit of Vikings from GODS C (its record against GODS C, live: lows +4.4, upper mids -1.3, presence -1.5,
+    treble -5.7: darker and bassier), one change at a time."""
+    metal = {"80Hz": 6, "240Hz": -4, "2.2KHz": 3, "6.6KHz": 6}  # (GODS C's)
+    return [
+        variant(base, "S GODS C"),
+        variant(base, "S 6K6 0", eq={**metal, "6.6KHz": 0}),
+        variant(base, "S 6K6 -6", eq={**metal, "6.6KHz": -6}),
+        variant(base, "S 80 +12", eq={**metal, "80Hz": 12}),
+        variant(base, "S 2K2 0", eq={**metal, "2.2KHz": 0}),
+        variant(base, "S CENTER 50", cab={"CENTER": 50}),
+        variant(base, "S MD441", cab={"MIC": "MD441"}),
+        variant(base, "S SM57", cab={"MIC": "SM57"}),
+        variant(base, "S PRES 40", amp={"PRES": 40}),
+        variant(base, "S TREBLE 70", amp={"TREBLE": 70}),
+        variant(base, "S BASS 64", amp={"BASS": 64}),
+    ]
+
+
+def round_four(base) -> list:
+    """Pursuit from GODS C: round 3's combination (predicted 2.67 against 4.44), and the METAL EQ's 240, 750 and 2.2k
+    bands for what's left (the record -4 to -7 dB at 160-200 Hz, -5 at 1 kHz, +4 at 3.2 kHz). Try 0 is GODS C, the
+    reference each try's measured against."""
+    best = {"80Hz": 12, "240Hz": -4, "2.2KHz": 3, "6.6KHz": -6}
+    amp = {"BASS": 64}
+    return [
+        variant(base, "S GODS C"),
+        variant(base, "S P1", amp=amp, eq=best),
+        variant(base, "S P1 240-10", amp=amp, eq={**best, "240Hz": -10}),
+        variant(base, "S P1 750-4", amp=amp, eq={**best, "750Hz": -4}),
+        variant(base, "S P1 2K2+6", amp=amp, eq={**best, "2.2KHz": 6}),
+        variant(base, "S P1 ALL3", amp=amp, eq={**best, "240Hz": -10, "750Hz": -4, "2.2KHz": 6}),
+    ]
+
+
 def round_one(base) -> list:
     """Gods' treble (the record +4-6 dB at 6-10 kHz, which GODS B's GUITAR EQ can't reach): one change at a time."""
     gods_metal = {"240Hz": -4, "2.2KHz": 3}  # (GODS B's EQ, as near as the METAL EQ's bands go)
@@ -224,15 +259,16 @@ def main() -> None:
     print("saved 188-197 in", backups, flush=True)
     base = presets[args.base]
     print(f"base: {args.base} {base.name}: {describe(base)}", flush=True)
-    tries = {1: round_one, 2: round_two}[args.round](base)
+    tries = {1: round_one, 2: round_two, 3: round_three, 4: round_four}[args.round](base)
     if args.only:
         tries = [tries[int(k)] for k in args.only.split(",")]
     held = HOLD.exists()
     HOLD.touch()
     base_eq = None
     if args.quick:
-        full = [f for f in sorted(OUT.glob("*.json")) if not f.stem.endswith("-quick")]
-        base_eq = np.array(json.loads(full[-1].read_text())["tries"][0]["eq"]) if full else None
+        full = [json.loads(f.read_text()) for f in sorted(OUT.glob("*.json")) if not f.stem.endswith("-quick")]
+        full = [f for f in full if f["check"] == check["recording"] and f["tries"]]  # (this take's, its base first)
+        base_eq = np.array(full[-1]["tries"][0]["eq"]) if full else None
         if base_eq is None:
             sys.exit("--quick needs a full run first (the base's difference from the record)")
         most = sorted(chosen, key=lambda w: -w[2])[: max(1, int(args.quick / WINDOW))]
