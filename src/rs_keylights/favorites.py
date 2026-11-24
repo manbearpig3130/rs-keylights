@@ -116,6 +116,23 @@ def write(path: Path, keys: list[str], backups: Path | None = None) -> None:
         raise ProfileError("The profile didn't read back as written")
 
 
+def stats(path: Path) -> dict[str, dict[str, object]]:
+    """Each arrangement's play (by its persistent id, upper case): when it was last played (Learn a Song or Score
+    Attack, "YYYY-MM-DD HH:MM:SS"), how many times, and its mastery's peak (0 to 1)."""
+    data = decode(path.read_bytes())[1]
+    profile = json.loads(data.rstrip(b"\0"))
+    out: dict[str, dict[str, object]] = {}
+    for pid, played in (profile.get("Stats", {}).get("Songs") or {}).items():
+        if not isinstance(played, dict) or not played:
+            continue
+        dates = [d for d in (played.get("DateLAS"), played.get("DateSA")) if isinstance(d, str) and d]
+        plays = int(float(played.get("PlayedCount", 0) or 0) + float(played.get("ScoreAttack_PlayCount", 0) or 0))
+        mastery = played.get("MasteryPeak")
+        out[pid.upper()] = {"played": max(dates) if dates else None, "plays": plays,
+                            "mastery": round(float(mastery), 3) if isinstance(mastery, (int, float)) else None}
+    return out
+
+
 def game_running() -> bool:
     try:
         return subprocess.run(["pgrep", "-x", GAME], capture_output=True).returncode == 0

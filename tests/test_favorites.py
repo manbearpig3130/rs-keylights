@@ -47,3 +47,14 @@ def test_what_isnt_a_profile_says_so(tmp_path):
     with pytest.raises(favorites.ProfileError):
         favorites.decode(b"NOPE" + bytes(40))
     assert favorites.song_key("/x/dlc/amon_m.psarc#NiAmonAGodsO") == "NiAmonAGodsO"
+
+
+def test_each_arrangements_play_is_read_when_how_often_and_its_mastery(tmp_path):
+    data = (b'{\n"FavoritesListRoot" : {\n"FavoritesList" : \n[\n]\n},\n"Stats" : {\n"Songs" : {\n'
+            b'"ab12" : {\n"DateLAS" : "2026-11-20 10:00:00",\n"DateSA" : "2026-11-24 01:56:06",\n"PlayedCount" : 3.0,\n'
+            b'"ScoreAttack_PlayCount" : 2.0,\n"MasteryPeak" : 0.778311\n},\n"CD34" : {\n},\n'
+            b'"EF56" : {\n"PlayedCount" : 1.0\n}\n}\n}\n}\0')
+    path = _profile(tmp_path, data)
+    assert favorites.stats(path) == {
+        "AB12": {"played": "2026-11-24 01:56:06", "plays": 5, "mastery": 0.778},
+        "EF56": {"played": None, "plays": 1, "mastery": None}}

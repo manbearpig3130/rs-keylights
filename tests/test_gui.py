@@ -2415,3 +2415,24 @@ def test_a_song_favoured_here_goes_into_the_games_profile_at_once_or_once_its_cl
     assert info["keys"] == favorites.read(path) == ["NiAmonAGodsO", "CusRammsteinRADIO"] and not info["waiting"]
     assert len(list((tmp_path / "backups").iterdir())) == 2  # (saved before each write)
     assert server.gui.settings["favorites_pending"] == {}
+
+
+def test_a_songs_plays_come_from_rocksmiths_profile_by_its_arrangements_and_the_paths_icons_from_the_game(
+        server, monkeypatch, tmp_path):
+    from rs_keylights import favorites
+    from rs_keylights.gui import song_id
+    gui = server.gui
+    sid = first_song(server)
+    refs = [r for r in gui.index.arrangements() if song_id(r) == sid]
+    played = {refs[0].persistent_id.upper(): {"played": "2026-11-24 01:56:06", "plays": 4, "mastery": 0.5}}
+    path = tmp_path / "ABC_PRFLDB"
+    path.write_bytes(b"x")
+    monkeypatch.setattr(favorites, "profile_path", lambda root=None: path)
+    monkeypatch.setattr(favorites, "stats", lambda p: played)
+    songs = call(server, "/api/song-stats")[1]["songs"]
+    assert list(songs) == [sid] and songs[sid]["played"] == "2026-11-24 01:56:06" and songs[sid]["plays"] == 4
+    library = next(s for s in call(server, "/api/library")[1]["songs"] if s["id"] == sid)
+    assert len(songs[sid]["mastery"]) == len(library["parts"]) == len(library["kinds"]) and 0.5 in songs[sid]["mastery"]
+    assert set(library["kinds"]) <= {"lead", "rhythm", "bass"}
+    assert call(server, "/api/path-icon?kind=lead")[0] == 404  # (no game's cache.psarc here)
+    assert call(server, "/api/path-icon?kind=../etc")[0] == 404

@@ -114,6 +114,13 @@
   #songs .song { font-weight: 600; }
   #songs li.active .song::before { content: "▶ "; color: var(--ok); }
   #songs .artist, #songs .parts { font-size: 12px; color: var(--muted); }
+  #songs .parts { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .arr { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; font-weight: 500; }
+  .arr i { width: 14px; height: 14px; border-radius: 3px; background: center / cover no-repeat; flex: none; }
+  .arr.lead { color: var(--lead); } .arr.lead i { background-image: url(/api/path-icon?kind=lead); }
+  .arr.rhythm { color: var(--rhythm); } .arr.rhythm i { background-image: url(/api/path-icon?kind=rhythm); }
+  .arr.bass { color: var(--bass); } .arr.bass i { background-image: url(/api/path-icon?kind=bass); }
+  .arr small { color: var(--muted); font-weight: 400; font-size: 11px; }
   #status.link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .badge { font-size: 12px; font-weight: 600; color: var(--ok); margin-left: 8px; vertical-align: middle; }
   #details { flex: none; height: 124px; border-top: 1px solid var(--line); padding: 10px 2px 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; overflow: hidden; }
@@ -624,15 +631,14 @@
     text-overflow: ellipsis; }
   body.library-collapsed #details { height: auto; grid-template-columns: minmax(0, 1fr); gap: 6px; padding-top: 8px; }
   body.library-collapsed #details > div { min-width: 0; }
-  body.library-collapsed #details .art { width: 100%; height: auto; aspect-ratio: 1; }
-  body.library-collapsed #details .d-title { font-size: 12px; line-height: 1.25; white-space: normal; display: -webkit-box;
-    -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  body.library-collapsed #details .art { width: 96px; height: 96px; }  /* (the expanded list's size) */
+  body.library-collapsed #details .d-title { font-size: 12px; line-height: 1.3; }  /* (a line: the art never moves) */
   body.library-collapsed #details .d-title + .d-line { font-size: 11px; }
   body.library-collapsed #details .d-key, body.library-collapsed #details .d-key ~ .d-line { display: none; }
   body.library-collapsed #details .d-empty { padding-top: 0; font-size: 11px; }
-  body.library-collapsed main { grid-template-columns: 150px minmax(0, 1fr) minmax(260px, 330px); }
-  body.library-collapsed.side-hidden main { grid-template-columns: 150px minmax(0, 1fr); }
-  @media (max-width: 1100px) { body.library-collapsed main { grid-template-columns: 150px minmax(0, 1fr); } }
+  body.library-collapsed main { grid-template-columns: 118px minmax(0, 1fr) minmax(260px, 330px); }
+  body.library-collapsed.side-hidden main { grid-template-columns: 118px minmax(0, 1fr); }
+  @media (max-width: 1100px) { body.library-collapsed main { grid-template-columns: 118px minmax(0, 1fr); } }
   @media (max-width: 720px) { body.library-collapsed main { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -664,6 +670,7 @@
       <select id="libSort" aria-label="Sort by" title="Sort by">
         <option value="artist">Artist</option><option value="title">Title</option><option value="year">Year</option>
         <option value="tuning">Tuning</option><option value="tempo">Tempo</option><option value="length">Length</option>
+        <option value="played">Recently played</option><option value="plays">Most played</option>
       </select>
       <select id="libPart" aria-label="Arrangement" title="Songs with this arrangement"></select>
       <select id="libTuning" aria-label="Tuning" title="Songs in this tuning"></select>
@@ -1103,7 +1110,7 @@
       <h3>rs-keylights<button type="button" id="layoutBtn" title="Edit layout: move, add and remove cards (saved in this browser)">✎ Layout</button></h3>
       <div class="grid2">
         <label>Songs</label><span id="gameDir" class="path"></span>
-        <label>Phone</label><span id="phone" class="small"></span>
+        <label>LAN</label><span id="phone" class="small"></span>
       </div>
       <div class="row">
         <button id="reindex">Rescan library</button>
@@ -1403,9 +1410,9 @@ function keyLine(key, song) {
   line.append(name, scale);
   const show = document.createElement("button");
   show.type = "button";
-  show.className = "scaleBtn";
-  show.textContent = state.showing ? "Hide scale" : "Show scale";
-  show.title = "Its scale climbs the keys and back, over and over, until a key is pressed or a song needs them";
+  show.className = "scaleBtn" + (state.showing ? " primary" : "");  // (red while the scale shows)
+  show.textContent = "Show scale";
+  show.title = "Run the scale up and down the keys until a key is pressed or a song needs them (red while it shows: click to stop)";
   show.addEventListener("click", () => act(() => state.showing ? api("/api/scale/stop", {}) :
     api("/api/scale", song ? {song: song} : {})));
   name.appendChild(show);
@@ -3976,6 +3983,9 @@ const SORTS = {
   tuning: (a, b) => (a.tuning || "").localeCompare(b.tuning || "") || a.sort.localeCompare(b.sort),
   tempo: by((s) => s.tempo || 0),
   length: by((s) => s.length || 0),
+  played: (a, b) => ((songStats[b.id] || {}).played || "").localeCompare((songStats[a.id] || {}).played || "") ||
+    a.sort.localeCompare(b.sort),
+  plays: by((s) => -((songStats[s.id] || {}).plays || 0)),
 };
 const libView = {sort: store.get("rsk.libSort", "artist"), part: store.get("rsk.libPart", ""),
                  tuning: store.get("rsk.libTuning", ""), favorites: !!store.get("rsk.libFavorites", false)};
@@ -4013,6 +4023,43 @@ function showCount() {
   $("count").textContent = `${libShown} of ${songs.length} songs${said}`;
 }
 
+// A song's arrangements: each one's path icon (the game's own) and name in its colour, and its mastery if it's been
+// played (the profile's peak)
+function arrangementsLine(s) {
+  const mastery = (songStats[s.id] || {}).mastery || [];
+  return s.parts.map((name, i) => {
+    const kind = (s.kinds || [])[i] || "lead", m = mastery[i];
+    const pct = m == null ? "" : ` <small>${Math.round(m * 100)}%</small>`;
+    return `<span class="arr ${kind}" title="${esc(name)}${m == null ? "" : `: ${Math.round(m * 100)}% mastery`}">` +
+      `<i></i>${esc(name)}${pct}</span>`;
+  }).join("");
+}
+
+// Rocksmith's own record of each song played (GET /api/song-stats, from its profile): when, how often, and each
+// arrangement's mastery
+let songStats = {};
+async function loadSongStats() {
+  try {
+    const d = await api("/api/song-stats");
+    const changed = JSON.stringify(d.songs) !== JSON.stringify(songStats);
+    songStats = d.songs;
+    if (changed) renderLibrary();
+  } catch (e) { /* (no profile: no stats) */ }
+}
+setInterval(loadSongStats, 30000);
+window.addEventListener("focus", loadSongStats);
+
+// How long ago a profile's time was ("YYYY-MM-DD HH:MM:SS", the Mac's own time)
+function agoOf(when) {
+  const days = (Date.now() - new Date(when.replace(" ", "T")).getTime()) / 86400000;
+  if (!(days >= 0)) return when.slice(0, 10);
+  if (days < 1 / 24) return "just now";
+  if (days < 1) return `${Math.round(days * 24)} hours ago`;
+  if (days < 2) return "yesterday";
+  if (days < 60) return `${Math.round(days)} days ago`;
+  return new Date(when.replace(" ", "T")).toLocaleDateString(undefined, {year: "numeric", month: "short", day: "numeric"});
+}
+
 // The filters' choices from the library: its arrangements and tunings
 function fillLibraryFilters() {
   const parts = [...new Set(songs.flatMap((s) => s.parts))].sort();
@@ -4043,7 +4090,7 @@ function renderLibrary() {
     shown++;
     const li = document.createElement("li");
     li.innerHTML = `<div><span class="song">${esc(s.song)}</span><span class="artist">${esc(s.artist)}</span>` +
-      `<span class="parts">${esc(s.parts.join(" · "))}</span></div>`;
+      `<span class="parts">${arrangementsLine(s)}</span></div>`;
     const star = document.createElement("button");  // (a favourite: in Rocksmith's too)
     star.type = "button";
     star.className = "fav";
@@ -4186,6 +4233,12 @@ const ART_WAIT = 80, KEY_WAIT = 250;
 let hovered = null;
 let detailsTimer = null, artTimer = null;
 const artSeen = new Set();  // shown here already: the browser has it
+function playedLine(s) {  // (Rocksmith's record of it: else its arrangements)
+  const st = songStats[s.id];
+  if (!st || !st.played) return s.parts.join(" · ");
+  return `Played ${agoOf(st.played)} · ${st.plays} ${st.plays === 1 ? "time" : "times"}`;
+}
+
 function renderDetails() {
   const id = browseShown || hovered || (selected && selected.id);
   const s = songs.find((song) => song.id === id);
@@ -4204,7 +4257,7 @@ function renderDetails() {
     <div class="d-title">${esc(s.song)}</div><div class="d-line">${esc(sub)}</div>
     <div class="d-key">${key === undefined ? "Key: …" : key ? `Key: <b>${esc(key.name)}</b> · ${esc(key.notes.join(" "))}` : "Key: –"}</div>
     <div class="d-line">${esc(key && key.played_as ? `played as ${key.played_as}` : facts)}</div>
-    <div class="d-line">${esc(key && key.played_as ? facts : s.parts.join(" · "))}</div></div>`;
+    <div class="d-line">${esc(key && key.played_as ? facts : playedLine(s))}</div></div>`;
   const art = box.querySelector(".art");
   clearTimeout(artTimer);
   if (artSeen.has(id)) showArt(art, id);
@@ -4242,6 +4295,7 @@ async function loadLibrary(data) {
   fillLibraryFilters();
   renderLibrary();
   loadFavorites();
+  loadSongStats();
 }
 
 // The selected song: its parts as chosen to play are kept on the Mac (the same here, on a phone and on the
@@ -5193,7 +5247,7 @@ function showState(st) {
     refreshSong().catch(() => {}).finally(() => { songBusy = false; });
   }
   for (const button of document.querySelectorAll(".scaleBtn")) {
-    setOnly(button, "textContent", st.showing ? "Hide scale" : "Show scale");
+    button.classList.toggle("primary", !!st.showing);
   }
   if ($("toneCheckCard").open && !$("tcPart").disabled) tonePartOptions();  // (the song playing's parts)
   updateButtons();

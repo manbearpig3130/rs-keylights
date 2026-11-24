@@ -33,6 +33,7 @@ from .keyboard import (DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, PROGRAMS, K
                        keyboard_name)
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
+from .sevenzip import SevenZip
 from .lights import LIGHTS_EARLY, MIN_PERIOD, KeyRange, Light
 from . import drums, midiexport, theory
 from .parts import (CHANNELS_USED_UP, DRUMS, DrumVoices, Part, PlanCache, PlannedPart, VoicesFor, channels_needed, plan,
@@ -373,6 +374,8 @@ def _drum_voicing(output: dict[str, Any] | None) -> dict[str, Any]:
     return {"notes": notes, "patches": patches, "shared": shared, "pool": pool}
 DRUMS_VOLUME = 100  # a drum part's volume as it starts (0 to 127)
 PRESSED_VELOCITY = 100  # a key clicked on the page: how hard it's struck
+PATH_ICONS = {"lead": "pathlead_64", "rhythm": "pathrhythm_64", "bass": "pathbass_64"}  # (the game's own, in its
+# cache.psarc: read from it, never kept here)
 HELD_WAIT = 20.0  # seconds the page's ask for the keys held waits for a change, at most
 SYNTH_LOOK_AGAIN = 2.0  # seconds before a MIDI device that wasn't there is looked for again
 AUDIO_VOLUME = 80  # the song's own audio's, as it starts (0 to 100)
@@ -673,6 +676,8 @@ class Gui:
         self._favorites_read: tuple[tuple[Path, float], list[str]] | None = None  # (the profile's, by when written)
         self._favorites_error: str | None = None
         self._favorites_wrote = 0.0  # (when the profile was last written here: no wait for it after that)
+        self._stats_read: tuple[tuple[Path, float], dict[str, Any]] | None = None
+        self._icons_lock = threading.Lock()
         self._server_asking = False
         self._warmup_log_lock = threading.Lock()  # (the progress log: a drill's line at a time)
         self.follow_settings = default_follow()  # the same for every page showing them, phone or Mac
@@ -830,6 +835,7 @@ class Gui:
                 "letter": _initial(named.artist_sort or named.artist),
                 "file": Path(named.archive).name,
                 "parts": [r.name or r.part for r in sorted(refs, key=part_order)],
+                "kinds": [kind(r) for r in sorted(refs, key=part_order)],  # (lead, rhythm or bass: its icon)
                 "album": named.album,
                 "year": named.year,
                 "length": max(r.length for r in refs),
@@ -1425,6 +1431,68 @@ class Gui:
                 return
             self.settings["favorites_pending"] = self._kept["favorites_pending"] = {}
         self._save()
+
+    def song_stats(self) -> dict[str, Any]:
+        """Each song played in Rocksmith (its profile's stats): when it was last played, how many times, and each of
+        its parts' mastery (in the library's order of them: none, not played); read again as the profile changes."""
+        path = favorites.profile_path()
+        if path is None:
+            return {"songs": {}}
+        try:
+            seen = (path, path.stat().st_mtime)
+            with self._favorites_lock:
+                if self._stats_read is not None and self._stats_read[0] == seen:
+                    return self._stats_read[1]
+            played = favorites.stats(path)
+        except (OSError, ValueError, favorites.ProfileError):
+            return {"songs": {}}
+        songs: dict[str, list[ArrangementRef]] = {}
+        for ref in self.index.arrangements():
+            if ref.part not in NO_NOTES:
+                songs.setdefault(song_id(ref), []).append(ref)
+        out: dict[str, Any] = {}
+        for sid, refs in songs.items():
+            parts = [played.get(r.persistent_id.upper()) for r in sorted(refs, key=part_order)]
+            had = [p for p in parts if p]
+            if not had:
+                continue
+            dates = [str(p["played"]) for p in had if p["played"]]
+            out[sid] = {"played": max(dates) if dates else None, "plays": sum(int(p["plays"]) for p in had),  # type: ignore[call-overload]
+                        "mastery": [p["mastery"] if p else None for p in parts]}
+        answer = {"songs": out}
+        with self._favorites_lock:
+            self._stats_read = (seen, answer)
+        return answer
+
+    def path_icon(self, kind_: str) -> bytes | None:
+        """The game's icon for a path (lead, rhythm or bass), as a PNG: from its cache.psarc, the first time (kept)."""
+        if kind_ not in PATH_ICONS:
+            return None
+        folder = Path.home() / "Library" / "Caches" / "rs-keylights" / "icons"
+        kept = folder / f"{PATH_ICONS[kind_]}.png"
+        if kept.exists():
+            return kept.read_bytes()
+        with self._icons_lock:
+            if not kept.exists():
+                wanted = {f"gfxassets/libs/{name}.png.dds": name for name in PATH_ICONS.values()}
+                try:
+                    with Archive(self.index.game_dir / "cache.psarc") as cache:
+                        for entry in cache.names:
+                            if not entry.lower().endswith(".7z"):
+                                continue
+                            archive = SevenZip(cache.read(entry))
+                            found = {f: wanted[f.replace("\\", "/").lower()] for f in archive.files()
+                                     if f.replace("\\", "/").lower() in wanted}
+                            for file, name in found.items():
+                                png = _png(archive.read(file))
+                                if png:
+                                    folder.mkdir(parents=True, exist_ok=True)
+                                    (folder / f"{name}.png").write_bytes(png)
+                            if found:
+                                break
+                except (OSError, ArchiveError, ValueError):
+                    return None
+        return kept.read_bytes() if kept.exists() else None
 
     def toggle_beat_lights(self) -> bool:
         """A remote's lights pulsing to the song's beat (its drums' pad below: a metronome you see), on or off; kept."""
@@ -5377,6 +5445,14 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, art, "image/png", cache="private, max-age=86400")
             elif url.path == "/api/favorites":
                 self._json(200, gui.favorites_info())
+            elif url.path == "/api/song-stats":
+                self._json(200, gui.song_stats())
+            elif url.path == "/api/path-icon":
+                icon = gui.path_icon(parse_qs(url.query).get("kind", [""])[0])
+                if icon is None:
+                    self._json(404, {"error": "No such icon"})
+                else:
+                    self._send(200, icon, "image/png", cache="private, max-age=86400")
             elif url.path == "/api/key":
                 self._json(200, gui.song_key(parse_qs(url.query).get("id", [""])[0]))
             elif url.path == "/api/tones":
