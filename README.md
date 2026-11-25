@@ -454,7 +454,7 @@ controls depends on whether you're following:
 |---|---|---|
 | What it mixes | the song's own audio from the Mac (🎵) | a song split here: its parts, in the game's own song (riffloop mod), as when playing it. Otherwise the game's own song's bass and guitar (rearmed-mods' Song Stems mod; without it, just its Music) |
 | Knobs | 1–6: drums, bass, guitar, vocals, keys, other | a split song: 1–6 as when playing it. Otherwise 2: bass, 3: guitar |
-| Pads, top | mute each part, its volume kept (greyed, its pad dimmed; a song not split yet: a tap splits it) | mute the bass or guitar, its level kept (greyed, dimmed), and back to it |
+| Pads, top | mute each part, its volume kept (greyed, its pad dimmed; a song not split yet: a tap splits it) | a split song: as when playing it. Otherwise mute the bass or guitar, its level kept (greyed, dimmed), and back to it; the other four pads are dim, and a tap on one splits the song |
 | Knob 7, and its pad on top | the Music: the song audio's volume, and its audio on or off | the game's Music volume, and muted or back to its level |
 | Knob 8 | the song's parts together (the Music apart) | the bass and guitar together (the Music apart) |
 | Right pad, top | the page's master mute: all the parts muted, or back (the Music apart; not the keyboard's sound, while this page shows) | the same, for the bass and guitar |
@@ -469,7 +469,9 @@ made, if a BS-RoFormer SW split makes it again. Anything said meanwhile shows ov
 mixes them into it as it plays, at this page's levels, the same levels as playing the song here. As the song starts,
 rs-keylights writes its parts into one file the mod maps (`~/Library/Caches/rs-keylights/game-parts`, one song's kept:
 a few seconds, about 58 MB a minute of song; a part the song hasn't, a silent one, is left out). Until then the song
-plays as it is. A change is heard within 50 ms: the mod mixes each block of the song as the game decodes it, before
+plays as it is. A song split while it's followed (or while it's highlighted in the game's list) has its parts in the
+game's song as soon as the split is done, with nothing to restart; if making them ready fails, it's tried again a few
+times, ten seconds apart. A change is heard within 50 ms: the mod mixes each block of the song as the game decodes it, before
 Riff Repeater's speed and the game's own sliders. Song Stems' bass and guitar levels go to 100 while the parts play
 (it changes the song too), and back after. The game's MIXER's stem page has the six parts too.
 

@@ -78,6 +78,8 @@ SAME_TONE = 0  # palm mutes or pinch harmonics with the tone the rest has (over 
 SLOTS = 8  # a song's arrangements with volumes of their own, by their place in it (the same in every song)
 GAME_TIME_EVERY = 0.05  # seconds: the game's time asked of its riffloop mod at most this often
 GAME_PARTS_AGAIN = 2.0  # seconds before the song's parts are handed to the game's mod again, if it's lost them
+GAME_PARTS_RETRY = 10.0  # seconds before the song's parts are made ready for the game again after that failed (memory
+GAME_PARTS_TRIES = 3  # short just after a split, say: its drum part being made too), so many times at most
 GAME_PART_LABELS = {"drums": "DRUMS", "bass": "BASS", "guitar": "GUITAR", "vocals": "VOCALS", "piano": "KEYS",
                     "other": "OTHER", "lead": "LEAD", "rhythm": "RHYTHM"}  # (the game's MIXER's stem page's columns, the song's parts)
 GAME_PART_KINDS = {"drums": "drums", "bass": "bass", "guitar": "guitar", "vocals": "vocals", "piano": "keys",
@@ -582,6 +584,7 @@ class Gui:
         self._game_parts_wanted: tuple[Any, ...] | None = None
         self._game_parts_sent = -math.inf
         self._game_parts_error: str | None = None
+        self._game_parts_failed: tuple[Any, float, int] | None = None  # (what failed to be made ready, when, how often)
         self._game_parts_lock = threading.Lock()
         self._song_stems_kept: tuple[dict[str, int], dict[str, int]] | None = None
         self._splits_done = 0
@@ -2465,6 +2468,10 @@ class Gui:
                 self._splits_done += 1  # (following it: its parts to the game's song)
                 if self._playing and self._playing["id"] == sid and self._song_audio is not None:
                     self._audio_on(sid)  # (its parts, at their volumes, from now)
+                session = self._session
+                shown, _ended = self._shown_followed(session)
+            if shown is not None:  # (following: the song shown's parts to the game's song now, not at a remote's
+                self._game_parts_follow({"id": song_id(shown)}, self._game_said)  # next look)
 
     def _audio_off(self) -> None:
         self._audio_token += 1
@@ -3566,6 +3573,13 @@ class Gui:
                 threading.Thread(target=self._game_parts_ready, args=(wanted,), name="rs-keylights game parts",
                                  daemon=True).start()
             return
+        failed = self._game_parts_failed  # (made ready and failed: again a while later, a few times)
+        if wanted is not None and failed is not None and failed[0] == wanted and failed[2] < GAME_PARTS_TRIES \
+                and time.monotonic() - failed[1] >= GAME_PARTS_RETRY and not self._game_parts_lock.locked():
+            self._game_parts_failed = (wanted, math.inf, failed[2])  # (not again till this try's done)
+            threading.Thread(target=self._game_parts_ready, args=(wanted,), name="rs-keylights game parts",
+                             daemon=True).start()
+            return
         parts = self._game_parts
         if parts is not None and said is not None and said.parts is not None and said.parts[0] != parts["file_id"] \
                 and time.monotonic() - self._game_parts_sent > GAME_PARTS_AGAIN:
@@ -3605,15 +3619,21 @@ class Gui:
                             self._game_parts_off()
                             return
                         mixed = gameparts.write(path, file_id, rate, wavs)
-            except Exception as exc:  # (said on the page; the game's song as it is)
+            except Exception as exc:  # (said on the page; the game's song as it is; tried again in a while)
                 self._game_parts_error = f"The song's parts in the game: {exc}"
+                failed = self._game_parts_failed
+                tries = failed[2] + 1 if failed is not None and failed[0] == wanted else 1
+                self._game_parts_failed = (wanted, time.monotonic(), tries)
+                if self._trace is not None:
+                    self._trace({"t": round(time.monotonic(), 3), "game_parts": "failed", "song": sid, "try": tries,
+                                 "error": f"{type(exc).__name__}: {exc}"})
                 self._game_parts_off()
                 return
             if wanted != self._game_parts_wanted:
                 return
             parts = {"sid": sid, "path": str(path), "file_id": file_id, "names": mixed, "by": which,
                      "shown": list(names)}  # (names: those in its file, mixed; shown: the stem mixer's)
-            self._game_parts, self._game_parts_error = parts, None
+            self._game_parts, self._game_parts_error, self._game_parts_failed = parts, None, None
             self._song_stems_aside()
             self._game_parts_hand(parts)
             self.play_version += 1

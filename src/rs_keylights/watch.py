@@ -56,7 +56,8 @@ from .tones import DRUM_SET_BANK, DRUM_SETS, TONES, tone
 #   own, the pads on top mute each part, the right one turns the audio on or off; a song not split, a part's pad
 #   splits it. The up arrow: the arrangements' volumes again. Following, it's the game's own song instead (rearmed-
 #   mods' Song Stems mod): knobs 2 and 3 the bass and guitar in it, the pads over them muting each, knob 8 the
-#   game's Music volume (the part being played is the one the mod takes out: the other's level waits for its turn).
+#   game's Music volume (the part being played is the one the mod takes out: the other's level waits for its turn);
+#   the other parts' pads dim, a tap splitting the song (then its parts play in the game's song, this page theirs).
 # - The right column: Mute (top pad: green sound, red just the lights; muted, every screen shows a crossed-out
 #   speaker in its corner), and following the game (bottom pad).
 # - Its Scale button: while its own Scale mode (which takes the song's key) is on, the song's scale is on the
@@ -1002,6 +1003,13 @@ class Watch:
         return info.get("mode") == "follow" and not (info.get("game_parts") or {}).get("on")
 
     @staticmethod
+    def _can_split(info: dict[str, Any]) -> bool:
+        """Following a song not split here (or being split): its parts' pads can split it (a song shown, a separator
+        there to split with)."""
+        audio = info.get("audio") or {}
+        return info.get("song") is not None and not audio.get("made") and bool(audio.get("can") or audio.get("making"))
+
+    @staticmethod
     def _game_stems(info: dict[str, Any]) -> dict[str, Any] | None:
         """Following, the game's song's guitar and bass levels (rearmed-mods' Song Stems mod), if the mod's on."""
         stems = info.get("game_stems")
@@ -1048,6 +1056,11 @@ class Watch:
                     level = (MUTED_LEVEL if self._game_muted(stem, info) else 1.0 if stem == playing
                              else GAME_STEM_WAITING)
                     picture[(0, column)] = ("rgb", *(round(c * level) for c in rgb))
+                elif stem not in GAME_STEMS and self._can_split(info):  # (the song not split here: the other
+                    # parts' pads split it, dim; pulsing white while it does. Once it's split, its parts play in
+                    # the game's song, and this page has them all)
+                    picture[(0, column)] = ("palette", STEM_PULSE, True) if audio.get("making") else \
+                        ("rgb", *(round(c * STEMS_TO_SPLIT) for c in rgb))
             music = self._music_of(info)  # (its Music, knob 7's: muted, red)
             if music is not None:
                 picture[(0, KEYS_COLUMN)] = ("palette", MUTED_PAD, False) if info.get("music_muted") else \
@@ -2094,7 +2107,10 @@ class Watch:
             self._mix_slider, self._mix_strip = CONTROLS, None
         self.mix_page = self._mix_page_last = page
         if page == "stems" and self._game_song_stems(info):  # (the game's song's parts, if Song Stems is on; its
-            if self._game_stems(info) is None:               # Music, either way)
+            audio = info.get("audio") or {}                  # Music, either way)
+            if self._can_split(info) and not audio.get("making"):
+                self._say(now, line="Not split: tap a dim pad")
+            elif self._game_stems(info) is None:
                 stems = info.get("game_stems")
                 self._say(now, line="Song Stems is off" if stems else "Needs rearmed-mods")
             return
@@ -2128,6 +2144,9 @@ class Watch:
             return
         if self._game_song_stems(info) and isinstance(event, Pad):  # (the game's song: its bass and guitar)
             stem = STEMS[event.column][0] if event.column < len(STEMS) else None
+            if stem is not None and stem not in GAME_STEMS and self._can_split(info):  # (another part's: the song
+                self._split(info, now)  # split here, its parts in the game's song once it's done)
+                return
             if stem not in GAME_STEMS:
                 self._say(now, line="Only bass and guitar")
                 return

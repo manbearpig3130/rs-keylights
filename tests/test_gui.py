@@ -2218,6 +2218,82 @@ def test_following_a_split_song_its_parts_play_in_the_games_song_at_the_stem_mix
     assert wait_for(lambda: gui._game_parts, bool) and len(decoded) == again
 
 
+def _game_parts_ready_to_test(monkeypatch, tmp_path):
+    """The game's parts made from stand-ins: a split's parts (stems.made: the separators in the set returned), the
+    song's .wem (its file ID 4242), its parts decoded (short, loud)."""
+    import struct
+    import wave as wave_module
+
+    import numpy as np
+    from rs_keylights import drums, gameparts, stems
+    monkeypatch.setattr(gameparts, "folder", lambda: tmp_path / "game-parts")
+    made = set()
+    monkeypatch.setattr(stems, "made", lambda ref, cache=None, separator="demucs": separator in made)
+    monkeypatch.setattr(stems, "can_make", lambda separator="demucs": True)
+    fmt = struct.pack("<HHIIHH", 0xFFFF, 2, 48000, 0, 0, 0)
+    wem = b"RIFF" + struct.pack("<I", 0) + b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+    monkeypatch.setattr(drums, "song_audio_file", lambda ref, game_dir: (4242, wem))
+
+    def decode(ref, work, cache=None, separator="demucs", parts=stems.SEPARATED):
+        out = {}
+        for stem in parts:
+            out[stem] = work / f"{stem}.wav"
+            with wave_module.open(str(out[stem]), "wb") as w:
+                w.setnchannels(2)
+                w.setsampwidth(2)
+                w.setframerate(48000)
+                w.writeframes((np.ones((4800, 2)) * 1000).astype(np.int16).tobytes())
+        return out
+    monkeypatch.setattr(stems, "decode", decode)
+    return made
+
+
+def test_following_a_song_split_now_its_parts_are_in_the_games_song_as_soon_as_its_split(
+        server, monkeypatch, tmp_path, no_real_game_loop):
+    from rs_keylights import stems
+    gui, sid = server.gui, first_song(server)
+    made = _game_parts_ready_to_test(monkeypatch, tmp_path)
+    monkeypatch.setattr(stems, "make", lambda ref, game, progress, separator, server=None, kit_out=None, melody=False:
+                        made.add(separator) or list(stems.STEMS))
+    assert gui.toggle_follow() is True
+    game = no_real_game_loop[-1]
+    gui._followed = gui.index.arrangements()[0]  # (the song shown: the last played, or one highlighted in the list)
+    assert call(server, "/api/stems", {"song": sid, "make": True, "separator": "demucs"})[0] == 200
+    # (no remote's look meanwhile: handed to the game as the split's done)
+    assert wait_for(lambda: [s for s in game.sent if s[0] == "kparts"], bool)[0][1].endswith("@demucs.pcm")
+    assert gui._game_parts["sid"] == sid and gui.toggle_follow() is False
+
+
+def test_the_games_parts_made_ready_and_failing_are_tried_again_a_while_later(server, monkeypatch, tmp_path):
+    from rs_keylights import drums
+    from rs_keylights import gui as gui_module
+    gui, game, sid = server.gui, server.gui._riff_loop, first_song(server)
+    made = _game_parts_ready_to_test(monkeypatch, tmp_path)
+    made.add("demucs")
+    monkeypatch.setattr(gui_module, "GAME_PARTS_RETRY", 0.2)
+    works = drums.song_audio_file
+    failing = {"left": 1}
+
+    def song_audio_file(ref, game_dir):
+        if failing["left"]:
+            failing["left"] -= 1
+            raise MemoryError("no room")
+        return works(ref, game_dir)
+    monkeypatch.setattr(drums, "song_audio_file", song_audio_file)
+    traced = []
+    gui._trace = traced.append
+    followed = {"id": sid}
+    gui._game_parts_follow(followed, game.status())
+    assert wait_for(lambda: gui._game_parts_error, bool) == "The song's parts in the game: no room"
+    assert traced[-1]["game_parts"] == "failed" and traced[-1]["error"] == "MemoryError: no room"
+    gui._game_parts_follow(followed, game.status())  # (too soon: not again yet)
+    assert gui._game_parts is None
+    time.sleep(0.25)
+    gui._game_parts_follow(followed, game.status())  # (a while later: again, and it works)
+    assert wait_for(lambda: gui._game_parts, bool)["sid"] == sid and gui._game_parts_error is None
+    assert [s for s in game.sent if s[0] == "kparts"]
+
+
 def test_a_bs_roformer_split_makes_the_drum_part_again_from_its_kits_pieces(server, monkeypatch):
     from rs_keylights import stems
     gui, sid = server.gui, first_song(server)

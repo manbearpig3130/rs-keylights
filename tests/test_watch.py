@@ -8,7 +8,7 @@ from rs_keylights.launchkey import PLAY, RECORD, Button, Pad, ScaleMode, Strip, 
 from rs_keylights.lyrics import lyric_lines
 from rs_keylights.sng import Chord, Syllable
 from rs_keylights.tones import DRUM_SETS, tone
-from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, NOT_FOLLOWING_KEYS, PAD_WAIT,
+from rs_keylights.watch import (BROWSE_SHOWN, CONTROLS, STEM_PULSE, GUITAR_COLUMN, KEYS_COLUMN, LOOP_KNOBS, NOT_FOLLOWING_KEYS, PAD_WAIT,
                                 PEDAL_WAIT, PICTURE_GAP, PICTURE_SHOWN, SECTION_KNOB, SEEK_KNOB, SPEED_KNOB, TURN_WAIT, Watch,
                                 _pedal_tone_said)
 
@@ -2160,7 +2160,7 @@ def test_the_mixers_other_page_is_the_songs_parts_a_knob_and_a_mute_each():
     assert not watch.mix_knobs and watch.mode == "playback"
 
 
-def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
+def test_a_song_not_split_is_split_from_a_parts_pad_following_the_game_too():
     watch, gui, launchkey, clock = watching("play")
     gui.info["song"] = gui.song
     gui.audio.update(made=False)
@@ -2218,6 +2218,24 @@ def test_a_song_not_split_is_split_from_a_parts_pad_and_not_while_following():
     clock.now = 1.5
     watch.step()
     assert watch.mix_page == "stems" and note(watch) == ("Song Stems is off", None)
+    gui.audio["made"] = False  # (a song not split here: the other parts' pads split it, dim)
+    clock.now = 2.0
+    watch.step()
+    assert pads(launchkey)[(0, 0)] == (12, 12, 12) and pads(launchkey)[(0, 3)] == (15, 0, 11)
+    assert pads(launchkey)[(0, 1)] == (0, False) and pads(launchkey)[(0, 2)] == (0, False)  # (bass, guitar: Song
+    launchkey.queued = [Pad(0, 3)]                                                          # Stems', off)
+    clock.now = 2.2
+    watch.step()
+    assert gui.splits == [{"song": gui.song["id"], "make": True}]
+    assert pads(launchkey)[(0, 0)] == (STEM_PULSE, True)  # (pulsing white while it's split)
+    launchkey.queued = [Pad(0, 0)]  # (already splitting: nothing more)
+    clock.now = 2.4
+    watch.step()
+    assert len(gui.splits) == 1
+    gui.audio.update(made=True, making=False)  # (split: its parts in the game's song soon, this page then theirs)
+    clock.now = 2.9  # (looked at again)
+    watch.step()
+    assert pads(launchkey)[(0, 0)] == (0, False)
 
 
 def test_following_the_mixers_other_page_is_the_games_song_its_bass_and_guitar_and_its_music():
