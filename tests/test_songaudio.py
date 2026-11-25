@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from rs_keylights.songaudio import CAUGHT, DRIFT, HOP, JUMP, MOST_CATCH, SEEK, SongAudio, Stretcher, _heard
 
@@ -174,3 +175,49 @@ def test_off_all_at_once_it_jumps_there_and_says_so_only_a_drift_is_caught_up():
     song.position = 0.1 + DRIFT * 1.5  # (a drift: caught up, and said)
     audio.fill(441, at=0.11)
     assert audio._catching and audio.events[-1][1] == "catching" and JUMP > DRIFT * 1.5
+
+
+def test_its_tap_gets_each_block_before_the_volume_only_while_the_song_plays():
+    import time
+    streams, tapped = [], []
+    song = Song(origin=time.monotonic())
+    audio = SongAudio(tones(1.0), RATE, song.where, volume=0.5,
+                      stream_factory=lambda **kw: streams.append(FakeStream(**kw)) or streams[-1])
+    audio.tap = lambda at, rate, block: tapped.append((at, rate, block.copy()))
+    audio.start()
+    out = np.zeros((512, 2), dtype=np.float32)
+
+    class Time:
+        outputBufferDacTime, currentTime = time.monotonic() + 0.01, time.monotonic()
+
+    streams[0].kwargs["callback"](out, 512, Time(), None)
+    [(at, rate, block)] = tapped
+    assert at == Time.outputBufferDacTime and rate == RATE and np.allclose(block * 0.5, out) and out.any()
+    song.position = None  # (paused: silence, and nothing tapped)
+    streams[0].kwargs["callback"](out, 512, Time(), None)
+    assert len(tapped) == 1 and not out.any()
+    audio.close()
+
+
+def test_not_heard_its_blocks_are_made_for_the_tap_alone_on_the_macs_clock():
+    import time
+
+    from rs_keylights.songaudio import UNHEARD_AHEAD, UNHEARD_BLOCK
+    tapped = []
+    audio = SongAudio(tones(2.0), RATE, Song(origin=time.monotonic()).where,
+                      stream_factory=lambda **kw: pytest.fail("no sound device"))
+    audio.tap = lambda at, rate, block: tapped.append((time.monotonic(), at, block.shape))
+    started = time.monotonic()
+    audio.start("Speakers", heard=False)
+    time.sleep(0.3)
+    audio.close()
+    count = len(tapped)
+    time.sleep(0.05)
+    assert len(tapped) == count  # (closed: no more)
+    made = 0.3 + UNHEARD_AHEAD
+    assert made * RATE / UNHEARD_BLOCK - 3 <= count <= made * RATE / UNHEARD_BLOCK + 3  # (as fast as it's heard)
+    assert all(shape == (UNHEARD_BLOCK, 2) for _now, _at, shape in tapped)
+    ats = [at for _now, at, _shape in tapped]
+    assert np.allclose(np.diff(ats), UNHEARD_BLOCK / RATE)  # (block after block)
+    assert abs(ats[0] - started - UNHEARD_AHEAD) < 0.02
+    assert all(at - now <= UNHEARD_AHEAD + 0.005 for now, at, _shape in tapped)  # (made just before it's "heard")

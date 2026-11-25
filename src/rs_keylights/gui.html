@@ -316,7 +316,12 @@
   .split-server-log pre { max-height: 240px; overflow: auto; margin: 6px 0 4px; padding: 8px; border-radius: 6px;
     background: var(--input); border: 1px solid var(--line); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
     white-space: pre-wrap; word-break: break-word; }
-  #audioOn { padding: 3px 10px; font-size: 16px; line-height: 1.3; }  /* (red, primary, while the song's audio is on) */
+  #audioOn, #audioHere { padding: 3px 10px; font-size: 16px; line-height: 1.3; }  /* (red, primary, while on) */
+  /* Listening on this device (🎧): what it's doing, and this device's own volumes */
+  #hereRow { margin-top: 10px; }
+  #hereSaid { margin-bottom: 6px; }
+  .audio-grid.here-levels { grid-template-columns: 5.5em minmax(0, 1fr) 3.5em; }
+  .here-levels select { grid-column: 2 / span 2; min-width: 0; font-size: 13px; }
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
   .part-tones .tonebox .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -823,6 +828,20 @@
           id="audioVolumeShown"></output></label>
       <span id="audioSync" class="small muted" hidden></span>
       <button type="button" id="audioOn" title="Play the song's original audio from the Mac">🎵</button>
+      <button type="button" id="audioHere" aria-pressed="false" hidden>🎧</button>
+    </div>
+    <div id="hereRow" hidden>
+      <div id="hereSaid" class="small muted"></div>
+      <div class="audio-grid here-levels">
+        <label for="hereSong" title="The song's audio on this device (the Mac's volume is apart)">Song</label>
+        <input type="range" id="hereSong" min="0" max="100" aria-label="The song's audio on this device"><output
+          id="hereSongShown"></output>
+        <label for="hereKeys" id="hereKeysName">Keyboard</label>
+        <input type="range" id="hereKeys" min="0" max="100" aria-label="The keyboard on this device"><output
+          id="hereKeysShown"></output>
+        <span></span><select id="keysInput" aria-label="The Mac's audio input for the keyboard"
+          title="The Mac's audio input the keyboard is connected to (a stereo pair), to hear the keyboard here as well. This is the Mac's setting, the same for every device"></select>
+      </div>
     </div>
     <div class="audio-parts-head" hidden>
       <span id="audioPartsNote" class="small muted"></span>
@@ -1729,9 +1748,10 @@ function noteFretClock(st) {
   if (!selected) {
     fretClock = null;
   } else if (st.mode === "following" && st.follow && st.follow.song_id === selected.id && st.follow.position != null) {
-    fretClock = {song: selected.id, position: st.follow.position, at: now, speed: 1, moving: true};
+    fretClock = {song: selected.id, position: st.follow.position, at: now + viewDelay(), speed: 1, moving: true};
   } else if ((st.mode === "playing" || st.mode === "paused") && st.song && st.song.id === selected.id) {
-    fretClock = {song: selected.id, position: st.position, at: now, speed: st.speed || 1, moving: st.mode === "playing"};
+    fretClock = {song: selected.id, position: st.position, at: now + (st.mode === "playing" ? viewDelay() : 0),
+                 speed: st.speed || 1, moving: st.mode === "playing"};  // (listening here: drawn as late as it's heard)
   } else {
     fretClock = null;
   }
@@ -5017,12 +5037,270 @@ function showOptions() {
       "Default output</option>" + listed.map((d) => `<option>${esc(d)}</option>`).join("");
     $("audioDevice").value = chosen || "";
   }
+  showHere();
 }
 $("audioVolume").addEventListener("input", () => { $("audioVolumeShown").textContent = `${$("audioVolume").value}%`; });
 $("audioVolume").addEventListener("change", () => changeOptions({audio_volume: Number($("audioVolume").value)}));
 $("audioDevice").addEventListener("change", () => changeOptions({audio_device: $("audioDevice").value || null}));
 $("audioDevice").addEventListener("click", (e) => e.preventDefault());  // (in its section's summary: it stays open
 // or shut)
+
+// Listening on this device (🎧: a computer or phone on the network): the song's audio as the Mac makes it, and the
+// keyboard's sound coming into the Mac (an interface's input), sent here (GET /api/listen: blocks, each with when the
+// Mac hears it) and played HERE.LEAD or so after the Mac, at this device's own volumes. This device's choice alone
+// (the Mac's 🎵 is apart), kept in this browser; the cards here drawn that much later too, to go with what's heard
+const HERE = {LEAD: 0.25, LATE: 0.04, EARLY: 0.25, WINDOW: 10, RESYNC: 0.03, SPAN: 2048, RETRY: 2000, HEADER: 28};
+let onMac = true;  // (the page on the Mac itself: no 🎧, its sound is the Mac's)
+let here = null;  // listening: {ctx, abort, gains, lanes, offset, arrivals, sents, delay, heard, error}
+let hereKeysInput = null, hereArmed = false;
+const hereWanted = () => !onMac && !!store.get("rsk.here", false);
+const hereVolume = (lane) => Number(store.get(lane === "song" ? "rsk.hereSong" : "rsk.hereKeys", 100));
+const hereHearing = () => !!here && here.delay !== null && performance.now() - here.heard < 1500;
+
+function hereStart() {
+  if (here || !hereWanted()) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  let ctx;
+  try {
+    ctx = new Ctx({latencyHint: "playback"});
+  } catch {
+    ctx = new Ctx();
+  }
+  const me = {ctx, abort: new AbortController(), gains: {}, lanes: {}, offset: null, arrivals: [], sents: [],
+              delay: null, heard: 0, error: ""};
+  for (const lane of ["song", "keys"]) {
+    me.gains[lane] = ctx.createGain();
+    me.gains[lane].gain.value = hereVolume(lane) / 100;
+    me.gains[lane].connect(ctx.destination);
+  }
+  here = me;
+  ctx.resume().catch(() => {});
+  hereStream(me);
+  showHere();
+}
+
+function hereStop() {
+  const me = here;
+  here = null;
+  if (me) {
+    me.abort.abort();
+    me.ctx.close().catch(() => {});
+  }
+  showHere();
+}
+
+// Started by the first tap or key on the page (a browser plays nothing before one), if it was left on
+function hereOnFirstGesture() {
+  if (hereArmed || here || !hereWanted()) return;
+  hereArmed = true;
+  const go = () => {
+    document.removeEventListener("pointerdown", go, true);
+    document.removeEventListener("keydown", go, true);
+    hereArmed = false;
+    hereStart();
+  };
+  document.addEventListener("pointerdown", go, true);
+  document.addEventListener("keydown", go, true);
+}
+
+async function hereStream(me) {
+  while (here === me) {
+    try {
+      const res = await fetch("/api/listen?keys=1", {signal: me.abort.signal, cache: "no-store"});
+      if (!res.ok || !res.body) throw new Error(`the Mac answered ${res.status}`);
+      me.error = "";
+      showHere();
+      const reader = res.body.getReader();
+      let rest = new Uint8Array(0);
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        let bytes = value;
+        if (rest.length) {
+          bytes = new Uint8Array(rest.length + value.length);
+          bytes.set(rest);
+          bytes.set(value, rest.length);
+        }
+        rest = hereBlocks(me, bytes);
+      }
+      me.error = "the Mac stopped sending";
+    } catch (e) {
+      if (here !== me) return;
+      me.error = e.message || "the Mac can't be reached";
+    }
+    for (const lane of Object.values(me.lanes)) lane.pending = null;
+    showHere();
+    await new Promise((done) => setTimeout(done, HERE.RETRY));
+  }
+}
+
+// The blocks come (a whole number of them: the rest, for the next bytes): each one gathered with its lane's last
+// until there's HERE.SPAN, then played
+function hereBlocks(me, bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let i = 0, sent = null;
+  while (bytes.length - i >= HERE.HEADER) {
+    if (view.getUint32(i, false) !== 0x52534b41) throw new Error("not the Mac's audio");  // ("RSKA")
+    const lane = view.getUint8(i + 4), channels = view.getUint8(i + 5), frames = view.getUint16(i + 6, true);
+    const rate = view.getUint32(i + 8, true), at = view.getFloat64(i + 12, true);
+    const size = HERE.HEADER + frames * channels * 2;
+    if (bytes.length - i < size) break;
+    sent = view.getFloat64(i + 20, true);
+    if (frames && channels && (lane === 0 || lane === 1)) {
+      hereBlock(me, lane ? "keys" : "song", channels, frames, rate, at, view, i + HERE.HEADER);
+    }
+    i += size;
+  }
+  if (sent !== null) {  // (this device's clock less the Mac's, plus the network's delay: its least, kept a while)
+    const now = me.ctx.currentTime;
+    me.sents.push([now, now - sent]);
+    while (me.sents.length && me.sents[0][0] < now - HERE.WINDOW) me.sents.shift();
+  }
+  return bytes.slice(i);
+}
+
+function hereBlock(me, lane, channels, frames, rate, at, view, start) {
+  const L = me.lanes[lane] || (me.lanes[lane] = {next: null, pending: null});
+  let p = L.pending;
+  if (p && (p.rate !== rate || p.channels !== channels || Math.abs(p.at + p.frames / rate - at) > 0.002)) {
+    herePlay(me, lane, L);  // (not on from the last: a seek, a pause, another song)
+    p = null;
+  }
+  if (!p) p = L.pending = {at, rate, channels, frames: 0, blocks: []};
+  const block = Array.from({length: channels}, () => new Float32Array(frames));
+  for (let f = 0, o = start; f < frames; f++) {
+    for (let c = 0; c < channels; c++, o += 2) block[c][f] = view.getInt16(o, true) / 32768;
+  }
+  p.blocks.push(block);
+  p.frames += frames;
+  if (p.frames >= HERE.SPAN) herePlay(me, lane, L);
+}
+
+// A lane's blocks gathered, played when the Mac hears them plus the offset: right after the last of the lane's, if
+// that's near enough (no gap, no overlap)
+function herePlay(me, lane, L) {
+  const p = L.pending;
+  L.pending = null;
+  if (!p || !p.frames) return;
+  const ctx = me.ctx, now = ctx.currentTime;
+  hereOffset(me, now - p.at);
+  const wanted = p.at + me.offset;
+  const when = L.next !== null && Math.abs(L.next - wanted) <= HERE.RESYNC ? L.next : wanted;
+  if (when < now + 0.005) {  // (too late for it)
+    L.next = null;
+    return;
+  }
+  const buffer = ctx.createBuffer(p.channels, p.frames, p.rate);
+  for (let c = 0; c < p.channels; c++) {
+    const out = buffer.getChannelData(c);
+    let o = 0;
+    for (const block of p.blocks) {
+      out.set(block[c], o);
+      o += block[c].length;
+    }
+  }
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(me.gains[lane]);
+  source.start(when);
+  L.next = when + p.frames / p.rate;
+  me.heard = performance.now();
+}
+
+// The offset from the Mac's clock to this device's: the latest a block's come lately, plus HERE.LEAD. Moved (a
+// moment's gap or overlap) only when one comes too near its time (HERE.LATE), or they've all come well early for a
+// while (HERE.EARLY: the network's quicker again)
+function hereOffset(me, arrival) {
+  const now = me.ctx.currentTime;
+  me.arrivals.push([now, arrival]);
+  while (me.arrivals.length && me.arrivals[0][0] < now - HERE.WINDOW) me.arrivals.shift();
+  let latest = -Infinity;
+  for (const a of me.arrivals) latest = Math.max(latest, a[1]);
+  if (me.offset === null || me.offset - arrival < HERE.LATE || me.offset - latest > HERE.LEAD + HERE.EARLY) {
+    me.offset = latest + HERE.LEAD;
+  }
+  if (me.sents.length) {  // (how much later than the Mac it's heard here: for the cards' drawing)
+    let clock = Infinity;
+    for (const x of me.sents) clock = Math.min(clock, x[1]);
+    me.delay = Math.max(0, me.offset - clock + (me.ctx.outputLatency || 0) + (me.ctx.baseLatency || 0));
+  }
+}
+
+// How much later the cards here draw where the song is: as late as the sound's heard here (listening), else not
+function viewDelay() {
+  return hereHearing() ? here.delay * 1000 : 0;
+}
+
+function showHere() {
+  const button = $("audioHere"), on = hereWanted();
+  button.hidden = onMac;
+  button.classList.toggle("primary", on);
+  button.setAttribute("aria-pressed", String(on));
+  button.title = on ? "Stop playing the audio on this device" :
+    "Play the song's audio on this device as well (this setting is only for this device; 🎵 controls the Mac)";
+  $("audioVolume").parentElement.title = onMac ? "Song audio volume (all of it: its stems' levels below)" :
+    "The song's audio volume on the Mac (this device's volumes are below 🎧)";
+  $("hereRow").hidden = onMac || !on;
+  if (onMac || !on) return;
+  const error = playOptions && playOptions.keys_input_error;
+  $("hereSaid").textContent = !here ? "Tap or click anywhere on the page to start the sound (the browser requires it)." :
+    here.error ? "Reconnecting to the Mac…" :
+    hereHearing() ? `Playing on this device, ${here.delay.toFixed(2)} s behind the Mac.` :
+    "The sound starts when a song plays.";
+  $("hereSaid").title = here && here.error ? here.error : "";
+  if (error) $("hereSaid").textContent += ` Couldn't read the keyboard's input (${error}).`;
+  $("hereKeysName").title = `The ${KB()} on this device, from the Mac's audio input chosen below`;
+  $("hereKeys").disabled = !hereKeysInput;
+}
+
+// Where the keyboard's sound comes into the Mac (an interface's stereo pair: the Mac's setting, for every device)
+function showHereInputs(s) {
+  onMac = !!s.on_mac;
+  hereKeysInput = s.keys_input || null;
+  const counts = s.input_channels || {}, chosen = hereKeysInput ? JSON.stringify(hereKeysInput) : "";
+  const options = [["", "No keyboard input"]];
+  for (const device of [...new Set([...(hereKeysInput ? [hereKeysInput.device] : []), ...(s.inputs || [])])]) {
+    const n = counts[device] || 1;
+    for (let c = 1; c <= n; c += 2) {
+      options.push([JSON.stringify({device, channel: c}), n === 1 ? device : c < n ? `${device} ${c}–${c + 1}` : `${device} ${c}`]);
+    }
+  }
+  if (chosen && !options.some(([v]) => v === chosen)) {
+    options.push([chosen, `${hereKeysInput.device} ${hereKeysInput.channel}–${hereKeysInput.channel + 1}`]);
+  }
+  $("keysInput").innerHTML = options.map(([v, name]) => `<option value="${esc(v)}">${esc(name)}</option>`).join("");
+  $("keysInput").value = chosen;
+  showHere();
+  hereOnFirstGesture();
+}
+
+$("audioHere").addEventListener("click", () => {
+  const on = !hereWanted();
+  store.set("rsk.here", on);
+  if (on) hereStart();
+  else hereStop();
+  showHere();
+});
+for (const [id, lane] of [["hereSong", "song"], ["hereKeys", "keys"]]) {
+  $(id).value = String(hereVolume(lane));
+  $(`${id}Shown`).textContent = `${$(id).value}%`;
+  $(id).addEventListener("input", () => {
+    const value = Number($(id).value);
+    $(`${id}Shown`).textContent = `${value}%`;
+    store.set(lane === "song" ? "rsk.hereSong" : "rsk.hereKeys", value);
+    if (here) here.gains[lane].gain.setTargetAtTime(value / 100, here.ctx.currentTime, 0.02);
+  });
+}
+$("keysInput").addEventListener("change", () => act(async () => {
+  const value = $("keysInput").value;
+  await api("/api/settings", {keys_input: value ? JSON.parse(value) : null});
+  await loadSettings();
+}));
+document.addEventListener("visibilitychange", () => {  // (a phone's page back in front: its sound again)
+  if (here && !document.hidden) here.ctx.resume().catch(() => {});
+});
+setInterval(() => { if (!$("hereRow").hidden) showHere(); }, 1000);
 
 function checkLights() {
   playable = true;  // (every part muted too: they can be played again as it goes)
@@ -5584,6 +5862,7 @@ function showKeyboardName(name) {
 async function loadSettings() {
   const s = await api("/api/settings");
   showKeyboardName(s.keyboard_name);
+  showHereInputs(s);
   const ports = s.ports.includes(s.midi_port) ? s.ports : [s.midi_port, ...s.ports];
   $("midiPort").innerHTML = ports.map((p) => `<option>${esc(p)}</option>`).join("");
   $("midiPort").value = s.midi_port;

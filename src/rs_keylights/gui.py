@@ -42,6 +42,7 @@ from .player import Track, squeal_bends
 from .priority import settle
 from .session import Following, Playback
 from . import chartsync, favorites, gameparts, gamestems, melody, sides, splitserver, stems, tonecheck, warmup
+from .listeners import Broadcast, InputTap, ListeningPage
 from .songaudio import SongAudio, song_samples
 from .listen import BASS_LOWEST, DEVICE as GUITAR_INPUT, LOWEST, Listener, OnsetListener
 from .lyrics import Line, lyric_lines
@@ -527,6 +528,7 @@ class Gui:
         pedal_tones_factory: Callable[[Callable[[int | None], str]], PedalTones] = PedalTones,
         audio_stream: Callable[..., Any] | None = None,
         onset_listener: Callable[..., OnsetListener] = OnsetListener,
+        input_tap: Callable[..., InputTap] = InputTap,
     ):
         self.index = index
         self._onset_listener = onset_listener  # (the warm-up's: your playing heard; tests: their own)
@@ -621,6 +623,14 @@ class Gui:
         self._split_running = False  # (a thread splitting them)
         self._audio_error: str | None = None
         self._audio_stream = audio_stream  # (sounddevice's OutputStream; tests: their own)
+        self._audio_pending: int | None = None  # (a song's audio being decoded to play: its token)
+        # Pages listening on other devices: the song's audio sent to them (made for them alone, the Mac's sound
+        # off), and the keyboard's sound coming into the Mac (an input) read for them while one wants it
+        self._listeners = Broadcast(self._listening_changed)
+        self._input_tap = input_tap
+        self._keys_tap: InputTap | None = None
+        self._keys_tap_error: str | None = None
+        self._keys_tap_lock = threading.Lock()
         # Played by a thread of their own: the remote's MIDI thread only hands them on (CoreMIDI can deadlock if
         # it waits, or opens ports); [] lets go of them all, None ends it
         self._keys_queue: queue.Queue[list[int] | None] = queue.Queue()
@@ -672,6 +682,9 @@ class Gui:
                                          # "channel"}, for its meter and the tone check)
                                          "favorites_pending": {},  # (favourites changed here while the game
                                          # was open, written to its profile once it's closed: song key -> on)
+                                         "keys_input": None,  # (where the keyboard's sound comes into the Mac,
+                                         # for the pages listening elsewhere: {"device", "channel"}, the first of
+                                         # its pair)
                                          "split_server": None}  # (another computer splitting songs with
         # BS-RoFormer SW, tools/rs-keylights-split-server.py: {"url", "key"})
         self._server_seen: tuple[float, dict[str, Any]] | None = None  # (it, as last asked: when, and what it said)
@@ -1744,7 +1757,8 @@ class Gui:
 
     def play_options_info(self) -> dict[str, Any]:
         return {**self.play_options, "saved": self._play_saved, "version": self.play_version,
-                "audio_error": self._audio_error, "audio_there": drums.can_decode(), "audio_outputs": _audio_outputs()}
+                "audio_error": self._audio_error, "audio_there": drums.can_decode(), "audio_outputs": _audio_outputs(),
+                "listening": self._listeners.count(), "keys_input_error": self._keys_tap_error}
 
     def set_play_options(self, body: dict[str, Any]) -> dict[str, Any]:
         """Changes to the speed, real pitch, lights only (silent: following too), or the song picked, kept; a song
@@ -2139,14 +2153,17 @@ class Gui:
     # The song's own audio, played with it
 
     def _audio_on(self, sid: str) -> None:
-        """The song's own audio played with it (if it's chosen), where it is; decoded first, on a thread of its own
-        (a fraction of a second; until then, the song plays without it). Another song's: stopped."""
+        """The song's own audio played with it (if it's chosen, or a page elsewhere is listening: made for it alone,
+        the Mac's sound off), where it is; decoded first, on a thread of its own (a fraction of a second; until then,
+        the song plays without it). Another song's: stopped."""
         self._audio_off()
         self._audio_error = None
-        if not self.play_options["audio"]:
+        heard = bool(self.play_options["audio"])
+        if not heard and not self._listeners.wanted("song"):
             return
         self._audio_token += 1
         token = self._audio_token
+        self._audio_pending = token
 
         def where(at: float) -> tuple[float | None, float]:  # (the sound device's thread: nothing waited for)
             session = self._session
@@ -2165,15 +2182,20 @@ class Gui:
                 audio = SongAudio({"song": samples, **parts} if parts else samples, rate, where,
                                   self.play_options["audio_volume"] / 100,
                                   stream_factory=self._audio_stream, weights=weights, search=samples)
+                audio.tap = self._listeners.song  # (the pages listening elsewhere: each block, as it's made)
                 with self._lock:
                     if token != self._audio_token:
                         self._forget_audio_later()  # (another song, or none, since: kept a while, as if it played)
                         return
-                    audio.start(self.play_options["audio_device"])
+                    audio.start(self.play_options["audio_device"], heard=heard)
                     self._song_audio = audio
             except Exception as exc:  # (no decoder, no sound device: said on the page)
                 self._audio_error = str(exc) or type(exc).__name__
                 self.play_version += 1
+            finally:
+                with self._lock:
+                    if self._audio_pending == token:
+                        self._audio_pending = None
 
         threading.Thread(target=run, name="rs-keylights song audio", daemon=True).start()
 
@@ -2438,6 +2460,7 @@ class Gui:
 
     def _audio_off(self) -> None:
         self._audio_token += 1
+        self._audio_pending = None
         audio, self._song_audio = self._song_audio, None
         if audio is not None:
             audio.close()
@@ -2455,6 +2478,54 @@ class Gui:
         with self._lock:
             if token == self._audio_token and self._song_audio is None:
                 self._audio_kept = None
+
+    # Pages listening on other devices (listeners.py): the song's audio, and the keyboard's sound coming into the Mac
+
+    def listen(self, keys: bool) -> ListeningPage:
+        """A page listening from now: the song's audio sent to it, and the keyboard's sound if it wants it (and its
+        input is set)."""
+        return self._listeners.add({"song", "keys"} if keys else {"song"})
+
+    def unlisten(self, listener: ListeningPage) -> None:
+        self._listeners.remove(listener)
+
+    def _listening_changed(self) -> None:
+        """A page started or stopped listening: the song's audio made for them, or no longer (the Mac's own sound:
+        as it was), and the keyboard's input read for them, or no longer."""
+        with self._lock:
+            session, playing = self._session, self._playing
+            if isinstance(session, Playback) and session.running and playing and not self.play_options["audio"]:
+                wanted = self._listeners.wanted("song")
+                if wanted and self._song_audio is None and self._audio_pending is None:
+                    self._audio_on(playing["id"])
+                elif not wanted and (self._song_audio is not None or self._audio_pending is not None):
+                    self._audio_off()
+            self.play_version += 1  # (every page says how many are listening)
+        self._keys_tap_update()
+
+    def _keys_tap_update(self) -> None:
+        """The keyboard's input read for the pages listening while one wants it, from the input set (another set:
+        that one from now)."""
+        source = self.settings["keys_input"]
+        want = (str(source["device"]), int(source["channel"])) if source and self._listeners.wanted("keys") else None
+        with self._keys_tap_lock:
+            tap, error = self._keys_tap, self._keys_tap_error
+            if tap is not None and (tap.device, tap.channel) == want:
+                return
+            self._keys_tap, self._keys_tap_error = None, None
+            if tap is not None:
+                tap.close()
+            if want is not None:
+                tap = self._input_tap(self._listeners.send, *want)
+                try:
+                    tap.start()
+                    self._keys_tap = tap
+                except Exception as exc:  # (not there now, say: said on the listening pages)
+                    self._keys_tap_error = f"{want[0]}: {exc}" if str(exc) else want[0]
+            changed = self._keys_tap_error != error
+        if changed:
+            with self._lock:
+                self.play_version += 1
 
     def pause(self) -> dict[str, Any]:
         with self._lock:
@@ -4738,6 +4809,11 @@ class Gui:
             most = _audio_input_channels().get(pedal_input["device"])
             if most is not None and pedal_input["channel"] > most:
                 raise GuiError(f"{pedal_input['device']} has {most} inputs")
+        keys_input = _keys_input(body["keys_input"]) if "keys_input" in body else self.settings["keys_input"]
+        if keys_input is not None and "keys_input" in body:
+            most = _audio_input_channels().get(keys_input["device"])
+            if most is not None and keys_input["channel"] > most:
+                raise GuiError(f"{keys_input['device']} has {most} inputs")
         favourites = _favourites(body.get("pedal_favourites", self.settings["pedal_favourites"]))
         asked, known = _recalled(self.settings["outputs"], body.get("outputs") or {},
                                  self.settings.get("outputs_known"))
@@ -4758,7 +4834,8 @@ class Gui:
                        ring=ring, tone_changes=tone_changes, tone_map=tone_map, techniques=played, outputs=outputs,
                        outputs_known=known,
                        overlap_ms=overlap, listen=listen, listen_device=listen_device, listen_channel=listen_channel, pedal_backup=backup,
-                       pedal_favourites=favourites, pinch=pinch, beta=beta, pedal_input=pedal_input)
+                       pedal_favourites=favourites, pinch=pinch, beta=beta, pedal_input=pedal_input,
+                       keys_input=keys_input)
         betas_were = self.settings["beta"]
         if backup != self.settings["pedal_backup"]:
             self.pedal.use_backup(_backup(backup))
@@ -4771,6 +4848,7 @@ class Gui:
             if isinstance(session, (Playback, Following)) and session.running:
                 session.retime_lights(*self._light_timing())
         self.listen_now()  # (the guitar heard, or not)
+        self._keys_tap_update()  # (the keyboard's input for the pages listening: another, or none)
         if beta != betas_were:
             self._betas_changed(betas_were, beta)
         if (ring, tone_changes, tone_map, played, outputs, overlap, pinch) != sounded:  # (the notes ringing, tone
@@ -4935,6 +5013,10 @@ class Gui:
             synth.close()
         if self._listener is not None:
             self._listener.stop()
+        with self._keys_tap_lock:
+            keys_tap, self._keys_tap = self._keys_tap, None
+        if keys_tap is not None:
+            keys_tap.close()
 
     def _stop(self) -> None:
         """Stops what plays, and closes the keyboard a remote's keys had (before another opens: closing one
@@ -5070,6 +5152,16 @@ def _pedal_input(given: Any) -> dict[str, Any] | None:
     if not isinstance(given, dict) or not isinstance(given.get("device"), str):
         raise GuiError("Expected the pedal's input: its device and channel")
     return {"device": given["device"], "channel": int(_number(given.get("channel", 1), "the pedal's input", 1, 64))}
+
+
+def _keys_input(given: Any) -> dict[str, Any] | None:
+    """Where the keyboard's sound comes into the Mac: an audio input and its channel, the first of its stereo pair
+    (None: not set)."""
+    if given is None or (isinstance(given, dict) and not given.get("device")):
+        return None
+    if not isinstance(given, dict) or not isinstance(given.get("device"), str):
+        raise GuiError("Expected the keyboard's input: its device and channel")
+    return {"device": given["device"], "channel": int(_number(given.get("channel", 1), "the keyboard's input", 1, 64))}
 
 
 def _betas(were: dict[str, Any], given: Any) -> dict[str, bool]:
@@ -5356,6 +5448,25 @@ class _Handler(BaseHTTPRequestHandler):
     def _json(self, status: int, value: Any) -> None:
         self._send(status, json.dumps(value).encode(), "application/json")
 
+    def _listen(self, gui: Gui, keys: bool) -> None:
+        """A page listening on another device: the song's audio (and the keyboard's, if it's asked for) sent to it
+        as it's made (listeners.py), until it goes."""
+        listener = gui.listen(keys)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            while True:
+                self.wfile.write(listener.take())
+                self.wfile.flush()
+        except OSError:  # (the page went: closed, reloaded, stopped listening)
+            pass
+        finally:
+            self.close_connection = True
+            gui.unlisten(listener)
+
     def _host_allowed(self) -> bool:
         """For this server's own names and addresses (not other names pointing at it: DNS rebinding)."""
         name, _, port = (self.headers.get("Host") or "").lower().rpartition(":")
@@ -5491,7 +5602,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, gui.play_options_info())
             elif url.path == "/api/settings":
                 self._json(200, {**gui.get_settings(), "lan": bool(self._server.lan_key),
-                                 "phone": self._server.phone_urls()})
+                                 "phone": self._server.phone_urls(),
+                                 "on_mac": self._server.trusted(self.client_address[0])})  # (the page on this Mac)
+            elif url.path == "/api/listen":
+                self._listen(gui, parse_qs(url.query).get("keys", ["0"])[0] == "1")
             else:
                 self._json(404, {"error": "Not found"})
         except Exception as exc:  # shown on the page

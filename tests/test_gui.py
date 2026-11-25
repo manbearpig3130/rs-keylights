@@ -231,7 +231,8 @@ def test_settings_are_kept(server, tmp_path):
                                                  "warmup_tuning": "E standard",
                                                  "warmup_scale": {"kind": "pentatonic", "tonic": None, "start": None},
                                                  "beta": {"melody": False, "sides": False}, "pedal_input": None,
-                                                 "favorites_pending": {}, "split_server": None}
+                                                 "favorites_pending": {}, "keys_input": None,
+                                                 "split_server": None}
     status, answer = call(server, "/api/play", {"song": first_song(server)})
     assert status == 400 and "The lights' channel (11)" in answer["error"]
 
@@ -2448,3 +2449,86 @@ def test_the_split_servers_script_downloads_from_the_page(server):
         assert "attachment" in response.headers["Content-Disposition"]
         assert "rs-keylights-split-server.py" in response.headers["Content-Disposition"]
     assert body.startswith(b"#!") or b"split" in body[:2000]
+
+
+def test_a_page_listening_elsewhere_is_sent_the_songs_audio_and_the_keyboards(server, monkeypatch):
+    import numpy as np
+    from rs_keylights import gui as gui_module
+    from rs_keylights.listeners import HEADER, LANES, decode
+    gui, sid = server.gui, first_song(server)
+    monkeypatch.setattr(gui_module, "song_samples",
+                        lambda ref, game: (np.ones((44100 * 30, 2), dtype=np.float32) * 0.1, 44100))
+    monkeypatch.setattr(gui_module, "_audio_input_channels", lambda: {"Blender": 12})
+    streams, taps = [], []
+
+    class Stream:
+        def __init__(self, **kwargs):
+            self.kwargs, self.closed = kwargs, False
+            streams.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class Tap:
+        def __init__(self, send, device, channel):
+            self.send, self.device, self.channel, self.closed = send, device, channel, False
+            taps.append(self)
+
+        def start(self):
+            if self.device == "Gone":
+                raise ValueError("not there")
+
+        def close(self):
+            self.closed = True
+
+    gui._audio_stream, gui._input_tap = Stream, Tap
+    status, settings = call(server, "/api/settings", {"keys_input": {"device": "Blender", "channel": 9}})
+    assert status == 200 and settings["keys_input"] == {"device": "Blender", "channel": 9}
+    assert not taps  # (no one listening: not read)
+    assert call(server, "/api/settings", {"keys_input": {"device": "Blender", "channel": 13}})[0] == 400
+    assert call(server, "/api/settings")[1]["on_mac"]  # (the tests' requests: from this Mac)
+    call(server, "/api/play", {"song": sid, "start": 1.0})
+    assert gui._song_audio is None  # (the Mac's sound off, and no one listening)
+
+    def blocks(response, lanes, seconds=3.0):
+        data, seen, deadline = b"", [], time.monotonic() + seconds
+        while not lanes <= {b[0] for b in seen} and time.monotonic() < deadline:
+            data += response.read1(65536)
+            i = 0
+            while len(data) - i >= HEADER.size:
+                _m, _lane, channels, frames, *_rest = HEADER.unpack_from(data, i)
+                size = HEADER.size + frames * channels * 2
+                if len(data) - i < size:
+                    break
+                i += size
+            seen += decode(data[:i])
+            data = data[i:]
+        return seen
+
+    response = urllib.request.urlopen(server.url + "api/listen?keys=1", timeout=5)
+    assert response.headers["Content-Type"] == "application/octet-stream"
+    assert wait_for(lambda: gui._song_audio, bool)
+    assert gui._song_audio._unheard is not None and not streams  # (made for the page alone)
+    assert [(t.device, t.channel) for t in taps] == [("Blender", 9)]
+    taps[0].send("keys", time.monotonic(), 48000, np.full((4, 2), 0.5))
+    seen = blocks(response, {LANES["song"], LANES["keys"]})
+    song = [b for b in seen if b[0] == LANES["song"]]
+    assert song and song[0][1:4] == (2, 1024, 44100) and any(np.frombuffer(b[6], "<i2").any() for b in song)
+    assert [b[1:4] for b in seen if b[0] == LANES["keys"]] == [(2, 4, 48000)]
+    assert call(server, "/api/play/options")[1]["listening"] == 1
+    call(server, "/api/play/options", {"audio": True})  # (the Mac's sound on: its blocks sent)
+    assert wait_for(lambda: streams, bool) and gui._song_audio._unheard is None
+    call(server, "/api/play/options", {"audio": False})
+    assert wait_for(lambda: gui._song_audio, lambda a: a is not None and a._unheard is not None)
+    call(server, "/api/settings", {"keys_input": {"device": "Gone", "channel": 1}})  # (not there: said)
+    assert taps[0].closed and call(server, "/api/play/options")[1]["keys_input_error"] == "Gone: not there"
+    response.close()
+    assert wait_for(lambda: gui._song_audio, lambda a: a is None) is None  # (no one listening: not made)
+    assert call(server, "/api/play/options")[1]["listening"] == 0
+    call(server, "/api/stop", {})

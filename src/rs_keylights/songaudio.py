@@ -32,6 +32,9 @@ MOST_CATCH = 0.02
 EVENTS_KEPT = 64  # jumps and catch-ups kept for the trace (SongAudio.events)
 SKIPPED = 0.001  # seconds later than the last block's end a block's heard: blocks between missed
 BLOCK = 512  # samples the sound device's asked for at once (12 ms: steady, the delay made up for where it's heard)
+UNHEARD_BLOCK = 1024  # samples a block made only for the tap (the pages listening elsewhere: the Mac's sound off)...
+UNHEARD_AHEAD = 0.03  # ...made this long before it's "heard", as a sound device would ask for it
+UNHEARD_BEHIND = 0.25  # (that far behind, its thread held up: from now again)
 
 
 class Stretcher:
@@ -150,7 +153,9 @@ class Stretcher:
 class SongAudio:
     """A song's audio played where the song is: where(at) says where it is at a time on time.monotonic's clock
     (seconds; None: not playing) and how fast, each time it's asked for more, for when that's heard. Too far off
-    (JUMP), it goes there; from DRIFT off, it catches up (MOST_CATCH at most); not playing, silence. volume: 0 to 1."""
+    (JUMP), it goes there; from DRIFT off, it catches up (MOST_CATCH at most); not playing, silence. volume: 0 to 1.
+    tap: given each block made while the song plays (when it's heard, the rate, the block before the volume: the
+    pages listening elsewhere, their volumes their own)."""
 
     def __init__(self, samples: Any, rate: int, where: Callable[[float], tuple[float | None, float]],
                  volume: float = 1.0, stream_factory: Callable[..., Any] | None = None,
@@ -165,6 +170,9 @@ class SongAudio:
         self._catching = False
         self._next: float | None = None  # (when the next block's heard, on the sound device's clock)
         self._silent = True  # (the last block: silence, the song not playing)
+        self.tap: Callable[[float, int, Any], None] | None = None
+        self._unheard: threading.Thread | None = None  # (blocks made for the tap alone: its thread, and its stop)
+        self._unheard_stop = threading.Event()
         # what it did to keep with the song, for the trace (taken by the page's state: nothing written here, on the
         # sound device's thread): (when, "jump" or "missed" and how far off it was, seconds; "catching", off; "caught")
         self.events: deque[tuple[float, str, float]] = deque(maxlen=EVENTS_KEPT)
@@ -180,7 +188,22 @@ class SongAudio:
 
     def fill(self, frames: int, at: float | None = None, exact: bool = False) -> Any:
         """The next frames of sound (frames x channels), heard at a time on time.monotonic's clock (None: now; exact:
-        the sound device's own, block after block)."""
+        the sound device's own, block after block), at its volume."""
+        return self.mix(frames, at, exact) * self.volume
+
+    def _made(self, frames: int, at: float, exact: bool) -> Any:
+        """The next block (mix), and the tap given it if the song's playing."""
+        block = self.mix(frames, at, exact)
+        tap = self.tap
+        if tap is not None and not self._silent:
+            try:
+                tap(at, self.rate, block)
+            except Exception:  # (a page's trouble: never the Mac's sound)
+                pass
+        return block
+
+    def mix(self, frames: int, at: float | None = None, exact: bool = False) -> Any:
+        """fill's sound before its volume."""
         import numpy as np
         position, speed = self._where(time.monotonic() if at is None else at)
         missed = exact and at is not None and self._next is not None and at - self._next > SKIPPED
@@ -201,27 +224,52 @@ class SongAudio:
                 self.events.append((time.monotonic(), "catching" if catching else "caught", round(off, 4)))
             self._catching = catching
             catch = min(max(off * CATCH, -MOST_CATCH), MOST_CATCH) if self._catching else 0.0
-            return self._stretcher.read(frames, speed * (1 + catch)) * self.volume
+            return self._stretcher.read(frames, speed * (1 + catch))
 
-    def start(self, device: str | None = None) -> None:
-        """Played on an audio output (by name; none: the Mac's own, as it is)."""
+    def start(self, device: str | None = None, heard: bool = True) -> None:
+        """Played on an audio output (by name; none: the Mac's own, as it is). Not heard: made only for the tap,
+        block after block on time.monotonic's clock (the pages listening elsewhere, the Mac's sound off)."""
+        if not heard:
+            self._unheard_stop.clear()
+            self._unheard = threading.Thread(target=self._make_unheard, name="rs-keylights song audio (unheard)",
+                                             daemon=True)
+            self._unheard.start()
+            return
         import sounddevice
         factory = self._factory or sounddevice.OutputStream
 
         def callback(out: Any, frames: int, time_info: Any, _status: Any) -> None:
             at, exact = _heard(time_info)
-            out[:] = self.fill(frames, at, exact)
+            out[:] = self._made(frames, at, exact) * self.volume
 
         chosen = {} if device is None else {"device": device}
         self._stream = factory(samplerate=self.rate, channels=self.channels, dtype="float32", callback=callback,
                                blocksize=BLOCK, latency="low", **chosen)
         self._stream.start()
 
+    def _make_unheard(self) -> None:
+        from . import priority
+        priority.playing_thread()
+        period = UNHEARD_BLOCK / self.rate
+        at = time.monotonic() + UNHEARD_AHEAD
+        while not self._unheard_stop.is_set():
+            self._made(UNHEARD_BLOCK, at, True)
+            at += period
+            wait = at - UNHEARD_AHEAD - time.monotonic()
+            if wait > 0:
+                self._unheard_stop.wait(wait)
+            elif wait < -UNHEARD_BEHIND:
+                at = time.monotonic() + UNHEARD_AHEAD
+
     def close(self) -> None:
         stream, self._stream = self._stream, None
         if stream is not None:
             stream.stop()
             stream.close()
+        self._unheard_stop.set()
+        thread, self._unheard = self._unheard, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(1.0)
 
 
 def _heard(time_info: Any) -> tuple[float, bool]:

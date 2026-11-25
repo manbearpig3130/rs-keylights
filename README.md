@@ -217,7 +217,8 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
   channel 1 with a tone of their own (at the top of the **Keyboard** card). **Plays on**
   sends them to another MIDI output instead (IAC Driver Bus 1 for an app on the Mac, such as Komplete Kontrol). They
   still light the Casio's keys.
-- **rs-keylights**: the game's songs folder, the link for a phone, and **Look for new songs**.
+- **rs-keylights** (at the top of the column until you move it): the game's songs folder, the link for a phone, and
+  **Rescan library**.
 - **Tone changes**, **Default tones**, **Pinch harmonics**: above. **Guitar pedal**, **Pedal tone rules**: see
   [Guitar pedal (DNAfx)](#guitar-pedal-dnafx).
 
@@ -648,6 +649,15 @@ for each song (`~/Library/Caches/rs-keylights/chart-offsets.json`), and again fr
 
 The **Song Audio** card sets its volume and output device (**Default output**: macOS's own), at its top. Its 🎵
 turns the audio on and off, red while it's on.
+
+**Listening on another device.** On a computer or phone using the page over the network (`--lan`), the Song Audio
+card also has 🎧. It plays the song's audio on that device as well, about 0.3 s behind the Mac, and the cards there
+are drawn that much later to match. It's that device's own setting, kept in its browser, with its own volumes under
+🎧: the Mac's 🎵, volume and output stay as they are. With 🎵 off, the Mac makes the audio only for the devices
+listening. The keyboard can be heard too: choose the Mac's audio input it's connected to (a stereo pair, such as a
+mixer's input 5 on its channels 9 and 10), and it's sent in time with the song. It's for listening: if you play the
+keyboard while hearing it on another device, you hear yourself late. A browser starts the sound only after a tap or
+click on the page, and a phone stops it when its screen locks.
 
 **Split into parts** separates it into drums, bass, guitar, vocals, keys and other (ambience, synths, effects), once,
 with the **separator** chosen in the section beside it (its summary says which, and where it splits):
