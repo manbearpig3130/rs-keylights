@@ -52,3 +52,13 @@ def test_it_gives_way_to_a_songs_lights():
     assert keys.lit == {50, 52}
     show.step(keys, 0.5, player, song=4.9)  # less than SHOW_GAP away
     assert show.done and keys.lit == set()
+
+
+def test_a_page_is_told_its_frames_and_how_far_into_them_it_is_until_its_over():
+    keys, show = Keys(), KeyShow(FRAMES, repeat=False)
+    assert show.info(5.0) == {"frames": [[0.0, [50, 52]], [1.0, [53]], [2.0, []]], "elapsed": 0.0, "repeat": False}
+    show.step(keys, 10.0)
+    assert show.info(11.25)["elapsed"] == 1.25 and show.quickest == 1.0
+    show.step(keys, 12.0)
+    assert show.info(12.0) is None  # (over)
+    assert KeyShow([(0.0, (1,)), (0.01, (2,)), (0.01, (3,)), (0.05, ())]).quickest == 0.01

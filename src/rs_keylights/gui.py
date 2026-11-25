@@ -29,8 +29,8 @@ from typing import Any, Callable, cast
 from urllib.parse import ParseResult, parse_qs, quote, urlparse
 
 from .follow import DEFAULT_OVERLAY_PORT, OverlayClient, PartsFor
-from .keyboard import (DEFAULT_CHANNEL, DEFAULT_PORT, NORMAL_VOLUME, PROGRAMS, Keyboard, KeyboardError, Synth,
-                       keyboard_name)
+from .keyboard import (DEFAULT_CHANNEL, DEFAULT_PORT, MAX_LIT, NORMAL_VOLUME, PROGRAMS, Keyboard, KeyboardError,
+                       Synth, keyboard_name)
 from .library import NO_NOTES, ArrangementRef, SongIndex
 from .psarc import Archive, ArchiveError
 from .sevenzip import SevenZip
@@ -2920,22 +2920,50 @@ class Gui:
         key = self.song_key(sid) if sid else None
         if key is None:
             raise GuiError("No song to show the key of" if not sid else "This song has no notes to find its key from")
-        frames = scale_show(_key_of(key))
+        self._start_show(session, scale_show(_key_of(key)))
+        return self.state()
+
+    def show_frames(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Lights on the keys as given (frames: [seconds into it, [keys]], the last one's time its length; repeat:
+        over and over), as the scale's are (a test of how the keyboard shows them: the page's keyboard draws them
+        too)."""
+        given = body.get("frames")
+        if not isinstance(given, list) or not 1 <= len(given) <= 20000:
+            raise GuiError("Expected frames: [seconds, [keys]], 1 to 20000 of them")
+        frames: list[tuple[float, tuple[int, ...]]] = []
+        for frame in given:
+            if not isinstance(frame, list) or len(frame) != 2 or not isinstance(frame[1], list):
+                raise GuiError("Expected frames: [seconds, [keys]]")
+            at = _number(frame[0], "a frame's time", 0, 3600)
+            keys = tuple(int(_number(k, "a key", 0, 127)) for k in frame[1])
+            if frames and at < frames[-1][0]:
+                raise GuiError("Expected frames in order of time")
+            if len(keys) > MAX_LIT:
+                raise GuiError(f"The keyboard lights {MAX_LIT} keys at most")
+            frames.append((at, keys))
+        with self._lock:
+            session = self._session
+            running = isinstance(session, (Following, Playback)) and session.running
+        self._start_show(session if running else None, frames, bool(body.get("repeat", True)))
+        return self.state()
+
+    def _start_show(self, session: Playback | Following | None, frames: list[tuple[float, tuple[int, ...]]],
+                    repeat: bool = True) -> None:
+        """A show on the keys: the song's (playing or following), giving way to its lights, or on its own."""
         with self._lock:
             if session is not None:
-                session.show(frames)
-                return self.state()
+                session.show(frames, repeat)
+                return
             self._end_idle_show()
             with self._keys_lock:
                 if self._idle_keyboard is None:
                     self._idle_keyboard = self._open_keyboard()
                 keyboard = self._idle_keyboard
             self._show_quit = quit_ = threading.Event()
-            self._idle_show = show = KeyShow(frames)
+            self._idle_show = show = KeyShow(frames, repeat)
             self._show_thread = threading.Thread(target=_play_show, args=(keyboard, show, quit_, self._show_done),
                                                  daemon=True)
             self._show_thread.start()
-        return self.state()
 
     def stop_scale(self) -> dict[str, Any]:
         with self._lock:
@@ -2949,6 +2977,16 @@ class Gui:
             if isinstance(self._session, (Following, Playback)) and self._session.running:
                 return self._session.showing
             return self._show_thread is not None and self._show_thread.is_alive()
+
+    def show_info(self) -> dict[str, Any] | None:
+        """The show on the keys (the scale, or lights as given), for the page's keyboard to draw as it's lit."""
+        with self._lock:
+            session = self._session
+            if isinstance(session, (Following, Playback)) and session.running:
+                return session.show_info()
+            show, thread = self._idle_show, self._show_thread
+            return show.info(time.monotonic()) if show is not None and thread is not None and thread.is_alive() \
+                else None
 
     def _show_done(self, keyboard: Keyboard) -> None:
         """A show over while nothing plays: its keyboard closes, unless a remote's keys are down on it."""
@@ -4717,7 +4755,8 @@ class Gui:
                                    "volumes": list(self.settings["volumes"]),
                                    "other_follow": self._other_follow_cached(),
                                    "follow_version": self.follow_version, "play_version": self.play_version,
-                                   "showing": self.showing(), "active": self.play_options.get("song"),
+                                   "showing": self.showing(), "show": self.show_info(),
+                                   "active": self.play_options.get("song"),
                                    "browse": self._browse_state(), "remote": self._remote_state(),
                                    "game_list": game_list,
                                    "keys": self.keys_info(), "loop": self.loop_info(None),
@@ -5339,9 +5378,10 @@ def _key_of(info: dict[str, Any]) -> Key:
 def _play_show(keyboard: Keyboard, show: KeyShow, quit_: threading.Event, done: Callable[[Keyboard], None]) -> None:
     """A show on the keys while nothing plays."""
     try:
+        wait = min(0.02, max(0.002, show.quickest / 4))  # (quick frames: stepped often enough to be on time)
         while not quit_.is_set() and not show.done:
             show.step(keyboard, time.monotonic())
-            quit_.wait(0.02)
+            quit_.wait(wait)
     finally:
         show.end(keyboard)
         done(keyboard)
@@ -5645,6 +5685,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/follow/settings": lambda: gui.set_follow(body),
             "/api/scale": lambda: gui.show_scale(body),
             "/api/scale/stop": gui.stop_scale,
+            "/api/keys/show": lambda: gui.show_frames(body),
             "/api/settings": lambda: gui.set_settings(body),
             "/api/pinch/try": lambda: gui.try_pinch(body),
             "/api/keys": lambda: gui.set_keys(body),

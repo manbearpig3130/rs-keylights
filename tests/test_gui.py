@@ -401,6 +401,26 @@ def test_the_scale_climbs_the_keys_until_stopped(server):
     call(server, "/api/stop", {})
 
 
+def test_the_page_is_told_the_show_on_the_keys_and_lights_can_be_sent_as_frames(server):
+    sid = first_song(server)
+    _, state = call(server, "/api/scale", {"song": sid})
+    show = state["show"]
+    assert show["repeat"] and show["frames"][0][0] == 0.0 and all(len(f[1]) <= 4 for f in show["frames"])
+    assert show["elapsed"] >= 0.0
+    call(server, "/api/scale/stop", {})
+    assert call(server, "/api/state")[1]["show"] is None
+    frames = [[0.0, [60]], [0.01, [62]], [0.02, [64]], [0.03, []]]
+    _, state = call(server, "/api/keys/show", {"frames": frames, "repeat": False})
+    assert state["showing"] and state["show"]["frames"] == frames and not state["show"]["repeat"]
+    keyboard = server.outs[-1]
+    assert wait_for(lambda: call(server, "/api/state")[1]["showing"], lambda on: not on) is False  # (once through)
+    lit = [m[1] for m in keyboard.sent if m[0] == 0x93 and m[2] > 0]
+    assert lit == [60, 62, 64]  # (each one: frames 10 ms apart, stepped often enough)
+    for bad in ({"frames": []}, {"frames": [[0.0, [60, 61, 62, 63, 64]]]}, {"frames": [[1.0, [60]], [0.5, []]]},
+                {"frames": [[0.0, [128]]]}, {"frames": [0.0]}):
+        assert call(server, "/api/keys/show", bad)[0] == 400
+
+
 def test_a_remote_follows_the_song_playing_or_picked(server):
     gui, sid = server.gui, first_song(server)
     assert gui.remote_info()["song"] is None and gui.remote_info()["mode"] == "idle"

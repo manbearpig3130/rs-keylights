@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Protocol, Sequence
+from typing import Any, Iterable, Protocol, Sequence
 
 from .player import Player
 
@@ -54,6 +54,21 @@ class KeyShow:
             keys.unlight(tuple(k for k in self._lit if k not in frame))
             keys.light(tuple(k for k in frame if k not in self._lit))
             self._lit = frame
+
+    @property
+    def quickest(self) -> float:
+        """Its shortest frame (seconds): how often it needs stepping to light each one when it should."""
+        gaps = [b[0] - a[0] for a, b in zip(self.frames, self.frames[1:]) if b[0] > a[0]]
+        return min(gaps, default=1.0)
+
+    def info(self, now: float) -> dict[str, Any] | None:
+        """For a page to draw it as it goes: its frames (seconds into it, the keys lit), how far into them it is,
+        and whether it goes round again (None: over)."""
+        if self.done:
+            return None
+        elapsed = 0.0 if self._began is None else now - self._began
+        return {"frames": [[round(at, 4), list(keys)] for at, keys in self.frames], "elapsed": round(elapsed, 4),
+                "repeat": self.repeat}
 
     def end(self, keys: ShowKeys) -> None:
         if self._lit:

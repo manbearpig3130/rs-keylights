@@ -477,6 +477,11 @@ class Follower:
     def showing(self) -> bool:
         return self._show is not None
 
+    def show_info(self) -> dict[str, Any] | None:
+        """The show on the keys, for a page to draw (KeyShow.info), if there's one."""
+        show = self._show
+        return show.info(self._clock()) if show is not None else None
+
     @property
     def planned(self) -> list[PlannedPart]:
         """The parts playing, as planned (their voices too)."""

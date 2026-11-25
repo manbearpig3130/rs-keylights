@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 from collections import deque
-from typing import Callable, Collection, Sequence
+from typing import Any, Callable, Collection, Sequence
 
 from .follow import TICK, Follower, GameTime, OverlayClient, PartsFor
 from .library import ArrangementRef
@@ -150,6 +150,12 @@ class Playback:
     @property
     def showing(self) -> bool:
         return self._show is not None
+
+    def show_info(self) -> dict[str, Any] | None:
+        """The show on the keys, for a page to draw (KeyShow.info), if there's one."""
+        with self._lock:
+            show = self._show
+            return show.info(self._clock()) if show is not None else None
 
     def show(self, frames, repeat: bool = True) -> None:
         """A show on the keys where the song leaves them free (keyshow.KeyShow)."""
@@ -321,6 +327,10 @@ class Following:
     @property
     def showing(self) -> bool:
         return self.follower.showing
+
+    def show_info(self) -> dict[str, Any] | None:
+        with self._lock:
+            return self.follower.show_info()
 
     def show(self, frames, repeat: bool = True) -> None:
         """A show on the keys where the song leaves them free (follow.Follower.show)."""
