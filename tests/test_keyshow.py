@@ -57,8 +57,11 @@ def test_it_gives_way_to_a_songs_lights():
 def test_a_page_is_told_its_frames_and_how_far_into_them_it_is_until_its_over():
     keys, show = Keys(), KeyShow(FRAMES, repeat=False)
     assert show.info(5.0) == {"frames": [[0.0, [50, 52]], [1.0, [53]], [2.0, []]], "elapsed": 0.0, "repeat": False}
+    assert show.until_next(5.0) == 0.0  # (not begun)
     show.step(keys, 10.0)
-    assert show.info(11.25)["elapsed"] == 1.25 and show.quickest == 1.0
+    assert show.info(11.25)["elapsed"] == 1.25 and show.until_next(10.25) == 0.75 and show.until_next(11.5) == 0.5
     show.step(keys, 12.0)
-    assert show.info(12.0) is None  # (over)
-    assert KeyShow([(0.0, (1,)), (0.01, (2,)), (0.01, (3,)), (0.05, ())]).quickest == 0.01
+    assert show.info(12.0) is None and show.until_next(12.0) == 0.0  # (over)
+    again = KeyShow(FRAMES)
+    again.step(keys, 0.0)
+    assert abs(again.until_next(2.25) - 0.75) < 1e-9  # (round again: its next frame, the second's)

@@ -55,11 +55,17 @@ class KeyShow:
             keys.light(tuple(k for k in frame if k not in self._lit))
             self._lit = frame
 
-    @property
-    def quickest(self) -> float:
-        """Its shortest frame (seconds): how often it needs stepping to light each one when it should."""
-        gaps = [b[0] - a[0] for a, b in zip(self.frames, self.frames[1:]) if b[0] > a[0]]
-        return min(gaps, default=1.0)
+    def until_next(self, now: float) -> float:
+        """Seconds from now until its next frame is due (stepped then, each one's lit on time: a quick pattern's
+        frames kept even); before it begins or once it's over, none."""
+        if self._began is None or self.done:
+            return 0.0
+        elapsed, length = now - self._began, self.frames[-1][0]
+        if elapsed >= length:
+            if not self.repeat or length <= 0:
+                return 0.0
+            elapsed %= length
+        return max(0.0, next((at for at, _keys in self.frames if at > elapsed), length) - elapsed)
 
     def info(self, now: float) -> dict[str, Any] | None:
         """For a page to draw it as it goes: its frames (seconds into it, the keys lit), how far into them it is,

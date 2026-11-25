@@ -5378,10 +5378,10 @@ def _key_of(info: dict[str, Any]) -> Key:
 def _play_show(keyboard: Keyboard, show: KeyShow, quit_: threading.Event, done: Callable[[Keyboard], None]) -> None:
     """A show on the keys while nothing plays."""
     try:
-        wait = min(0.02, max(0.002, show.quickest / 4))  # (quick frames: stepped often enough to be on time)
         while not quit_.is_set() and not show.done:
             show.step(keyboard, time.monotonic())
-            quit_.wait(wait)
+            quit_.wait(min(0.02, max(0.0005, show.until_next(time.monotonic()))))  # (each frame on time: a quick
+            # pattern's kept even)
     finally:
         show.end(keyboard)
         done(keyboard)
