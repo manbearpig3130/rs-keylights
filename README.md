@@ -488,7 +488,10 @@ about once a second.
 | Record | Enter |
 | Pitch strip, knob 8 (in Learn a Song's list) | move through the game's song list (knob 8: a letter at a time); the page's library follows |
 
-A song clicked in the page's library is highlighted in the game's list too.
+A song clicked in the page's library is highlighted in the game's list too. Between songs, a song that stays
+highlighted there for a second (its preview playing) becomes the song shown, on the page and the Launchkey, as the last
+song played is. That way you can set it up before you start it: its stems' levels, or splitting it on the page. A song
+split already has its parts made ready for the game then, so they're there as it starts.
 
 ### In the game's pause menu (riffloop mod)
 

@@ -89,6 +89,9 @@ GAME_MIXER_SCREENS = (GAME_MIXER_SCREEN, "RSKeylights_Stems", "RSKeylights_Tones
 GAME_MIXER_SLIDERS = 6  # its arrangements' sliders (the Launchkey's mixer knobs), then the Launchkey keys'
 GAME_SONGS_EVERY = 0.1  # seconds: following, its song list's highlight asked at most this often
 GAME_SONGS_OWN = 0.6  # seconds after a remote moved the game's highlight its moves are taken as that one's
+GAME_HIGHLIGHT_REST = 1.0  # seconds a song stays highlighted in the game's song list (following, between songs) before
+# it's the song shown, to set up before it's played (its stems); moving through the list, none of the songs passed is
+GAME_SONGS_FRESH = 1.0  # (the song list as last asked: older, not known to be showing)
 GAME_KEYS_AT_ONCE = 300  # the song list's keys asked for so many at a time
 PEDAL_FAVOURITES, PEDAL_FAVOURITES_MOST = (51, 187), 8  # the pedal presets the Launchkey's pad goes through
 TAP_IDLE = 4.0  # seconds an input's meter isn't asked for before its input's closed (the page's gone, or folded)
@@ -565,6 +568,8 @@ class Gui:
         self._game_keys: list[str] = []
         self._game_seen: str | None = None
         self._game_sent: tuple[float, str | None] = (-math.inf, None)
+        self._game_highlight: tuple[str | None, float] = (None, -math.inf)  # (the key highlighted, since when)
+        self._highlight_missed: str | None = None  # (a key highlighted that the library hasn't: not looked for again)
         self._riff_settings: dict[str, Any] = {"speed": 100, "accelerator": False, "passes": 1}  # (as set here)
         self._game_stems_read: tuple[Any, dict[str, Any] | None] = (None, None)  # (RSMods.ini as last read)
         self._game_stems_was: dict[str, int] = {}  # (a part muted: its level before, to go back to)
@@ -1553,6 +1558,9 @@ class Gui:
         if now - asked >= GAME_SONGS_EVERY:
             said = self._riff_loop.songs()
             self._game_songs = (now, said)
+            key = said.key if said is not None else None
+            if key != self._game_highlight[0]:
+                self._game_highlight = (key, now)
         return said
 
     def game_browse(self) -> dict[str, Any] | None:
@@ -2796,7 +2804,32 @@ class Gui:
         current = session.follower.current
         if current is not None:
             self._followed = current
-        return self._followed, current is None
+            return current, False
+        highlighted = self._highlighted_song()
+        if highlighted is not None:
+            self._followed = highlighted
+        return self._followed, True
+
+    def _highlighted_song(self) -> ArrangementRef | None:
+        """(Holding _lock.) Following, between songs: the song highlighted in Learn a Song's song list, once it's
+        stayed there GAME_HIGHLIGHT_REST (its preview playing), as the song shown, so it can be set up before it's
+        played (its stems split, their levels): its arrangement of the part last played, else its first. None: no list
+        showing, the highlight still moving, that song shown already, or one the library hasn't."""
+        asked, said = self._game_songs
+        key, since = self._game_highlight
+        now = time.monotonic()
+        if said is None or key is None or now - asked > GAME_SONGS_FRESH or now - since < GAME_HIGHLIGHT_REST:
+            return None
+        if (self._followed is not None and self._followed.song_key == key) or key == self._highlight_missed:
+            return None
+        refs = [r for r in self.index.arrangements() if r.song_key == key and self._playable(r)]
+        if not refs:
+            self._highlight_missed = key
+            return None
+        refs = sorted((r for r in refs if r.archive == refs[0].archive), key=part_order)  # (a key two songs have:
+        # the first's, as the library's place takes it)
+        last = self._followed.part if self._followed is not None else None
+        return next((r for r in refs if r.part == last), refs[0])
 
     def set_follow(self, body: dict[str, Any], later: float = 0.0) -> dict[str, Any]:
         """Changes to following's settings (changed_follow), kept, and applied while following: the arrangement
@@ -5028,6 +5061,7 @@ class Gui:
         with self._lock:
             self._loaded.clear()
             self._library = None
+            self._highlight_missed = None  # (a song highlighted in the game's list may be in it now)
         return self.library()
 
     def close(self) -> None:

@@ -706,6 +706,52 @@ def test_following_on_the_games_song_list_a_remote_goes_through_it_and_the_libra
     assert call(server, "/api/state")[1]["game_list"] is False
 
 
+def test_following_between_songs_a_song_resting_highlighted_in_the_games_list_is_the_one_shown(
+        server, tmp_path, no_real_game_loop, monkeypatch):
+    from rs_keylights import gui as gui_module
+    monkeypatch.setattr(gui_module, "GAME_HIGHLIGHT_REST", 0.3)
+    gui = server.gui
+    for key, title in (("alpha", "Alpha Song"), ("zulu", "Zulu Song")):
+        (tmp_path / "game" / "dlc" / f"{key}_m.psarc").write_bytes(song_archive(
+            key, {"lead": ("L" + key, Song(levels={0: [N(1.0)]})), "bass": ("B" + key, Song(levels={0: [N(1.0)]}))},
+            song=title, artist="Band"))
+    gui.index.refresh()
+    gui._library = None
+    assert gui.toggle_follow() is True
+    game = no_real_game_loop[-1]
+    shown = lambda: call(server, "/api/state")[1]["follow"]  # noqa: E731
+    assert shown()["song_id"] is None  # (no song yet, no list)
+    game.song_list, game.highlighted = ["alpha", "ghost", "song", "zulu"], 0
+    time.sleep(GAME_SONGS_EVERY)
+    assert shown()["song_id"] is None  # (just highlighted: its preview starting, maybe passed on)
+    time.sleep(0.35)
+    followed = shown()
+    assert followed["song_id"].endswith("#alpha") and followed["song"] is None  # (shown, not played)
+    assert gui.index.find(followed["arrangement"]).part == "lead"  # (no part played yet: its first)
+    assert gui.remote_info()["song"]["id"].endswith("#alpha")  # (the Launchkey's too: its stems page)
+    for row in (1, 2, 3, 2, 3):  # (going through the list: none of them taken)
+        game.highlighted = row
+        time.sleep(GAME_SONGS_EVERY)
+        assert shown()["song_id"].endswith("#alpha")
+    time.sleep(0.35)
+    assert shown()["song_id"].endswith("#zulu")
+    game.highlighted = 1  # (one the library hasn't: the one shown stays)
+    time.sleep(GAME_SONGS_EVERY)
+    shown()
+    time.sleep(0.35)
+    assert shown()["song_id"].endswith("#zulu")
+    gui._followed = next(r for r in gui.index.arrangements() if r.song_key == "zulu" and r.part == "bass")
+    game.highlighted = 0  # (the part last played, bass: alpha's bass)
+    time.sleep(GAME_SONGS_EVERY)
+    shown()
+    time.sleep(0.35)
+    assert gui.index.find(shown()["arrangement"]).part == "bass"
+    game.song_list = None  # (the list gone: the song shown stays)
+    time.sleep(GAME_SONGS_EVERY)
+    assert shown()["song_id"].endswith("#alpha")
+    assert gui.toggle_follow() is False
+
+
 def test_switching_songs_and_going_through_the_library(server, tmp_path):
     gui, first = server.gui, first_song(server)
     notes = [N(1.0 + i * 0.5, fret=i % 3) for i in range(20)]
