@@ -2221,8 +2221,9 @@ function drawRoll(canvas, d, at, seconds, width, height, ratio, showKeys = null)
       if (held.keys.has(key)) {  // (held down: the Launchkey's, or clicked here)
         g.fillStyle = colour("accent");
         g.fillRect(place.x + 0.5, floor + 1, place.w - 1, high - 1);
-      } else if (showKeys && showKeys.includes(key) && !lit.has(key)) {  // (lit by the show: the scale, a test)
-        g.fillStyle = colour("live");
+      } else if (showKeys && showKeys.includes(key) && !lit.has(key)) {  // (lit by the show: the scale, a test; red,
+        // as the Casio's lights are)
+        g.fillStyle = colour("accent");
         g.fillRect(place.x + 0.5, floor + 1, place.w - 1, high - 1);
       } else if (by !== undefined && d.parts[by]) {
         g.globalAlpha = lit.has(key) ? 1 : 0.35;
