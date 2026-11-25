@@ -3729,7 +3729,8 @@ const LAYOUT_KEY = "rsk.layout";
 const SIDE_CARDS = [...document.querySelectorAll("#side > .card")].map((c) => c.id);  // (as the page has them)
 function defaultLayout() {
   return {middle: ["song", "warmup", "audio", "fretboard", "tab", "keys", "drums", "lyrics", "plays", "theory", "pedaltones"].map((kind) => ({id: kind, kind, part: ""})),
-          side: [...SIDE_CARDS], away: [], known: Object.keys(CARD_KINDS)};
+          side: ["appCard", ...SIDE_CARDS.filter((id) => id !== "appCard")],  // (rs-keylights' own card first)
+          sideArranged: false, away: [], known: Object.keys(CARD_KINDS)};
 }
 function loadLayout() {
   const kept = store.get(LAYOUT_KEY, null), base = defaultLayout();
@@ -3748,7 +3749,11 @@ function loadLayout() {
   }
   const side = (Array.isArray(kept.side) ? kept.side : []).filter((id) => SIDE_CARDS.includes(id));
   for (const id of SIDE_CARDS) if (!side.includes(id)) side.push(id);  // (cards new since: at the end)
-  return {middle, side, away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id) &&
+  // (a settings column never arranged by hand follows the default, as it changes; a layout kept before this was
+  // noted counts as arranged when its order isn't the page's own, the default then)
+  const arranged = typeof kept.sideArranged === "boolean" ? kept.sideArranged : side.join() !== SIDE_CARDS.join();
+  return {middle, side: arranged ? side : base.side, sideArranged: arranged,
+          away: (Array.isArray(kept.away) ? kept.away : []).filter((id) => SIDE_CARDS.includes(id) &&
             id !== "appCard"),  // (Edit layout's card: never put away)
           known: Object.keys(CARD_KINDS)};
 }
@@ -3911,7 +3916,9 @@ function layoutFromPage() {
   const byId = new Map(layout.middle.map((c) => [c.id, c]));
   layout.middle = [...$("middle").children].map((c) => byId.get(c.dataset.card)).filter(Boolean);
   const shown = [...$("side").querySelectorAll(":scope > .card")].map((c) => c.id);
-  layout.side = [...shown, ...layout.side.filter((id) => !shown.includes(id))];
+  const side = [...shown, ...layout.side.filter((id) => !shown.includes(id))];
+  if (side.join() !== layout.side.join()) layout.sideArranged = true;  // (moved by hand: kept as it is from now on)
+  layout.side = side;
   saveLayout();
   for (const card of [...$("middle").children, ...$("side").children]) {
     if (card.classList.contains("card")) cardTools(card);
