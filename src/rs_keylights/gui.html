@@ -321,7 +321,6 @@
   #hereRow { margin-top: 10px; }
   #hereSaid { margin-bottom: 6px; }
   .audio-grid.here-levels { grid-template-columns: 5.5em minmax(0, 1fr) 3.5em; }
-  .here-levels select { grid-column: 2 / span 2; min-width: 0; font-size: 13px; }
   .part-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .part-field > span { font-size: 12px; color: var(--muted); }
   .part-tones .tonebox .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -839,8 +838,6 @@
         <label for="hereKeys" id="hereKeysName">Keyboard</label>
         <input type="range" id="hereKeys" min="0" max="100" aria-label="The keyboard on this device"><output
           id="hereKeysShown"></output>
-        <span></span><select id="keysInput" aria-label="The Mac's audio input for the keyboard"
-          title="The Mac's audio input the keyboard is connected to (a stereo pair), to hear the keyboard here as well. This is the Mac's setting, the same for every device"></select>
       </div>
     </div>
     <div class="audio-parts-head" hidden>
@@ -1065,6 +1062,12 @@
         <span><input id="lightsEarly" type="number" min="0" max="200" step="5" style="width:70px"> ms</span>
         <label for="fastestFlash" title="Repeated notes closer together than this flash on every other note (the LK-170 can't show faster repeats)">Fastest flash</label>
         <span><input id="fastestFlash" type="number" min="0" max="300" step="5" style="width:70px"> ms</span>
+        <label for="keysInput">Audio input</label>
+        <span><select id="keysInput"></select><button type="button" class="info"
+          aria-label="About the keyboard's audio input"></button><span class="info-text">The Mac's audio input the
+            keyboard's sound comes in on (a stereo pair: for example the Blender's input 5, on its channels 9 and 10).
+            Devices listening with 🎧 on the Song Audio card hear the keyboard through it, in time with the song.
+            </span></span>
         <label>Sound</label>
         <span><label title="Each note sustains until its string is played again or its chord shape ends (up to 4 seconds); palm mutes stay short. When off, notes last as long as their keys are lit">
           <input type="checkbox" id="ring"> Let notes ring like guitar strings</label>
@@ -5250,16 +5253,18 @@ function showHere() {
     "The sound starts when a song plays.";
   $("hereSaid").title = here && here.error ? here.error : "";
   if (error) $("hereSaid").textContent += ` Couldn't read the keyboard's input (${error}).`;
-  $("hereKeysName").title = `The ${KB()} on this device, from the Mac's audio input chosen below`;
+  $("hereKeysName").title = hereKeysInput ? `The ${KB()} on this device, from its audio input on the Mac` :
+    `To hear the ${KB()} here, set its audio input in the Keyboard card`;
   $("hereKeys").disabled = !hereKeysInput;
 }
 
-// Where the keyboard's sound comes into the Mac (an interface's stereo pair: the Mac's setting, for every device)
+// Where the keyboard's sound comes into the Mac (an interface's stereo pair, in the Keyboard card: for every device
+// listening)
 function showHereInputs(s) {
   onMac = !!s.on_mac;
   hereKeysInput = s.keys_input || null;
   const counts = s.input_channels || {}, chosen = hereKeysInput ? JSON.stringify(hereKeysInput) : "";
-  const options = [["", "No keyboard input"]];
+  const options = [["", "(not set)"]];
   for (const device of [...new Set([...(hereKeysInput ? [hereKeysInput.device] : []), ...(s.inputs || [])])]) {
     const n = counts[device] || 1;
     for (let c = 1; c <= n; c += 2) {

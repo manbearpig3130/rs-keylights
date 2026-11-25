@@ -191,7 +191,8 @@ fit. Short of channels, harmonics squeal on the part's own tone. A part on anoth
 
 ### Settings cards
 
-- **Keyboard**: the MIDI output, the lights' channel, **Lights early** (15 ms) and **Fastest flash** (70 ms); notes
+- **Keyboard**: the MIDI output, the lights' channel, **Lights early** (15 ms) and **Fastest flash** (70 ms); the
+  **Audio input** its sound comes into the Mac on (for [listening on another device](#the-songs-own-audio)); notes
   ringing and their overlap; **Real pitch**; techniques; and, folded inside it, **Default tones** and **Tone
   changes**.
   - **Real pitch** (on at first): the notes sound at their own pitch, not the lit keys' pitch (moved into the
@@ -654,8 +655,8 @@ turns the audio on and off, red while it's on.
 card also has 🎧. It plays the song's audio on that device as well, about 0.3 s behind the Mac, and the cards there
 are drawn that much later to match. It's that device's own setting, kept in its browser, with its own volumes under
 🎧: the Mac's 🎵, volume and output stay as they are. With 🎵 off, the Mac makes the audio only for the devices
-listening. The keyboard can be heard too: choose the Mac's audio input it's connected to (a stereo pair, such as a
-mixer's input 5 on its channels 9 and 10), and it's sent in time with the song. It's for listening: if you play the
+listening. The keyboard can be heard too: set **Audio input** in the Keyboard card to the Mac's input it's connected
+to (a stereo pair, such as a mixer's input 5 on its channels 9 and 10), and it's sent in time with the song. It's for listening: if you play the
 keyboard while hearing it on another device, you hear yourself late. A browser starts the sound only after a tap or
 click on the page, and a phone stops it when its screen locks.
 
