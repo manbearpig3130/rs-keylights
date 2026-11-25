@@ -401,6 +401,20 @@ def test_the_scale_climbs_the_keys_until_stopped(server):
     call(server, "/api/stop", {})
 
 
+def test_the_pages_state_never_waits_for_the_follow_loops_lock(server, no_real_game_loop):
+    gui = server.gui
+    assert gui.toggle_follow() is True
+    assert call(server, "/api/keys/show", {"frames": [[0.0, [60]], [1.0, []]]})[0] == 200  # (a show while
+    session, said = gui._session, []                                                       # following: drawn)
+    with session._lock:  # (the follow loop's step, as a song starts: it takes the Gui's lock meanwhile)
+        asking = threading.Thread(target=lambda: said.append(gui.state()), daemon=True)
+        asking.start()
+        asking.join(2.0)
+        assert said, "the page's state waited for the follow loop's lock (a deadlock, the loop wanting the Gui's)"
+    assert said[0]["show"] is not None
+    assert gui.toggle_follow() is False
+
+
 def test_the_page_is_told_the_show_on_the_keys_and_lights_can_be_sent_as_frames(server):
     sid = first_song(server)
     _, state = call(server, "/api/scale", {"song": sid})

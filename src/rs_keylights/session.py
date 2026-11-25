@@ -152,10 +152,10 @@ class Playback:
         return self._show is not None
 
     def show_info(self) -> dict[str, Any] | None:
-        """The show on the keys, for a page to draw (KeyShow.info), if there's one."""
-        with self._lock:
-            show = self._show
-            return show.info(self._clock()) if show is not None else None
+        """The show on the keys, for a page to draw (KeyShow.info), if there's one. Without the lock, as showing:
+        the page asks holding the Gui's, which the song's thread takes holding this one."""
+        show = self._show
+        return show.info(self._clock()) if show is not None else None
 
     def show(self, frames, repeat: bool = True) -> None:
         """A show on the keys where the song leaves them free (keyshow.KeyShow)."""
@@ -329,8 +329,9 @@ class Following:
         return self.follower.showing
 
     def show_info(self) -> dict[str, Any] | None:
-        with self._lock:
-            return self.follower.show_info()
+        """The show on the keys (Follower.show_info). Without the lock, as showing: the page asks holding the Gui's,
+        which the follow thread's step takes holding this one (a song starting: its parts)."""
+        return self.follower.show_info()
 
     def show(self, frames, repeat: bool = True) -> None:
         """A show on the keys where the song leaves them free (follow.Follower.show)."""
